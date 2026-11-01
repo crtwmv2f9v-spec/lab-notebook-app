@@ -643,14 +643,16 @@ async function buildPageSheet(vol, num, { forPrint = false } = {}) {
 function recordSheet(vol, num, fm, panel, content) {
   const files = lib.attachments(vol, num).filter((n) => !/\.(jpe?g|png|gif|webp)$/i.test(n));
   const data = [fm.data, ...files].filter(Boolean);
+  const ps = fm.series ? allSeries().find((x) => x.name === fm.series)?.pages || [] : [];
+  const k = ps.findIndex((x) => x.vol === vol && x.num === num);
   const sheet = h('article', { class: `sheet page for-print record${fm.void ? ' voided' : ''}`, 'data-vol': vol, 'data-num': num },
     h('header', { class: 'rec-head' },
-      h('div', { class: 'rh-main' },
-        h('span', { class: 'rh-lbl' }, '实验名称'),
-        h('span', { class: 'rh-title' }, fm.title || '未命名'),
-        fm.id ? h('span', { class: 'rh-id' }, fm.id) : null,
-        fm.series ? h('span', { class: 'rh-series' }, `系列：${fm.series}`) : null),
-      h('div', { class: 'rh-date' }, h('span', { class: 'rh-lbl' }, '日期'), h('span', null, fm.date || ''))),
+      h('div', { class: 'rh-cell rh-name' }, h('span', { class: 'rh-lbl' }, '实验名称'), h('span', { class: 'rh-title' }, fm.title || '未命名')),
+      h('div', { class: 'rh-cell rh-when' }, h('span', { class: 'rh-lbl' }, '日期'), h('span', { class: 'rh-date' }, fm.date || '')),
+      fm.id || fm.series ? h('div', { class: 'rh-meta' },
+        fm.id ? h('span', null, h('span', { class: 'rh-lbl' }, '编号'), h('span', { class: 'rh-id' }, fm.id)) : null,
+        fm.series ? h('span', null, h('span', { class: 'rh-lbl' }, '系列'), h('span', { class: 'rh-series' }, `${fm.series}${k >= 0 ? `　第 ${k + 1} / ${ps.length} 次` : ''}`)) : null,
+        fm.protocol ? h('span', null, h('span', { class: 'rh-lbl' }, 'SOP'), h('span', { class: 'rh-id' }, fm.protocol)) : null) : null),
     fm.void ? h('div', { class: 'void-banner' }, h('strong', null, '已作废'), ` ${fm.void}`) : null,
     panel,
     content,
@@ -665,10 +667,14 @@ function recordSheet(vol, num, fm, panel, content) {
 // keeps the browser from adding its own date, title and address lines.
 function printSheets(nodes) {
   const pr = document.getElementById('print-root');
+  // Running header and footer, repeated on every sheet of paper.
+  const nb = lib?.notebook || {};
   pr.replaceChildren(h('table', { class: 'print-frame' },
-    h('thead', null, h('tr', null, h('td', { class: 'pf-top' }))),
+    h('thead', null, h('tr', null, h('td', { class: 'pf-top' }, h('div', { class: 'pf-run' },
+      h('span', null, nb.title || '实验记录本'), h('span', null, 'LABORATORY RECORD'))))),
     h('tbody', null, h('tr', null, h('td', { class: 'pf-body' }, nodes))),
-    h('tfoot', null, h('tr', null, h('td', { class: 'pf-bottom' })))));
+    h('tfoot', null, h('tr', null, h('td', { class: 'pf-bottom' }, h('div', { class: 'pf-run foot' },
+      h('span', null, nb.owner ? `记录人　${nb.owner}` : ''), h('span', null, `导出于 ${todayISO()}`)))))));
   return pr;
 }
 
@@ -1706,7 +1712,8 @@ async function exportPdf(pages, a, b, { cover = true, title: heading = '实验�
   const nodes = [];
   if (cover) {
   const rows = await summaryRows(pages);
-  nodes.push(h('article', { class: 'sheet plain report-cover' },
+  nodes.push(h('article', { class: 'sheet plain report-cover record' },
+    h('div', { class: 'rc-kind' }, 'LABORATORY RECORD · SUMMARY'),
     h('h1', null, heading),
     h('p', { class: 'rc-range' }, `${a} 至 ${b}`),
     h('p', { class: 'muted' }, `${lib.notebook.owner || ''}　共 ${pages.length} 页　导出于 ${todayISO()}`),
