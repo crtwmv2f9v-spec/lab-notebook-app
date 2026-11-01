@@ -10,6 +10,7 @@ const compact = (iso) => iso.replace(/-/g, '');
 export function labDemoFiles() {
   const d0 = day(-3); const x1 = `${compact(d0)}-OECT-01`;
   const d1 = day(-1); const x2 = `${compact(d1)}-OECT-01`;
+  const x3 = `${compact(d1)}-OECT-02`;
   const notebook = {
     title: '实验记录本（示例）', owner: '示例用户',
     volumes: [
@@ -49,10 +50,13 @@ tags: [oect, transfer]
     'library/reagents.csv': reagents,
     'library/protocols/SOP-DEMO-OECT-TR-v1.md': sop,
     'volumes/oect/pages/0001.md': page(
-      `title: GOPS 浓度对沟道稳定性的影响\ndate: ${d0}\nid: ${x1}\ntags: [oect, pedot-pss, gops]\nprotocol: SOP-DEMO-OECT-TR-v1\nreagents: [R-0001, R-0002, R-0003]\ndata: "01_Data/01_Keithley 4200/${d0.slice(0, 4)}/${x1}_GOPS"\nfollowups: ["✓ ${day(-2)} 稳定性复测（第 1 天）", "${day(0)} 稳定性复测（第 3 天）", "${day(4)} 稳定性复测（第 7 天）"]`,
+      `title: GOPS 浓度对沟道稳定性的影响\ndate: ${d0}\nid: ${x1}\nseries: PEDOT:PSS 配方优化\ntags: [oect, pedot-pss, gops]\nprotocol: SOP-DEMO-OECT-TR-v1\nreagents: [R-0001, R-0002, R-0003]\ndata: "01_Data/01_Keithley 4200/${d0.slice(0, 4)}/${x1}_GOPS"\nfollowups: ["✓ ${day(-2)} 稳定性复测（第 1 天）", "${day(0)} 稳定性复测（第 3 天）", "${day(4)} 稳定性复测（第 7 天）"]`,
       `## 目的\n\n比较 0.5、1、2 wt% GOPS 对 PBS 中 transfer 稳定性的影响。\n\n## 条件与结果\n\n\`\`\`samples\n编号,GOPS (wt%),退火 (°C),结果: gm_max (mS),结果: Vth (V),结果: on/off,备注\n#01,0.5,140,4.1,0.42,180,\n#09,1.0,140,3.6,0.45,240,边缘轻微翘起\n#10,2.0,140,2.2,0.51,95,\n\`\`\`\n\n## 与 SOP 的偏离\n\n- #10 浸泡 75 min（其余 60 min）。\n\n## 现象与讨论\n\nGOPS 增加后 gm 下降，但 #09 的漂移最小。\n\n## 照片\n\n![#09 · 溶液 · 墨水呈深蓝色](${x1}-#09_solution.png)\n\n![#09 · 整片器件](${x1}-#09_device.png)`),
     [`volumes/oect/attachments/0001/${x1}-#09_solution.png`]: bytes(SOLUTION_PNG),
     [`volumes/oect/attachments/0001/${x1}-#09_device.png`]: bytes(DEVICE_PNG),
+    'volumes/oect/pages/0003.md': page(
+      `title: 第 2 轮：旋涂速度\ndate: ${d1}\nid: ${x3}\nseries: PEDOT:PSS 配方优化\ntags: [oect, pedot-pss]\nprotocol: SOP-DEMO-OECT-TR-v1\nreagents: [R-0001, R-0002, R-0003]`,
+      `## 目的\n\n固定 GOPS 1 wt%，比较旋涂速度。\n\n## 条件与结果\n\n\`\`\`samples\n编号,GOPS (wt%),退火 (°C),旋涂 (rpm),结果: gm_max (mS),结果: Vth (V),结果: on/off,备注\n#01,1.0,140,1500,4.4,0.44,260,\n#02,1.0,140,3000,3.1,0.46,210,膜偏薄\n\`\`\`\n\n## 与 SOP 的偏离\n\n- \n\n## 现象与讨论\n\n1500 rpm 的 gm 最高。\n\n## 照片\n`),
     'volumes/oect/pages/0002.md': page(
       `title: 栅极面积对比\ndate: ${d1}\nid: ${x2}\ntags: [oect, gate]\nprotocol: SOP-DEMO-OECT-TR-v1\nreagents: [R-0003, R-0004]`,
       `## 目的\n\n比较 Ø 3 mm 与 Ø 5 mm 碳栅极。\n\n## 条件与结果\n\n\`\`\`samples\n编号,栅极直径 (mm),结果: gm_max (mS),结果: Vth (V),备注\n#01,3,,,\n#02,5,,,\n\`\`\`\n\n## 与 SOP 的偏离\n\n- \n\n## 现象与讨论\n\n\n## 照片\n`),
