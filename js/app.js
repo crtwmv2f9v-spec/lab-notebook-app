@@ -10,6 +10,7 @@ import {
   expId, cleanTopic, nextSeq, sampleNo, sampleId, parseNumbers, readSamples, writeSamples, samplesTemplate, isResultCol, colLabel,
   parseFollowup, formatFollowup, addDays, daysFrom, icsFor, toCSV, REAGENTS_PATH, REAGENT_FIELDS, parseReagents, reagentsCSV,
   nextReagentId, loadReagents, reagentFields, LOCKED_REAGENT_KEYS, loadProtocol, loadProtocols, parseProtocol, protocolPath, cleanProtocolId, reagentAlerts,
+  STEP_FIELDS, STEP_OPS, STEP_CONTAINERS, readSteps, writeSteps, stepsText,
 } from './lab.js';
 import { search } from './search.js';
 import { h, icon, debounce, fmtBytes, loadScript } from './util.js';
@@ -18,7 +19,7 @@ import { h, icon, debounce, fmtBytes, loadScript } from './util.js';
 const SKEY = 'labnote.settings';
 const DEFAULTS = {
   owner: '', repo: '', branch: 'main', token: '',
-  apiBase: 'https://api.github.com', theme: 'auto', downscale: true,
+  apiBase: 'https://api.github.com', theme: 'auto', downscale: true, font: 'song', size: 'normal',
 };
 function loadSettings() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SKEY) || '{}') }; } catch { return { ...DEFAULTS }; }
@@ -41,7 +42,14 @@ function applyTheme() {
   const t = S.theme;
   if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
   else delete document.documentElement.dataset.theme;
+  document.documentElement.dataset.font = S.font;
+  document.documentElement.dataset.size = S.size;
+  if (S.font === 'kai' && !document.getElementById('font-kai')) {
+    // LXGW WenKai: a handwriting-style Kai typeface that stays clear on screen; split by character range, so only the glyphs in use download.
+    document.head.append(h('link', { id: 'font-kai', rel: 'stylesheet', href: 'https://cdn.jsdelivr.net/npm/lxgw-wenkai-screen-webfont@1.7.0/lxgwwenkaigbscreen.css' }));
+  }
 }
+export const FONTS = [['song', '宋体（印刷感，默认）'], ['kai', '文楷（手写感，清晰）'], ['hei', '黑体（简洁）']];
 
 async function startLibrary() {
   if (lib) lib.listeners.clear();
@@ -500,6 +508,7 @@ function viewVolume(id) {
     pages.length ? { icon: 'print', label: '打印整卷 / 存为 PDF', run: () => printVolume(id) } : null,
     { icon: 'search', label: '在本卷中搜索', run: () => openSearch('', id) },
     { icon: 'download', label: '导出（按日期，PDF / Word）', run: () => openExport(id) },
+    pages.length ? { icon: 'list', label: '把已有的页归入系列…', run: () => openBulkSeries(id) } : null,
     { icon: 'trash', label: '删除这个卷…', run: () => openDeleteVolume(v) },
   ]) }, icon('more'));
   const root = h('div', { class: 'view volume' },
@@ -681,12 +690,15 @@ async function viewPage(vol, num, params) {
     { icon: 'print', label: '打印纸质记录卡', run: () => printCard(vol, num) },
     fm.id ? { icon: 'copy', label: '命名助手（数据/照片文件名）', run: () => openNaming(fm, num) } : null,
     { icon: 'list', label: fm.series ? '更改所属系列…' : '加入系列…', run: () => setSeries(vol, num, fm) },
+    { icon: 'list', label: '录入操作步骤（用量、容器、条件）', run: () => openStepsEditor(vol, num) },
     fm.void ? { icon: 'history', label: '取消作废', run: () => setVoid(vol, num, null) } : { icon: 'close', label: '作废这一页…', run: () => setVoid(vol, num, fm) },
     fm.signed ? null : { icon: 'trash', label: '删除这一页…', run: () => openDeletePage(vol, num, fm) },
     (fm.followups || []).length ? { icon: 'download', label: '提醒导出到手机日历', run: () => exportIcs((fm.followups || []).map(parseFollowup).filter((f) => f && !f.done).map((f) => ({ ...f, xid: fm.id, page: { vol, num } }))) } : null,
   ]) }, icon('more'));
   const photo = h('button', { class: 'btn', type: 'button', onclick: () => openPhotoCapture(vol, num) }, icon('attach', 18), h('span', { class: 'wide-only' }, '拍照/加图'));
-  const results = /```samples/.test(await lib.readPage(vol, num)) ? h('button', { class: 'btn', type: 'button', onclick: () => openSamplesEditor(vol, num) }, icon('table', 18), h('span', { class: 'wide-only' }, '录入表格')) : null;
+  const raw = await lib.readPage(vol, num);
+  const results = /```samples/.test(raw) ? h('button', { class: 'btn', type: 'button', onclick: () => openSamplesEditor(vol, num) }, icon('table', 18), h('span', { class: 'wide-only' }, '录入表格')) : null;
+  const stepsBtn = /```steps/.test(raw) ? h('button', { class: 'btn', type: 'button', onclick: () => openStepsEditor(vol, num) }, icon('list', 18), h('span', { class: 'wide-only' }, '步骤')) : null;
   const edit = h('a', { class: 'btn', href: `#/v/${vol}/${num}/edit` }, icon('edit', 18), h('span', { class: 'wide-only' }, fm.signed ? '修订' : '编辑'));
   const pager = h('nav', { class: 'pager', 'aria-label': '页数' },
     prev ? h('a', { class: 'btn ghost', href: `#/v/${vol}/${prev.num}`, 'data-nav': 'prev', rel: 'prev' }, icon('back', 18), `p. ${prev.num}`) : h('span'),
@@ -698,7 +710,7 @@ async function viewPage(vol, num, params) {
   lastPageVisited = { vol, num };
   addSwipe(sheet, prev && `#/v/${vol}/${prev.num}`, next && `#/v/${vol}/${next.num}`);
   return h('div', { class: 'view page-view' },
-    topbar({ back: `#/v/${vol}`, backLabel: '目录', title: v.title, sub: `第 ${num} 页`, actions: [results, photo, edit, more] }),
+    topbar({ back: `#/v/${vol}`, backLabel: '目录', title: v.title, sub: `第 ${num} 页`, actions: [stepsBtn, results, photo, edit, more] }),
     demoBanner(), sheet, pager);
 }
 let lastPageVisited = null;
@@ -970,6 +982,8 @@ async function viewEditor(vol, num, params) {
     }),
     tb('code', '代码', () => insertBlock('```python\n\n```', 10, 0)),
     tb('table', '表格', () => insertBlock('| Column | Value |\n|---|---|\n|  |  |')),
+    h('button', { class: 'tool text', type: 'button', title: '反应方程式（一行一个）', onclick: () => insertBlock('```reaction\n2 H2O2 ->[Pt] 2 H2O + O2 | (1)\n```') }, '反应式'),
+    h('button', { class: 'tool text', type: 'button', title: '操作步骤：操作 | 用量 | 物质 | 加到/容器 | 条件 | 细节', onclick: () => insertBlock('```steps\n移取 | 10 mL | DI 水 | 20 mL 玻璃瓶 | 室温 | 沿瓶壁缓慢加入\n```') }, '步骤'),
     tb('chart', '图表', () => insertBlock('```chart\ntype: line\nx: dose\ny: response\ntitle: \n---\ndose,response\n0,0.1\n1,0.4\n2,0.7\n```')),
     tb('link', '链接到页面', () => openPagePicker(vol, (ref) => insertInline(`[[${ref}]]`))),
     tb('attach', '附件', () => fileIn.click()));
@@ -1185,7 +1199,13 @@ function viewSettings() {
   const token = h('input', { id: 's-token', type: 'password', placeholder: S.token ? '已存在本机（粘贴新的即可替换）' : 'github_pat_…', autocomplete: 'off' });
   const api = h('input', { id: 's-api', value: S.apiBase, spellcheck: 'false' });
 
+  const font = h('select', { id: 's-font' }, FONTS.map(([v, l]) => h('option', { value: v, selected: S.font === v }, l)));
+  const size = h('select', { id: 's-size' }, [['normal', '标准'], ['large', '大'], ['xlarge', '特大']].map(([v, l]) => h('option', { value: v, selected: S.size === v }, l)));
+  const fontDemo = h('div', { class: 'prose font-demo' });
+  fontDemo.innerHTML = '将 <span class="qty">10 mL</span> DI 水加入 <span class="qty">20 mL</span> 玻璃瓶，<span class="qty">500 rpm</span> 搅拌 <span class="qty">30 min</span>。PEDOT:PSS 薄膜呈深蓝色。';
   theme.addEventListener('change', () => { S.theme = theme.value; saveSettings(); applyTheme(); });
+  font.addEventListener('change', () => { S.font = font.value; saveSettings(); applyTheme(); });
+  size.addEventListener('change', () => { S.size = size.value; saveSettings(); applyTheme(); });
   down.addEventListener('change', () => { S.downscale = down.checked; saveSettings(); });
 
   const section = (title, ...kids) => h('section', { class: 'settings-section' }, h('h2', null, title), ...kids);
@@ -1204,6 +1224,9 @@ function viewSettings() {
       section('本设备',
         h('div', { class: 'form' },
           h('label', { for: 's-theme' }, '纸张'), theme,
+          h('label', { for: 's-font' }, '正文字体'), font,
+          h('label', { for: 's-size' }, '字号'), size,
+          fontDemo,
           h('label', { class: 'check', for: 's-down' }, down, ' 附加前把大照片缩小到 2400 px'))),
       DEMO ? null : section('连接',
         h('p', { class: 'muted' }, '记录保存在这个 GitHub 私有仓库里。令牌只存在这个浏览器中。'),
@@ -1389,8 +1412,94 @@ async function openSamplesEditor(vol, num) {
   });
 }
 
+// ----- operation steps: what, how much, into which container, under which conditions -----
+async function openStepsEditor(vol, num) {
+  const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
+  const steps = readSteps(body) || [];
+  if (!steps.length) steps.push(Object.fromEntries(STEP_FIELDS.map(([k]) => [k, ''])));
+  const reagents = await loadReagents(lib).catch(() => []);
+  const used = (k) => steps.map((x) => x[k]).filter(Boolean);
+  const lists = h('div', { hidden: true },
+    h('datalist', { id: 'st-ops' }, [...new Set([...STEP_OPS, ...used('op')])].map((v) => h('option', { value: v }))),
+    h('datalist', { id: 'st-what' }, reagents.map((r) => h('option', { value: `${r.name} ${r.id}` }, [r.spec, r.vendor].filter(Boolean).join(' · ')))),
+    h('datalist', { id: 'st-into' }, [...new Set([...(lib.notebook.containers || []), ...STEP_CONTAINERS, ...used('into')])].map((v) => h('option', { value: v }))));
+  const showMore = h('input', { type: 'checkbox', id: 'st-more', checked: steps.some((x) => x.cond || x.note) });
+  const PH = { op: '移取', amount: '10 mL', what: 'DI 水 / 选试剂', into: '20 mL 玻璃瓶', cond: '室温，500 rpm，30 min', note: '沿瓶壁缓慢滴加，避免气泡' };
+  const grid = h('div', { class: 'grid-wrap' });
+  const draw = () => {
+    const fields = STEP_FIELDS.filter(([k]) => showMore.checked || !['cond', 'note'].includes(k));
+    grid.replaceChildren(h('table', { class: 'grid steps-grid' },
+      h('thead', null, h('tr', null, h('th', { class: 'no' }, '#'), fields.map(([k, l]) => h('th', { class: `c-${k}` }, l)), h('th'))),
+      h('tbody', null, steps.map((st, i) => h('tr', null,
+        h('th', { class: 'no' }, i + 1),
+        fields.map(([k, l]) => h('td', { class: `c-${k}` }, h('input', {
+          value: st[k] || '', placeholder: i === 0 ? PH[k] : '', 'aria-label': `第 ${i + 1} 步 ${l}`,
+          list: { op: 'st-ops', what: 'st-what', into: 'st-into' }[k] || null,
+          oninput: (e) => { st[k] = e.target.value; },
+          onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); if (i === steps.length - 1) addRow(); grid.querySelectorAll('tbody tr')[i + 1]?.querySelector(`td.c-${k} input`)?.focus(); } },
+        }))),
+        h('td', { class: 'row-tools' },
+          h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '上移', title: '上移', disabled: i === 0, onclick: () => { [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]]; draw(); } }, '↑'),
+          h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '删除这一步', title: '删除', onclick: () => { steps.splice(i, 1); draw(); } }, icon('close', 16))))))));
+  };
+  const addRow = () => { steps.push(Object.fromEntries(STEP_FIELDS.map(([k]) => [k, '']))); draw(); };
+  showMore.addEventListener('change', draw);
+  draw();
+  modal({
+    title: `操作步骤 · ${fm.id || `p. ${num}`}`, wide: true,
+    body: h('div', null,
+      h('p', { class: 'muted' }, '一行一步。只有“操作”必填，其余可留空。物质可从试剂库选（带上试剂编号便于溯源），容器可从下拉选或自己写。页面上用量为蓝色、试剂为棕色、容器加框显示。'),
+      lists,
+      h('label', { class: 'check', for: 'st-more' }, showMore, ' 显示细节列（条件、具体操作细节）'),
+      grid,
+      h('div', { class: 'row-actions' }, h('button', { class: 'btn small', type: 'button', onclick: addRow }, icon('plus', 16), '加一步'))),
+    buttons: [{ label: '取消' }, {
+      label: '保存', primary: true,
+      run: async () => {
+        const keep = steps.filter((x) => STEP_FIELDS.some(([k]) => String(x[k] || '').trim()));
+        try {
+          await updatePage(vol, num, ({ fm: f, body: b }) => ({ fm: f, body: writeSteps(b, keep) }), `Steps for ${fm.id || `p. ${num}`}`);
+          toast(fm.signed ? '已保存为修订（原版本保留在历史中）。' : '已保存。');
+        } catch (e) { toast(saveError(e)); return false; }
+      },
+    }],
+  });
+}
+
+// Put several existing pages into one series at once.
+function openBulkSeries(volId) {
+  const pages = lib.pages(volId);
+  const names = allSeries().map((x) => x.name);
+  const name = h('input', { id: 'bs-name', list: 'bs-list', placeholder: '例如：PEDOT:PSS 配方优化' });
+  const checks = pages.map((p) => ({ p, box: h('input', { type: 'checkbox', checked: false }) }));
+  modal({
+    title: '把已有的页归入系列',
+    body: h('div', { class: 'form' },
+      h('label', { for: 'bs-name' }, '系列名称（可选已有的）'), name,
+      h('datalist', { id: 'bs-list' }, names.map((n) => h('option', { value: n }))),
+      h('span', { class: 'label' }, '勾选要归入的页'),
+      h('div', { class: 'pick-list' }, checks.map(({ p, box }) => h('label', { class: 'check' }, box, ' ',
+        h('span', { class: 'c-date' }, fmtDate(p.date)), ' ', p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, p.title,
+        p.series ? h('span', { class: 'toc-tags' }, `（现属：${p.series}）`) : null))),
+      h('p', { class: 'muted' }, '每一页仍保留自己的编号和日期；已签名的页会记一条修订。')),
+    buttons: [{ label: '取消' }, {
+      label: '归入', primary: true,
+      run: async () => {
+        const n = name.value.trim();
+        const sel = checks.filter((c) => c.box.checked).map((c) => c.p);
+        if (!n) { toast('写一个系列名称。'); return false; }
+        if (!sel.length) { toast('至少勾选一页。'); return false; }
+        try {
+          for (const p of sel) await updatePage(p.vol || volId, p.num, ({ fm: f, body }) => { f.series = n; return { fm: f, body }; }, `Series of p. ${p.num}`);
+          toast(`${sel.length} 页已归入“${n}”。`);
+        } catch (e) { toast(saveError(e)); return false; }
+      },
+    }],
+  });
+}
+
 // ----- photos straight from the phone camera -----
-const PHOTO_KINDS = [['photo', '照片'], ['channel', '沟道'], ['gate', '栅极'], ['device', '整片器件'], ['film', '薄膜'], ['solution', '溶液'], ['setup', '测试装置'], ['micro', '显微镜']];
+const PHOTO_KINDS = [['photo', '照片'], ['channel', '沟道'], ['gate', '栅极'], ['device', '整片器件'], ['film', '薄膜'], ['solution', '溶液'], ['setup', '测试装置'], ['micro', '显微镜'], ['eq', '反应式'], ['scheme', '示意图']];
 async function openPhotoCapture(vol, num) {
   const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
   const t = readSamples(body);
@@ -1911,6 +2020,7 @@ async function openNewExperiment(volId, { series: presetSeries = '' } = {}) {
     if (!res.value) res.value = p.results.join(', ');
   });
   // Picking an existing series copies the setup of its latest experiment.
+  let seriesSteps = null;
   async function fromSeries() {
     const last = allSeries().find((x) => x.name === seriesIn.value.trim())?.pages.slice(-1)[0];
     if (!last) return;
@@ -1920,6 +2030,7 @@ async function openNewExperiment(volId, { series: presetSeries = '' } = {}) {
     if (code) { topic.value = code; topic.dataset.touched = '1'; }
     if (lf.protocol) proto.value = lf.protocol;
     picked.clear(); (lf.reagents || []).forEach((id) => picked.add(id)); drawR();
+    seriesSteps = readSteps(lb);
     const t = readSamples(lb);
     if (t) {
       vars.value = t.cols.slice(1).filter((c) => !isResultCol(c) && c !== '备注').join(', ');
@@ -1976,6 +2087,11 @@ async function openNewExperiment(volId, { series: presetSeries = '' } = {}) {
       '## 条件与结果', '',
       '> 编号与纸质记录卡一一对应。结果可用“录入表格”填写；Keithley 数据同步后自动填入空着的结果格。', '',
       `\`\`\`samples\n${toCSV([t.cols, ...t.rows]).trimEnd()}\n\`\`\``, '',
+      ...(() => {
+        // Steps carried over from the last run of the series, or from the SOP, so only what changed needs editing.
+        const st = seriesSteps || (p && readSteps(p.body));
+        return st?.length ? ['## 操作步骤', '', `\`\`\`steps\n${stepsText(st)}\n\`\`\``, ''] : [];
+      })(),
       '## 与 SOP 的偏离', '', '- ', '',
       '## 现象与讨论', '', '',
       '## 照片', '',

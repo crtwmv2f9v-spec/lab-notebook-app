@@ -923,3 +923,78 @@ table.series-table td.mono { font: 500 13px/1.4 var(--font-code); white-space: n
 table.series-table .sno { margin-left: 6px; font-weight: 700; }
 table.series-table tr.voided td { opacity: 0.45; text-decoration: line-through; }
 .rh-series { font: 500 12px/1.3 var(--font-form); color: var(--form); letter-spacing: 0.04em; }
+
+/* ================= reading fonts and sizes (设置 → 正文字体 / 字号) ================= */
+:root[data-font="kai"] { --font-body: 'Literata', 'LXGW WenKai Screen', 'Kaiti SC', 'STKaiti', 'KaiTi', 'Songti SC', serif; }
+:root[data-font="kai"] .prose, :root[data-font="kai"] .field > .val { letter-spacing: 0.01em; }
+:root[data-font="hei"] { --font-body: -apple-system, 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif; }
+:root[data-size="large"] { --cell: 30px; }
+:root[data-size="large"] .prose { font-size: 19px; }
+:root[data-size="xlarge"] { --cell: 34px; }
+:root[data-size="xlarge"] .prose { font-size: 21px; }
+.font-demo { margin: 4px 0 0; padding: 10px 12px; border: 1px dashed var(--rule); border-radius: 4px; background: var(--paper-solid); }
+
+/* ink colours for steps, amounts, reagents and containers */
+:root {
+  --c-op: #1f4d3e; --c-amt: #1d3f7a; --c-what: #8a3b12; --c-into: #4b5563; --c-cond: #6b5a2e;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --c-op: #9bd3bb; --c-amt: #9cbcf2; --c-what: #f0a77d; --c-into: #c3cad3; --c-cond: #d9c58c; } }
+:root[data-theme="dark"] { --c-op: #9bd3bb; --c-amt: #9cbcf2; --c-what: #f0a77d; --c-into: #c3cad3; --c-cond: #d9c58c; }
+
+.prose .qty { color: var(--c-amt); font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rg-id { display: inline-block; font: 500 0.78em/1.3 var(--font-code); color: var(--c-what); border: 1px solid color-mix(in srgb, var(--c-what) 45%, transparent); border-radius: 3px; padding: 0 4px; vertical-align: 0.08em; cursor: help; }
+
+.steps-wrap { margin: 0 0 var(--cell); }
+.st-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font: 500 12px/1.4 var(--font-form); margin: 0 0 6px; opacity: 0.85; }
+.st-legend .st-into { padding: 0 4px; }
+ol.steps { list-style: none; counter-reset: st; margin: 0; padding: 0; }
+ol.steps > li { counter-increment: st; position: relative; padding: 4px 0 4px 36px; line-height: var(--cell); border-bottom: 1px dotted color-mix(in srgb, var(--rule) 70%, transparent); }
+ol.steps > li::before {
+  content: counter(st); position: absolute; left: 0; top: calc(4px + (var(--cell) - 22px) / 2);
+  width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--c-op); color: var(--c-op);
+  font: 600 12px/19px var(--font-form); text-align: center;
+}
+.st-main { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; }
+.st-op { color: var(--c-op); font-weight: 700; }
+.st-amt { color: var(--c-amt); font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.st-what { color: var(--c-what); font-weight: 600; }
+.st-to { color: var(--ink-3); }
+.st-into { color: var(--c-into); border: 1px solid color-mix(in srgb, var(--c-into) 55%, transparent); border-radius: 3px; padding: 0 5px; line-height: 1.5; font-size: 0.94em; }
+.st-cond { color: var(--c-cond); font-style: italic; font-size: 0.94em; }
+.st-cond::before { content: '· '; color: var(--ink-3); font-style: normal; }
+.st-legend .st-cond::before { content: none; }
+.st-note { color: var(--ink-2); font-size: 0.9em; line-height: 1.5; padding: 0 0 2px; }
+.st-note::before { content: '细节：'; color: var(--ink-3); }
+
+/* chemical equations */
+.reactions { margin: 0 0 var(--cell); }
+.rx { display: flex; align-items: center; gap: 10px; min-height: calc(var(--cell) * 1.5); font: 400 1.04em/1.4 'Times New Roman', 'STIX Two Text', var(--font-body); color: var(--ink); }
+.rx-eq { flex: 1; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; column-gap: 2px; }
+.rx-lead { font-family: var(--font-body); color: var(--ink-2); white-space: nowrap; }
+.rx-label { font-family: var(--font-body); color: var(--ink-2); white-space: nowrap; }
+.rx-coef { margin-right: 2px; }
+.rx-sp sub, .rx-sp sup { font-size: 0.68em; line-height: 0; }
+.rx-state { font-size: 0.8em; color: var(--ink-2); margin-left: 1px; }
+.rx-plus { margin: 0 7px; }
+.rx-arrow { margin: 0 10px; font-size: 1.15em; }
+.rx-arrow.cond { display: inline-flex; flex-direction: column; align-items: center; line-height: 1; margin: 0 8px; }
+.rx-arrow.cond .rx-a { font-size: 1.15em; transform: scaleX(2.1); margin: 1px 18px; }
+.rx-up, .rx-down { font: 400 11.5px/1.2 var(--font-form); color: var(--ink-2); white-space: nowrap; min-height: 0.5em; }
+
+/* steps editor and bulk series */
+.tool.text { width: auto; padding: 0 8px; font: 500 14px/1 var(--font-form); }
+table.steps-grid td.c-op input { min-width: 80px; }
+table.steps-grid td.c-amt input { min-width: 80px; }
+table.steps-grid td.c-what input, table.steps-grid td.c-into input { min-width: 150px; }
+table.steps-grid td.c-note input { min-width: 200px; }
+table.steps-grid th.no { width: 30px; text-align: center; font: 600 13px/1 var(--font-form); color: var(--ink-3); }
+table.steps-grid .row-tools { white-space: nowrap; }
+.pick-list { max-height: 46vh; overflow: auto; border: 1px solid var(--rule); border-radius: 4px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; }
+.pick-list .check { font-size: 15px; }
+.pick-list .c-date { font: 500 13px/1 var(--font-code); color: var(--ink-3); }
+
+@media print {
+  .st-legend { display: none; }
+  ol.steps > li { break-inside: avoid; }
+  :root { --c-op: #1f3a5f; --c-amt: #14306b; --c-what: #7a3410; --c-into: #3c4656; --c-cond: #5b4c25; }
+}

@@ -1,7 +1,7 @@
 // Markdown, math, page links, charts, data tables and Jupyter notebooks.
 import { esc, h, loadScript, icon } from './util.js';
 import { parseRef } from './model.js';
-import { parseCSV, isResultCol, colLabel, sampleNo } from './lab.js';
+import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents } from './lab.js';
 
 const CDN = 'https://cdn.jsdelivr.net/npm/';
 export const LIBS = {
@@ -128,7 +128,7 @@ export async function hydrate(root, ctx) {
   for (const el of root.querySelectorAll('.math[data-tex]')) renderMath(el);
   for (const code of root.querySelectorAll('pre > code')) {
     const lang = (code.className.match(/language-([\w+-]+)/) || [])[1];
-    if (lang === 'chart' || lang === 'samples') continue;
+    if (['chart', 'samples', 'steps', 'reaction'].includes(lang)) continue;
     if (lang && window.hljs?.getLanguage(lang)) { try { window.hljs.highlightElement(code); } catch { /* ignore */ } }
   }
   if (!root.dataset.wired) {
@@ -156,6 +156,10 @@ export async function hydrate(root, ctx) {
   for (const code of root.querySelectorAll('pre > code.language-chart')) jobs.push(renderChart(code.parentElement, code.textContent, ctx));
   for (const code of root.querySelectorAll('pre > code.language-samples')) jobs.push(renderSamples(code.parentElement, code.textContent, ctx));
   for (const el of root.querySelectorAll('div.embed[data-embed]')) jobs.push(renderEmbed(el, ctx));
+  for (const code of root.querySelectorAll('pre > code.language-reaction')) renderReactions(code.parentElement, code.textContent);
+  for (const code of root.querySelectorAll('pre > code.language-steps')) renderSteps(code.parentElement, code.textContent);
+  markQuantities(root);
+  jobs.push(nameReagents(root, ctx));
   await Promise.allSettled(jobs);
   numberFigures(root);
 }
@@ -401,6 +405,66 @@ async function renderSamples(pre, src, ctx) {
   }
   pre.replaceWith(h('div', { class: 'samples-wrap' }, table));
   await Promise.allSettled(jobs);
+}
+
+// ---------- chemical equations ----------
+function renderReactions(pre, src) {
+  const lines = src.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  const box = h('div', { class: 'reactions' });
+  for (const l of lines) {
+    const r = reactionHTML(l);
+    const eq = h('span', { class: 'rx-eq' }); eq.innerHTML = r.html; // built from escaped text only
+    box.append(h('div', { class: 'rx' }, r.lead ? h('span', { class: 'rx-lead' }, r.lead) : null, eq, r.label ? h('span', { class: 'rx-label' }, r.label) : null));
+  }
+  pre.replaceWith(box);
+}
+
+// ---------- operation steps: action, amount, substance, container, conditions, details ----------
+function renderSteps(pre, src) {
+  const steps = parseSteps(src);
+  const part = (cls, text) => (text ? h('span', { class: cls }, text) : null);
+  const list = h('ol', { class: 'steps' }, steps.map((s) => h('li', null,
+    h('div', { class: 'st-main' },
+      part('st-op', s.op), part('st-amt', s.amount), part('st-what', s.what),
+      s.into ? h('span', { class: 'st-to' }, '→') : null, part('st-into', s.into),
+      part('st-cond', s.cond)),
+    s.note ? h('div', { class: 'st-note' }, s.note) : null)));
+  pre.replaceWith(h('div', { class: 'steps-wrap' },
+    h('div', { class: 'st-legend', 'aria-hidden': 'true' }, part('st-op', '操作'), part('st-amt', '用量'), part('st-what', '物质'), part('st-into', '容器'), part('st-cond', '条件')),
+    list));
+}
+
+// Amounts with units ("10 mL", "37 °C", "500 rpm") and reagent numbers stand out in running text.
+const QTY_RE = /(^|[^\w.#-])([~≈<>≤≥±]?\s?\d+(?:\.\d+)?(?:\s?[-–~]\s?\d+(?:\.\d+)?)?\s?(?:µL|μL|uL|mL|L|µg|μg|mg|kg|g|mmol|µmol|μmol|mol|mM|µM|μM|nM|M|wt%|vol%|%|°C|℃|rpm|min|ms|s|h|mV|V|mA|µA|μA|nA|kHz|Hz|nm|µm|μm|mm|cm|mS|µS|μS|W|Pa|mbar|cP))(?![A-Za-z0-9µμ])|(R-\d{4})\b/g;
+function markQuantities(root) {
+  const skip = 'pre, code, a, .math, .katex, .samples, .steps-wrap, .reactions, h1, h2, h3, h4, .st-what, figcaption';
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.parentElement?.closest(skip) || !/\d/.test(n.nodeValue) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
+  const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const n of nodes) {
+    const t = n.nodeValue; QTY_RE.lastIndex = 0;
+    if (!QTY_RE.test(t)) continue;
+    const frag = document.createDocumentFragment(); let last = 0; QTY_RE.lastIndex = 0;
+    for (const m of t.matchAll(QTY_RE)) {
+      const start = m.index + (m[1] || '').length; const text = m[2] || m[3];
+      frag.append(t.slice(last, start), h('span', { class: m[3] ? 'rg-id' : 'qty', 'data-rid': m[3] || null }, text));
+      last = start + text.length;
+    }
+    frag.append(t.slice(last));
+    n.replaceWith(frag);
+  }
+}
+async function nameReagents(root, ctx) {
+  const ids = root.querySelectorAll('.rg-id, .st-what');
+  if (!ids.length || !ctx.lib?.tree) return;
+  const list = await loadReagents(ctx.lib).catch(() => []);
+  const by = new Map(list.map((r) => [r.id, r]));
+  for (const el of root.querySelectorAll('.rg-id')) { const r = by.get(el.dataset.rid); if (r) el.title = [r.name, r.spec, r.vendor, r.lot && `批号 ${r.lot}`].filter(Boolean).join(' · '); }
+  for (const el of root.querySelectorAll('.st-what')) {
+    const m = el.textContent.match(/^(.*?)\s*(R-\d{4})\s*$/);
+    if (!m) continue;
+    const r = by.get(m[2]);
+    el.replaceChildren(m[1] || r?.name || m[2], ' ', h('span', { class: 'rg-id', title: r ? [r.name, r.spec, r.vendor, r.lot && `批号 ${r.lot}`].filter(Boolean).join(' · ') : '' }, m[2]));
+  }
 }
 
 // ---------- embeds ----------

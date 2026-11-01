@@ -167,3 +167,76 @@ export function reagentAlerts(reagents, within = 30, today = todayISO()) {
   return reagents.filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.expires) && daysFrom(r.expires, today) <= within)
     .map((r) => ({ date: r.expires, text: `试剂到期：${r.id} ${r.name}${r.lot ? `（批号 ${r.lot}）` : ''}`, reagent: r.id }));
 }
+
+// ---------- operation steps (a ```steps block) ----------
+// One step per line:  操作 | 用量 | 物质 | 加到/容器 | 条件 | 细节   (every field after 操作 is optional)
+//   移取 | 10 mL | DI 水 R-0003 | 20 mL 玻璃瓶 | 室温 | 沿瓶壁缓慢加入
+export const STEP_FIELDS = [['op', '操作'], ['amount', '用量'], ['what', '物质/试剂'], ['into', '加到/容器'], ['cond', '条件'], ['note', '细节']];
+const STEPS_RE = /```steps[^\n]*\n([\s\S]*?)```/;
+export function parseSteps(src) {
+  return String(src || '').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))
+    .map((l) => { const parts = l.split('|').map((x) => x.trim()); return Object.fromEntries(STEP_FIELDS.map(([k], i) => [k, parts[i] || ''])); });
+}
+export function stepsText(steps) {
+  return steps.filter((s) => STEP_FIELDS.some(([k]) => s[k]))
+    .map((s) => STEP_FIELDS.map(([k]) => String(s[k] || '').replace(/\|/g, '/').trim()).join(' | ').replace(/( \| )+$/, '')).join('\n');
+}
+export function readSteps(body) { const m = String(body || '').match(STEPS_RE); return m ? parseSteps(m[1]) : null; }
+export function writeSteps(body, steps) {
+  const block = `\`\`\`steps\n${stepsText(steps)}\n\`\`\``;
+  return STEPS_RE.test(body) ? body.replace(STEPS_RE, () => block) : `${String(body || '').trimEnd()}\n\n## 操作步骤\n\n${block}\n`;
+}
+export const STEP_OPS = ['称取', '移取', '加入', '滴加', '混合', '搅拌', '超声', '涡旋', '离心', '过滤', '稀释', '定容', '浸泡', '清洗', '冲洗', '吹干', '烘干', '旋涂', '滴涂', '打印', '退火', '等离子处理', '静置', '孵育', '测试'];
+export const STEP_CONTAINERS = ['1.5 mL 离心管', '2 mL 离心管', '15 mL 离心管', '50 mL 离心管', '5 mL 玻璃瓶', '20 mL 玻璃瓶', '50 mL 烧杯', '100 mL 烧杯', '容量瓶', '培养皿', '96 孔板', '比色皿', '玻璃片', '器件表面', '上一步溶液'];
+
+// ---------- chemical equations (a ```reaction block, one equation per line) ----------
+// 2 H2O2 ->[Pt] 2 H2O + O2 | (1)        Fe^3+ + e- <=> Fe^2+        阳极：H2O2 -> O2 + 2 H+ + 2 e-
+const escH = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ARROWS = { '->': '→', '→': '→', '<-': '←', '<=>': '⇌', '⇌': '⇌', '<->': '↔', '=': '=' };
+function charge(c) { return `<sup>${escH(c.replace(/-/g, '−'))}</sup>`; }
+export function speciesHTML(tok) {
+  let s = tok.trim();
+  if (!s) return '';
+  const em = s.match(/^(\d*)\s*e-$/);
+  if (em) return `${em[1] ? `<span class="rx-coef">${em[1]}</span>` : ''}<span class="rx-sp">e${charge('-')}</span>`;
+  let coef = '';
+  const cm = s.match(/^(\d+(?:\.\d+)?|\d+\/\d+|[nx])\s*(?=[A-Z([])/);
+  if (cm) { coef = `<span class="rx-coef">${escH(cm[1])}</span>`; s = s.slice(cm[0].length); }
+  let state = '';
+  const sm = s.match(/\((aq|s|l|g)\)$/);
+  if (sm) { state = `<span class="rx-state">(${sm[1]})</span>`; s = s.slice(0, -sm[0].length); }
+  let ch = '';
+  if (s.includes(':') && !/^:|:$/.test(s)) return `${coef}<span class="rx-sp">${s.split(':').map((x) => speciesHTML(x).replace(/^<span class="rx-sp">|<\/span>$/g, '')).join(':')}</span>${state}`;
+  const explicit = s.match(/\^([0-9]*[+-]|0|[0-9]*[a-z][+-])$/);
+  if (explicit) { ch = charge(explicit[1]); s = s.slice(0, -explicit[0].length); } else {
+    const mono = s.match(/^([A-Z][a-z]?)(\d[+-])$/); // Fe3+, Cu2+: a single element followed by its charge
+    if (mono) { ch = charge(mono[2]); s = mono[1]; } else {
+      const tail = s.match(/[A-Za-z)\]\d]([+-])$/);
+      if (tail && /[A-Za-z]/.test(s)) { ch = charge(tail[1]); s = s.slice(0, -1); }
+    }
+  }
+  const body = escH(s).replace(/([A-Za-z)\]])(\d+)/g, '$1<sub>$2</sub>').replace(/\*/g, '·');
+  return `${coef}<span class="rx-sp">${body}${ch}</span>${state}`;
+}
+export function reactionHTML(line) {
+  let s = String(line).trim();
+  let label = '';
+  const lm = s.match(/\s\|\s*(.+)$/);
+  if (lm) { label = lm[1]; s = s.slice(0, lm.index); }
+  let lead = '';
+  const pm = s.match(/^([^：:]{1,16}[：:])\s*/);
+  if (pm && (pm[1].endsWith('：') || /[\u4e00-\u9fff]/.test(pm[1])) && !/->|=/.test(pm[1])) { lead = pm[1]; s = s.slice(pm[0].length); }
+  const parts = s.split(/(<=>|<->|->|<-|→|⇌|\s=\s)(?:\[([^\]]*)\])?(?:\[([^\]]*)\])?/);
+  let html = '';
+  for (let i = 0; i < parts.length; i += 4) {
+    html += (parts[i] || '').split(/\s\+\s/).map(speciesHTML).filter(Boolean).join('<span class="rx-plus">+</span>');
+    if (i + 1 < parts.length) {
+      const a = ARROWS[parts[i + 1].trim()] || parts[i + 1];
+      const up = parts[i + 2]; const down = parts[i + 3];
+      html += up || down
+        ? `<span class="rx-arrow cond"><span class="rx-up">${escH(up || '')}</span><span class="rx-a">${a === '=' ? '═══' : a.repeat(1)}</span><span class="rx-down">${escH(down || '')}</span></span>`
+        : `<span class="rx-arrow">${a}</span>`;
+    }
+  }
+  return { lead, html, label };
+}
