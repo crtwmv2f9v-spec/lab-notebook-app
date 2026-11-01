@@ -1,0 +1,165 @@
+// Experiment records: IDs, sample tables, reagent and protocol libraries, follow-ups, naming.
+import { parseFrontMatter, todayISO } from './model.js';
+
+// ---------- naming ----------
+// Experiment  20261101-OECT-01        date-topic-sequence
+// Sample      20261101-OECT-01-#09    experiment-#condition
+// Data file   20261101-OECT-01-#09_TR_VD-0.3V_gm.xls   sample_test_condition_purpose
+export const EXP_RE = /\b(\d{8})-([A-Z][A-Z0-9]{1,11})-(\d{2,3})\b/;
+export const SAMPLE_RE = /\b(\d{8}-[A-Z][A-Z0-9]{1,11}-\d{2,3})-#(\d{1,3}[a-z]?)\b/;
+const two = (n) => String(n).padStart(2, '0');
+
+export function cleanTopic(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12); }
+export function expId(dateISO, topic, seq) { return `${String(dateISO).replace(/-/g, '')}-${cleanTopic(topic)}-${two(seq)}`; }
+export function sampleNo(raw) {
+  const m = String(raw ?? '').trim().replace(/^#/, '').match(/^(\d{1,3})([a-z]?)$/i);
+  return m ? `#${two(parseInt(m[1], 10))}${m[2].toLowerCase()}` : String(raw ?? '').trim();
+}
+export const sampleId = (exp, no) => `${exp}-${sampleNo(no)}`;
+// "1, 9, 10, 12-14" -> [1, 9, 10, 12, 13, 14]
+export function parseNumbers(s) {
+  const out = [];
+  for (const part of String(s || '').split(/[,，\s]+/).filter(Boolean)) {
+    const r = part.replace(/#/g, '').match(/^(\d+)\s*[-~–]\s*(\d+)$/);
+    if (r) { for (let i = +r[1]; i <= +r[2] && out.length < 200; i++) out.push(i); } else if (/^\d+$/.test(part.replace(/#/g, ''))) out.push(parseInt(part.replace(/#/g, ''), 10));
+  }
+  return [...new Set(out)];
+}
+// Next free sequence number for this date and topic, across every volume.
+export function nextSeq(pages, dateISO, topic) {
+  const prefix = `${String(dateISO).replace(/-/g, '')}-${cleanTopic(topic)}-`;
+  let max = 0;
+  for (const p of pages) if (p.xid?.startsWith(prefix)) max = Math.max(max, parseInt(p.xid.slice(prefix.length), 10) || 0);
+  return max + 1;
+}
+export function asciiSlug(s, fallback = 'photo') {
+  return String(s || '').normalize('NFKD').replace(/[^\w.+-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || fallback;
+}
+
+// ---------- CSV ----------
+export function parseCSV(text) {
+  const rows = []; let row = []; let cell = ''; let q = false;
+  const s = String(text ?? '').replace(/^﻿/, '');
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) {
+      if (c === '"' && s[i + 1] === '"') { cell += '"'; i++; } else if (c === '"') q = false; else cell += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { row.push(cell); cell = ''; } else if (c === '\n' || c === '\r') {
+      if (c === '\r' && s[i + 1] === '\n') i++;
+      row.push(cell); rows.push(row); row = []; cell = '';
+    } else cell += c;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows.map((r) => r.map((x) => x.trim())).filter((r) => r.some((x) => x !== ''));
+}
+const csvCell = (v) => { v = String(v ?? ''); return /[",\n\r]|^\s|\s$/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
+export const toCSV = (rows) => `${rows.map((r) => r.map(csvCell).join(',')).join('\n')}\n`;
+
+// ---------- sample table (a ```samples block in the page) ----------
+// The first column is the sample number; columns starting with "结果" hold results.
+const SAMPLES_RE = /```samples[^\n]*\n([\s\S]*?)```/;
+export const isResultCol = (c) => /^(结果|result)\s*[:：]/i.test(c);
+export const colLabel = (c) => String(c).replace(/^(结果|result)\s*[:：]\s*/i, '');
+export function readSamples(body) {
+  const m = String(body || '').match(SAMPLES_RE);
+  if (!m) return null;
+  const rows = parseCSV(m[1]);
+  const cols = rows.shift() || ['编号'];
+  return { cols, rows: rows.map((r) => cols.map((_, i) => r[i] ?? '')) };
+}
+export function writeSamples(body, table) {
+  const block = `\`\`\`samples\n${toCSV([table.cols, ...table.rows]).trimEnd()}\n\`\`\``;
+  return SAMPLES_RE.test(body) ? body.replace(SAMPLES_RE, () => block) : `${String(body || '').trimEnd()}\n\n${block}\n`;
+}
+export function samplesTemplate(numbers, variables, results) {
+  const cols = ['编号', ...variables, ...results.map((r) => `结果: ${r}`), '备注'];
+  const rows = (numbers.length ? numbers : [1]).map((n) => cols.map((_, i) => (i === 0 ? sampleNo(n) : '')));
+  return { cols, rows };
+}
+
+// ---------- follow-ups ("2026-11-04 #09 第3天稳定性"; done ones start with ✓) ----------
+export function parseFollowup(s) {
+  const m = String(s).trim().match(/^(✓\s*)?(\d{4}-\d{2}-\d{2})\s*(.*)$/);
+  return m ? { done: !!m[1], date: m[2], text: m[3] || '' } : null;
+}
+export const formatFollowup = (f) => `${f.done ? '✓ ' : ''}${f.date} ${f.text}`.trim();
+export function addDays(iso, n) {
+  const d = new Date(`${iso}T12:00:00`); d.setDate(d.getDate() + n); return todayISO(d);
+}
+export function daysFrom(iso, today = todayISO()) {
+  return Math.round((new Date(`${iso}T12:00:00`) - new Date(`${today}T12:00:00`)) / 864e5);
+}
+
+// Calendar file so reminders reach the phone's own calendar app.
+export function icsFor(items) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const escText = (s) => String(s).replace(/[\\;,]/g, (c) => `\\${c}`).replace(/\n/g, '\\n');
+  const ev = items.map((it, i) => [
+    'BEGIN:VEVENT',
+    `UID:${it.uid || `${stamp}-${i}`}@labnotebook`,
+    `DTSTAMP:${stamp}`,
+    `DTSTART:${it.date.replace(/-/g, '')}T090000`,
+    `DTEND:${it.date.replace(/-/g, '')}T093000`,
+    `SUMMARY:${escText(it.summary)}`,
+    it.description ? `DESCRIPTION:${escText(it.description)}` : null,
+    'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${escText(it.summary)}`, 'TRIGGER:-PT0M', 'END:VALARM',
+    'END:VEVENT',
+  ].filter(Boolean).join('\r\n'));
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Lab notebook//CN', 'CALSCALE:GREGORIAN', ...ev, 'END:VCALENDAR', ''].join('\r\n');
+}
+
+// ---------- reagent library: library/reagents.csv ----------
+export const REAGENTS_PATH = 'library/reagents.csv';
+export const PROTOCOL_DIR = 'library/protocols/';
+export const REAGENT_FIELDS = [
+  ['id', '编号'], ['name', '名称'], ['spec', '规格/纯度/浓度'], ['vendor', '厂商'], ['catalog', '货号'],
+  ['lot', '批号'], ['cas', 'CAS'], ['location', '存放位置'], ['opened', '开封日期'], ['expires', '有效期至'], ['notes', '备注'],
+];
+export function parseReagents(text) {
+  const rows = parseCSV(text);
+  const head = (rows.shift() || []).map((c) => c.toLowerCase());
+  const keys = head.map((c) => REAGENT_FIELDS.find(([k, l]) => k === c || l.toLowerCase() === c)?.[0] || c);
+  return rows.map((r) => Object.fromEntries(keys.map((k, i) => [k, r[i] ?? '']))).filter((r) => r.id);
+}
+export const reagentsCSV = (list) => toCSV([REAGENT_FIELDS.map(([k]) => k), ...list.map((r) => REAGENT_FIELDS.map(([k]) => r[k] ?? ''))]);
+export function nextReagentId(list) {
+  const max = Math.max(0, ...list.map((r) => parseInt(String(r.id).replace(/\D/g, ''), 10) || 0));
+  return `R-${String(max + 1).padStart(4, '0')}`;
+}
+
+// ---------- protocol library: library/protocols/<ID>.md ----------
+export const protocolPath = (id) => `${PROTOCOL_DIR}${id}.md`;
+export function parseProtocol(md) {
+  const { fm, body } = parseFrontMatter(md);
+  const list = (v) => (Array.isArray(v) ? v : String(v || '').split(',')).map((x) => String(x).trim()).filter(Boolean);
+  return {
+    id: String(fm.id || '').trim(), title: fm.title || '', version: fm.version || '', source: fm.source || '',
+    reagents: list(fm.reagents), variables: list(fm.variables), results: list(fm.results), tags: list(fm.tags), body,
+  };
+}
+export const cleanProtocolId = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9.-]+/g, '-').replace(/^-|-$/g, '');
+
+// Library files are small; read them once per git blob.
+const cache = new Map();
+async function cached(lib, path, parse) {
+  const sha = lib.tree.get(path);
+  if (!sha) return null;
+  const k = `${path}@${sha}`;
+  if (!cache.has(k)) cache.set(k, lib.readText(path).then(parse).catch((e) => { cache.delete(k); throw e; }));
+  return cache.get(k);
+}
+export async function loadReagents(lib) { return (await cached(lib, REAGENTS_PATH, parseReagents)) || []; }
+export function protocolIds(lib) {
+  return [...lib.tree.keys()].filter((p) => p.startsWith(PROTOCOL_DIR) && p.endsWith('.md')).map((p) => p.slice(PROTOCOL_DIR.length, -3)).sort();
+}
+export async function loadProtocol(lib, id) { return cached(lib, protocolPath(id), parseProtocol); }
+export async function loadProtocols(lib) {
+  return (await Promise.all(protocolIds(lib).map((id) => loadProtocol(lib, id).catch(() => null)))).filter(Boolean);
+}
+
+// Reagent expiry as follow-up items.
+export function reagentAlerts(reagents, within = 30, today = todayISO()) {
+  return reagents.filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.expires) && daysFrom(r.expires, today) <= within)
+    .map((r) => ({ date: r.expires, text: `试剂到期：${r.id} ${r.name}${r.lot ? `（批号 ${r.lot}）` : ''}`, reagent: r.id }));
+}

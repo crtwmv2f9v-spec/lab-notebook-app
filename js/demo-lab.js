@@ -1,0 +1,60 @@
+// Sample experiment records shown with ?demo (generic example data).
+import { todayISO } from './model.js';
+
+const SOLUTION_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAKAAAAB4CAIAAAD6wG44AAABDklEQVR42u3RMREAIAwAsSpBCWIrjq0mWJnZCrl7BZ+oWnq4sACwAAuwAAuwAAswYAEWYAEWYAEWYMACLMACLMACLMACDFiABfimMbNXgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAED/gpYgAUYsAWABViABViABVhnG9JjpvdRqp3hAAAAAElFTkSuQmCC';
+const DEVICE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAKAAAAB4CAIAAAD6wG44AAABGklEQVR42u3RsQ0AEBBAUeMoDX+NrTR6G6hIxL3kT/BfmXPo44oFgAVYgAVYgAVYgAELsFIAR3TdDjBgwIABAwYMWIAFWIABAwacArjWtg8wYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCJAgwYMGDAgAEDFmABFmDAgAEfANbjAQYswAIswAIswAIMWN+0AAK9HyA4mQNXAAAAAElFTkSuQmCC';
+const bytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+const day = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return todayISO(d); };
+const compact = (iso) => iso.replace(/-/g, '');
+
+export function labDemoFiles() {
+  const d0 = day(-3); const x1 = `${compact(d0)}-OECT-01`;
+  const d1 = day(-1); const x2 = `${compact(d1)}-OECT-01`;
+  const notebook = {
+    title: '实验记录本（示例）', owner: '示例用户',
+    volumes: [
+      { id: 'oect', title: 'OECT 器件', number: 1, color: '#22335a', code: 'OECT', description: '打印 OECT：沟道、栅极与传感', created: day(-30) },
+      { id: 'sample', title: 'Sample volume', number: 2, color: '#24453a', description: 'A tour of what a page can hold.', created: '2026-10-20' },
+      { id: 'second-sample', title: 'Second sample', number: 3, color: '#5b2228', description: 'Shows links between volumes.', created: '2026-10-22' },
+    ],
+  };
+  const reagents = [
+    'id,name,spec,vendor,catalog,lot,cas,location,opened,expires,notes',
+    `R-0001,PEDOT:PSS 凝胶（GOPS 交联）,打印墨水,示例供应商,,L2410A,,4 °C 冰箱 A2,${day(-20)},${day(12)},使用前回温 30 min`,
+    'R-0002,GOPS,≥98%,示例供应商,440167,MKCQ1234,2530-83-8,干燥柜,,,',
+    `R-0003,PBS 1×,pH 7.4,示例供应商,,P2410,,室温,${day(-10)},${day(40)},`,
+    'R-0004,Ag 导电浆料,DIW 打印用,示例供应商,,AG-2409,,室温,,,',
+  ].join('\n') + '\n';
+  const sop = `---
+id: SOP-DEMO-OECT-TR-v1
+title: OECT 转移曲线测试（示例）
+version: v1
+source: 05_SOP/示例.pdf
+reagents: [R-0003]
+variables: [GOPS (wt%), 退火 (°C)]
+results: [gm_max (mS), Vth (V), on/off]
+tags: [oect, transfer]
+---
+
+## 步骤
+
+1. 加 100 µL PBS，浸泡 60 min。
+2. 脉冲预处理 20 个周期，直到连续 3 条 transfer 的开态 ID 相差 < 2%。
+3. 正式 transfer：VD = −0.3 V，VG −0.2 → +0.6 → −0.2 V，10 mV 步长，20 mV/s。
+4. 再测一条 transfer，检查不可逆漂移。
+`;
+  const page = (fm, body) => `---\n${fm}\n---\n\n${body}\n`;
+  return {
+    'notebook.json': `${JSON.stringify(notebook, null, 2)}\n`,
+    'library/reagents.csv': reagents,
+    'library/protocols/SOP-DEMO-OECT-TR-v1.md': sop,
+    'volumes/oect/pages/0001.md': page(
+      `title: GOPS 浓度对沟道稳定性的影响\ndate: ${d0}\nid: ${x1}\ntags: [oect, pedot-pss, gops]\nprotocol: SOP-DEMO-OECT-TR-v1\nreagents: [R-0001, R-0002, R-0003]\ndata: "01_Data/01_Keithley 4200/${d0.slice(0, 4)}/${x1}_GOPS"\nfollowups: ["✓ ${day(-2)} 稳定性复测（第 1 天）", "${day(0)} 稳定性复测（第 3 天）", "${day(4)} 稳定性复测（第 7 天）"]`,
+      `## 目的\n\n比较 0.5、1、2 wt% GOPS 对 PBS 中 transfer 稳定性的影响。\n\n## 条件与结果\n\n\`\`\`samples\n编号,GOPS (wt%),退火 (°C),结果: gm_max (mS),结果: Vth (V),结果: on/off,备注\n#01,0.5,140,4.1,0.42,180,\n#09,1.0,140,3.6,0.45,240,边缘轻微翘起\n#10,2.0,140,2.2,0.51,95,\n\`\`\`\n\n## 与 SOP 的偏离\n\n- #10 浸泡 75 min（其余 60 min）。\n\n## 现象与讨论\n\nGOPS 增加后 gm 下降，但 #09 的漂移最小。\n\n## 照片\n\n![#09 · 溶液 · 墨水呈深蓝色](${x1}-#09_solution.png)\n\n![#09 · 整片器件](${x1}-#09_device.png)`),
+    [`volumes/oect/attachments/0001/${x1}-#09_solution.png`]: bytes(SOLUTION_PNG),
+    [`volumes/oect/attachments/0001/${x1}-#09_device.png`]: bytes(DEVICE_PNG),
+    'volumes/oect/pages/0002.md': page(
+      `title: 栅极面积对比\ndate: ${d1}\nid: ${x2}\ntags: [oect, gate]\nprotocol: SOP-DEMO-OECT-TR-v1\nreagents: [R-0003, R-0004]`,
+      `## 目的\n\n比较 Ø 3 mm 与 Ø 5 mm 碳栅极。\n\n## 条件与结果\n\n\`\`\`samples\n编号,栅极直径 (mm),结果: gm_max (mS),结果: Vth (V),备注\n#01,3,,,\n#02,5,,,\n\`\`\`\n\n## 与 SOP 的偏离\n\n- \n\n## 现象与讨论\n\n\n## 照片\n`),
+  };
+}

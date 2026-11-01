@@ -1,0 +1,1730 @@
+// Lab notebook: views and routing.
+import {
+  GitHubBackend, MemoryBackend, Library, kv, NetworkError, ConflictError, ApiError, mimeOf,
+} from './store.js';
+import {
+  parseFrontMatter, pagePath, todayISO, nowISO, fmtDate, fmtTime, cleanTag, safeFileName, parseRef, pad,
+} from './model.js';
+import { renderInto, fitChartsForPrint, loadLib } from './render.js';
+import {
+  expId, cleanTopic, nextSeq, sampleNo, sampleId, parseNumbers, readSamples, writeSamples, samplesTemplate, isResultCol, colLabel,
+  parseFollowup, formatFollowup, addDays, daysFrom, icsFor, toCSV, REAGENTS_PATH, REAGENT_FIELDS, parseReagents, reagentsCSV,
+  nextReagentId, loadReagents, loadProtocol, loadProtocols, parseProtocol, protocolPath, cleanProtocolId, reagentAlerts,
+} from './lab.js';
+import { search } from './search.js';
+import { h, icon, debounce, fmtBytes } from './util.js';
+
+// ---------- settings (per device) ----------
+const SKEY = 'labnote.settings';
+const DEFAULTS = {
+  owner: '', repo: '', branch: 'main', token: '',
+  apiBase: 'https://api.github.com', theme: 'auto', downscale: true,
+};
+function loadSettings() {
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SKEY) || '{}') }; } catch { return { ...DEFAULTS }; }
+}
+function saveSettings() { try { localStorage.setItem(SKEY, JSON.stringify(S)); } catch { /* ignore */ } }
+const S = loadSettings();
+const DEMO = new URLSearchParams(location.search).has('demo');
+
+const CLOTHS = [
+  ['墨绿', '#24453a'], ['酒红', '#5b2228'], ['藏青', '#22335a'],
+  ['石板灰', '#3c4247'], ['赭黄', '#7d5a1e'], ['梅紫', '#4a2c4a'],
+];
+
+let lib = null;
+const app = document.getElementById('app');
+let view = { kind: null, token: 0, urls: [] };
+
+// ---------- boot ----------
+function applyTheme() {
+  const t = S.theme;
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  else delete document.documentElement.dataset.theme;
+}
+
+async function startLibrary() {
+  if (lib) lib.listeners.clear();
+  if (DEMO) {
+    await kv.del('demo:state'); await kv.del('demo:outbox');
+    const { demoFiles } = await import('./demo.js');
+    const { labDemoFiles } = await import('./demo-lab.js');
+    lib = new Library(new MemoryBackend({ ...demoFiles(), ...labDemoFiles() }));
+  } else {
+    lib = new Library(new GitHubBackend(S));
+  }
+  lib.on(onLibraryEvent);
+  await lib.open();
+}
+
+async function boot() {
+  applyTheme();
+  if ('serviceWorker' in navigator && !DEMO && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+  window.addEventListener('hashchange', route);
+  window.addEventListener('online', () => lib?.refresh().then(() => lib.flush()));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && lib && Date.now() - (lib.status.at || 0) > 30000) lib.refresh().then(() => lib.flush());
+  });
+  window.addEventListener('labnote:toast', (e) => toast(e.detail));
+  document.addEventListener('keydown', globalKeys);
+  window.addEventListener('beforeprint', () => fitChartsForPrint(document, 680));
+  window.addEventListener('afterprint', () => {
+    fitChartsForPrint(document, null);
+    document.body.classList.remove('print-volume');
+    document.getElementById('print-root').replaceChildren();
+  });
+  if (!DEMO && !S.token) { route(); return; }
+  try { await startLibrary(); } catch (e) { console.error(e); }
+  route();
+  // Fetch the chart library in the background so charts also draw offline.
+  setTimeout(() => { loadLib('plotly').catch(() => {}); loadLib('papa').catch(() => {}); }, 4000);
+}
+
+let rerenderTimer = null;
+function onLibraryEvent(kind) {
+  if (kind === 'status') { updateSync(); return; }
+  if (kind === 'data' && ['home', 'volume', 'page'].includes(view.kind) && !document.querySelector('.modal-root')) {
+    clearTimeout(rerenderTimer);
+    rerenderTimer = setTimeout(() => route({ quiet: true }), 120);
+  }
+  updateSync();
+}
+
+function globalKeys(e) {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
+  if ((e.key === '/' && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) {
+    if (!lib || document.querySelector('.modal-root')) return;
+    e.preventDefault(); openSearch();
+  }
+  if (view.kind === 'page' && !typing && !document.querySelector('.modal-root')) {
+    if (e.key === 'ArrowLeft') document.querySelector('[data-nav="prev"]')?.click();
+    if (e.key === 'ArrowRight') document.querySelector('[data-nav="next"]')?.click();
+  }
+}
+
+// ---------- routing ----------
+function parseHash() {
+  const raw = location.hash.replace(/^#/, '') || '/';
+  const [path, qs] = raw.split('?');
+  return { parts: path.split('/').filter(Boolean).map(decodeURIComponent), params: new URLSearchParams(qs || '') };
+}
+
+async function route(opts = {}) {
+  const { parts, params } = parseHash();
+  if (!DEMO && !S.token && parts[0] !== 'settings') return show('setup', viewSetup);
+  if (!lib) return show('setup', viewSetup);
+  const [a, b, c, d] = parts;
+  if (!a) return show('home', viewHome, opts);
+  if (a === 'settings') return show('settings', viewSettings);
+  if (a === 'lib' && b === 'reagents') return show('library', viewReagents);
+  if (a === 'lib' && b === 'protocols' && !c) return show('library', viewProtocols);
+  if (a === 'lib' && b === 'protocols' && c) return show('library', () => viewProtocol(c));
+  if (a === 'new-exp') { await show('home', viewHome, opts); openNewExperiment(params.get('vol') || ''); return; }
+  if (a === 'search') { await show('home', viewHome, opts); openSearch(params.get('q') || ''); return; }
+  if (a === 'v' && b && !c) return show('volume', () => viewVolume(b), opts);
+  if (a === 'v' && b && c === 'new') return show('editor', () => viewEditor(b, null, params));
+  if (a === 'v' && b && /^\d+$/.test(c) && d === 'edit') return show('editor', () => viewEditor(b, parseInt(c, 10), params));
+  if (a === 'v' && b && /^\d+$/.test(c)) return show('page', () => viewPage(b, parseInt(c, 10), params), opts);
+  return show('missing', () => viewMissing('这个地址在笔记本里找不到。'));
+}
+
+async function show(kind, render, { quiet = false } = {}) {
+  const token = ++view.token;
+  const scroll = window.scrollY;
+  const oldUrls = view.urls;
+  const prevKind = view.kind;
+  view = { kind, token, urls: [] };
+  if (!quiet) closeModals();
+  let el;
+  try { el = await render(); } catch (e) { console.error(e); el = viewMissing(`显示出错：${e.message}`); }
+  if (token !== view.token) return;
+  if (el) app.replaceChildren(el);
+  setTimeout(() => oldUrls.forEach((u) => URL.revokeObjectURL(u)), 1000);
+  if (quiet) window.scrollTo(0, scroll);
+  else if (prevKind !== kind || kind !== 'page') window.scrollTo(0, 0);
+  updateSync();
+}
+
+// ---------- chrome ----------
+function topbar({ back, backLabel = '返回', title, sub, actions = [] }) {
+  return h('header', { class: 'topbar' },
+    h('div', { class: 'tb-left' },
+      back ? h('a', { class: 'btn icon ghost', href: back, 'aria-label': backLabel, title: backLabel }, icon('back')) : null,
+      h('div', { class: 'tb-title' },
+        h('span', { class: 'tb-main' }, title),
+        sub ? h('span', { class: 'tb-sub' }, sub) : null)),
+    h('div', { class: 'tb-right' }, syncChip(), ...actions));
+}
+
+function demoBanner() {
+  if (!DEMO) return null;
+  return h('div', { class: 'banner' }, '这是示例笔记本，这里的修改不会保存。',
+    h('a', { href: location.pathname }, '去我的笔记本'));
+}
+
+function syncChip() {
+  return h('button', { class: 'sync-chip', type: 'button', onclick: openSyncTray, 'aria-live': 'polite' }, h('span', { class: 'dot' }), h('span', { class: 'sync-text' }));
+}
+const SYNC_TEXT = {
+  idle: '打开中', syncing: '同步中', synced: '已同步', offline: '离线', error: '同步出错', empty: '仓库为空',
+};
+function updateSync() {
+  if (!lib) return;
+  const s = lib.status;
+  for (const chip of document.querySelectorAll('.sync-chip')) {
+    chip.dataset.state = s.state;
+    let text = SYNC_TEXT[s.state] || s.state;
+    if (s.state === 'pending') text = `${s.count} 项待同步`;
+    if (s.state === 'attention') text = '需要处理';
+    if (s.state === 'offline' && lib.outbox.length) text = `离线，${lib.outbox.length} 项待同步`;
+    chip.querySelector('.sync-text').textContent = text;
+    chip.title = s.state === 'error' ? s.message || '' : '';
+  }
+}
+
+function openSyncTray() {
+  const s = lib.status;
+  const body = h('div', { class: 'tray' });
+  const lines = {
+    synced: `全部已保存到 GitHub。上次检查 ${fmtTime(new Date(s.at).toISOString())}。`,
+    syncing: '正在检查 GitHub 上的更新。',
+    offline: '现在连不上 GitHub。保存的页面先存在本机，联网后自动同步。',
+    error: s.code === 401
+      ? 'GitHub 拒绝了本设备的令牌，可能已过期或被撤销。请在设置里换一个新令牌。'
+      : `上次同步失败：${s.message || '未知错误'}。`,
+    empty: '笔记仓库里还没有文件。',
+    pending: '有些页面只存在本机，还没同步到 GitHub。',
+    attention: '有些页面没能同步，请逐个选择处理方式。',
+  };
+  body.append(h('p', null, lines[s.state] || ''));
+  if (DEMO) body.append(h('p', { class: 'muted' }, '示例笔记本只存在于这个浏览器标签页。'));
+  for (const o of lib.outbox) {
+    const title = o.fm?.title || '未命名';
+    const where = `${lib.volume(o.vol)?.title || o.vol}, p. ${o.num}`;
+    const row = h('div', { class: 'tray-item' },
+      h('div', null, h('strong', null, title), h('div', { class: 'muted' }, where)));
+    if (o.status === 'conflict' || o.status === 'error') {
+      row.append(h('p', { class: 'warn' }, o.status === 'conflict' ? '这一页在另一台设备上也改过。' : `Couldn’t sync: ${o.error}`),
+        h('div', { class: 'row-actions' },
+          o.status === 'conflict' ? h('button', { class: 'btn', onclick: () => resolveItem(o.id, 'overwrite') }, '保留这个版本') : h('button', { class: 'btn', onclick: () => resolveItem(o.id, 'retry') }, '重试'),
+          h('button', { class: 'btn', onclick: () => resolveItem(o.id, 'new') }, '另存为新页'),
+          h('button', { class: 'btn danger', onclick: () => resolveItem(o.id, 'discard') }, '丢弃')));
+    } else row.append(h('span', { class: 'muted' }, '等待同步'));
+    body.append(row);
+  }
+  modal({
+    title: '同步', body,
+    buttons: [
+      { label: '关闭' },
+      { label: '立即同步', primary: true, run: async () => { await lib.refresh(); await lib.flush(); toast(lib.status.state === 'synced' ? '已是最新。' : '同步完成，但有问题。'); } },
+    ],
+  });
+}
+async function resolveItem(id, how) {
+  closeModals();
+  await lib.resolve(id, how);
+  toast(lib.status.state === 'synced' ? '已同步。' : '完成。');
+}
+
+let toastTimer;
+function toast(msg, action) {
+  const el = document.getElementById('toast');
+  el.replaceChildren(h('span', null, msg));
+  if (action) el.append(h('button', { class: 'btn small', onclick: () => { el.classList.remove('show'); action.run(); } }, action.label));
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), action ? 8000 : 4000);
+}
+
+function closeModals() { document.querySelectorAll('.modal-root').forEach((m) => m.close?.()); }
+
+// buttons: [{label, primary, danger, run(): may return false to keep open}]
+function modal({ title, body, buttons = [{ label: '关闭' }], wide = false, onClose }) {
+  const prevFocus = document.activeElement;
+  const root = h('div', { class: 'modal-root' });
+  const panel = h('div', { class: `modal${wide ? ' wide' : ''}`, role: 'dialog', 'aria-modal': 'true', 'aria-label': title });
+  const close = () => {
+    root.remove();
+    document.removeEventListener('keydown', onKey, true);
+    onClose?.();
+    prevFocus?.focus?.();
+  };
+  root.close = close;
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  document.addEventListener('keydown', onKey, true);
+  root.addEventListener('mousedown', (e) => { if (e.target === root) close(); });
+  const foot = h('div', { class: 'modal-foot' }, buttons.map((b) => h('button', {
+    class: `btn${b.primary ? ' primary' : ''}${b.danger ? ' danger' : ''}`, type: 'button',
+    onclick: async (ev) => {
+      if (!b.run) return close();
+      const btn = ev.currentTarget;
+      btn.disabled = true;
+      try { const keep = await b.run(); if (keep !== false) close(); } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+    },
+  }, b.label)));
+  panel.append(h('div', { class: 'modal-head' }, h('h2', null, title), h('button', { class: 'btn icon ghost', 'aria-label': '关闭', onclick: close }, icon('close'))), h('div', { class: 'modal-body' }, body), buttons.length ? foot : null);
+  root.append(panel);
+  document.body.append(root);
+  setTimeout(() => (panel.querySelector('[autofocus]') || panel.querySelector('input,textarea,select') || panel.querySelector('.modal-foot .btn.primary') || panel).focus?.(), 30);
+  return root;
+}
+
+function menu(anchor, items) {
+  document.querySelectorAll('.menu').forEach((m) => m.remove());
+  const m = h('div', { class: 'menu', role: 'menu' }, items.filter(Boolean).map((it) => h('button', {
+    class: 'menu-item', role: 'menuitem', type: 'button',
+    onclick: () => { m.remove(); it.run(); },
+  }, icon(it.icon, 18), it.label)));
+  document.body.append(m);
+  const r = anchor.getBoundingClientRect();
+  m.style.top = `${r.bottom + window.scrollY + 6}px`;
+  m.style.right = `${Math.max(8, document.documentElement.clientWidth - r.right)}px`;
+  const off = (e) => { if (!m.contains(e.target)) { m.remove(); document.removeEventListener('mousedown', off, true); } };
+  setTimeout(() => document.addEventListener('mousedown', off, true), 0);
+  m.querySelector('button')?.focus();
+  m.addEventListener('keydown', (e) => { if (e.key === 'Escape') { m.remove(); anchor.focus(); } });
+}
+
+function field(label, value, cls = '') {
+  return h('div', { class: `field ${cls}` }, h('span', { class: 'lbl' }, label), h('span', { class: 'val' }, value ?? ''));
+}
+function signerName() { return lib?.notebook?.owner || '已签名'; }
+
+// ---------- setup ----------
+function tokenUrl(owner = S.owner) {
+  const p = new URLSearchParams({
+    name: 'Lab notebook (this device)',
+    description: 'Lets the lab notebook app on one device read and write the notebook repository.',
+    expires_in: '366',
+    contents: 'write',
+  });
+  if (owner) p.set('target_name', owner);
+  return `https://github.com/settings/personal-access-tokens/new?${p}`;
+}
+
+// On <name>.github.io the GitHub account is known, so suggest it.
+function guessOwner() {
+  const m = location.hostname.match(/^([a-z0-9-]+)\.github\.io$/i);
+  return m ? m[1] : '';
+}
+
+// Entries belong in a private repository; ask before using a public one.
+async function confirmPrivate(acc, fullName) {
+  if (acc.private) return true;
+  const c = await choose('这个仓库是公开的', `Anyone on the internet can read what is stored in ${fullName}. Make it private on GitHub (Settings, then Danger Zone, then Change visibility) before writing in it.`, [['cancel', '返回'], ['ok', '仍然使用']]);
+  return c === 'ok';
+}
+
+function viewSetup() {
+  const start = S.owner && S.repo ? `${S.owner}/${S.repo}` : guessOwner() ? `${guessOwner()}/` : '';
+  const repoIn = h('input', { value: start, placeholder: 'your-github-name/lab-notebook-entries', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', id: 'f-repo' });
+  const tokenLink = h('a', { href: tokenUrl(guessOwner()), target: '_blank', rel: 'noopener' }, '在 GitHub 上创建令牌');
+  const repoName = h('code', null, start.split('/')[1] || '你的记录仓库');
+  repoIn.addEventListener('input', () => {
+    const [o, r] = repoIn.value.trim().split('/');
+    tokenLink.href = tokenUrl(o);
+    repoName.textContent = r || '你的记录仓库';
+  });
+  const branchIn = h('input', { value: S.branch, autocomplete: 'off', spellcheck: 'false', id: 'f-branch' });
+  const tokenIn = h('input', { type: 'password', autocomplete: 'off', spellcheck: 'false', id: 'f-token', placeholder: 'github_pat_…' });
+  const err = h('p', { class: 'form-error', role: 'alert' });
+  const go = h('button', { class: 'btn primary', type: 'submit' }, '连接笔记本');
+  const form = h('form', {
+    class: 'setup-form',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      const [owner, repo] = repoIn.value.trim().split('/');
+      const token = tokenIn.value.trim();
+      if (!owner || !repo) { err.textContent = '仓库请写成 用户名/仓库名。'; return; }
+      if (!token) { err.textContent = '粘贴你在 GitHub 上创建的令牌。'; return; }
+      go.disabled = true; go.textContent = '检查中…';
+      try {
+        const be = new GitHubBackend({ owner, repo, branch: branchIn.value.trim() || 'main', token, apiBase: S.apiBase });
+        const acc = await be.checkAccess();
+        if (!acc.canWrite) throw new Error('这个令牌只能读不能写。请在 GitHub 上把 Contents 设为 “Read and write”。');
+        if (!(await confirmPrivate(acc, `${owner}/${repo}`))) return;
+        Object.assign(S, { owner, repo, branch: branchIn.value.trim() || 'main', token });
+        saveSettings();
+        await startLibrary();
+        location.hash = '#/';
+        route();
+      } catch (e2) {
+        err.textContent = e2 instanceof ApiError && e2.status === 401 ? 'GitHub 拒绝了这个令牌。请检查是否复制完整、是否过期。'
+          : e2 instanceof ApiError && e2.status === 404 ? `This token can’t see ${owner}/${repo}. When creating it, choose “Only select repositories” and pick that repository.`
+            : e2 instanceof NetworkError ? '连不上 GitHub，请检查网络后重试。' : e2.message;
+      } finally { go.disabled = false; go.textContent = '连接笔记本'; }
+    },
+  },
+  h('label', { for: 'f-repo' }, '存放记录的私有仓库'), repoIn,
+  h('label', { for: 'f-branch' }, '分支'), branchIn,
+  h('label', { for: 'f-token' }, 'GitHub 令牌'), tokenIn,
+  err, go);
+
+  return h('div', { class: 'view setup' },
+    h('header', { class: 'topbar' }, h('div', { class: 'tb-left' }, h('div', { class: 'tb-title' }, h('span', { class: 'tb-main' }, '实验记录本')))),
+    h('article', { class: 'sheet plain narrow' },
+      h('h1', null, '连接这台设备'),
+      h('p', null, '记录保存在你的 GitHub 私有仓库里。每台手机、平板或电脑都需要一个只能读写这个仓库的令牌，令牌只存在这台设备上。'),
+      h('ol', { class: 'steps' },
+        h('li', null, '新建一个空的 ', h('strong', null, 'private'), ' 仓库（如果还没有）。'),
+        h('li', null, tokenLink, '。在 Repository access 里选 ', h('em', null, 'Only select repositories'), '，再选 ', repoName, '。Contents 已自动设为 Read and write。'),
+        h('li', null, '复制令牌，粘贴到下面，然后连接。')),
+      form,
+      h('p', { class: 'muted' }, '想先看看效果？', h('a', { href: '?demo#/v/sample/1' }, '打开示例笔记本'), '.')));
+}
+
+// ---------- home ----------
+function viewHome() {
+  const vols = lib.volumes();
+  const actions = [
+    h('button', { class: 'btn primary', type: 'button', onclick: () => openNewExperiment('') }, icon('plus', 18), h('span', null, '新建实验')),
+    h('a', { class: 'btn ghost', href: '#/lib/reagents' }, '试剂库'),
+    h('a', { class: 'btn ghost', href: '#/lib/protocols' }, '步骤库'),
+    h('button', { class: 'btn icon ghost', 'aria-label': '搜索', title: '搜索（/）', onclick: () => openSearch() }, icon('search')),
+    h('a', { class: 'btn icon ghost', href: '#/settings', 'aria-label': '设置', title: '设置' }, icon('gear')),
+  ];
+  const root = h('div', { class: 'view home' }, topbar({ title: lib.notebook.title || '实验记录本', sub: lib.notebook.owner || null, actions }), demoBanner());
+
+  if (lib.empty) {
+    root.append(h('article', { class: 'sheet plain narrow' },
+      h('h1', null, '开始使用'),
+      h('p', null, `The repository ${S.owner}/${S.repo} has no files yet. Starting it adds a small settings file; your volumes and pages are added as you write.`),
+      h('div', { class: 'form' },
+        h('label', { for: 'st-name' }, '签名用的名字'),
+        h('input', { id: 'st-name', placeholder: 'e.g. A. Researcher', autocomplete: 'name' }),
+        h('button', { class: 'btn primary', onclick: async (e) => {
+          const btn = e.currentTarget; btn.disabled = true;
+          try { await lib.initialize(document.getElementById('st-name').value.trim()); route(); } catch (err) { toast(err.message); btn.disabled = false; }
+        } }, '开始'))));
+    return root;
+  }
+  if (!lib.head && lib.status.state !== 'synced') {
+    root.append(h('p', { class: 'loading' }, lib.status.state === 'offline' ? '连不上 GitHub，本机也还没有缓存。' : '正在打开笔记本…'));
+    if (lib.status.state === 'error') root.append(h('p', { class: 'loading' }, lib.status.message || ''));
+    return root;
+  }
+
+  root.append(todoPanel());
+  const shelf = h('section', { class: 'shelf', 'aria-label': '卷' });
+  for (const v of vols) shelf.append(cover(v));
+  shelf.append(h('button', { class: 'cover new-cover', type: 'button', onclick: openNewVolume },
+    icon('plus', 28), h('span', null, vols.length ? '新建卷（项目）' : '建第一个卷（项目）')));
+  root.append(shelf);
+  if (!vols.length) root.append(h('p', { class: 'hint' }, '每个项目一个卷，页码在卷内连续编号，就像装订的记录本。'));
+
+  const recent = lib.allPages().sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.num - a.num).slice(0, 8);
+  if (recent.length) {
+    root.append(h('section', { class: 'sheet ledger recent' },
+      h('h2', null, '最近的记录'),
+      h('ol', { class: 'ledger-rows' }, recent.map((p) => h('li', null, h('a', { href: `#/v/${p.vol}/${p.num}` },
+        h('span', { class: 'l-date' }, fmtDate(p.date)),
+        h('span', { class: 'l-title' }, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, p.title, p.pending ? h('span', { class: 'pending-tag' }, '待同步') : null),
+        h('span', { class: 'l-where' }, `${lib.volume(p.vol)?.title || p.vol}, p. ${p.num}`)))))));
+  }
+  return root;
+}
+
+function cover(v) {
+  const pages = lib.pages(v.id);
+  return h('a', { class: 'cover', href: `#/v/${v.id}`, style: { '--cloth': v.color || CLOTHS[0][1] } },
+    h('span', { class: 'cover-label' },
+      h('span', { class: 'cl-kind' }, '实验记录本'),
+      h('span', { class: 'cl-no' }, `No. ${v.number}`),
+      h('span', { class: 'cl-title' }, v.title),
+      h('span', { class: 'cl-meta' }, `${pages.length} 页`, h('br'), `开始于 ${fmtDate(v.created)}`)));
+}
+
+function openNewVolume() {
+  const title = h('input', { id: 'nv-title', placeholder: 'e.g. Thyroid cytology classifier', autofocus: true });
+  const desc = h('input', { id: 'nv-desc', placeholder: '可不填' });
+  const code = h('input', { id: 'nv-code', placeholder: '例如 OECT（实验编号中间那段）', autocapitalize: 'characters' });
+  const used = new Set(lib.volumes().map((v) => v.color));
+  const pick = CLOTHS.find(([, c]) => !used.has(c))?.[1] || CLOTHS[0][1];
+  const swatches = clothPicker(pick);
+  modal({
+    title: '新建卷',
+    body: h('div', { class: 'form' },
+      h('label', { for: 'nv-title' }, '项目'), title,
+      h('label', { for: 'nv-desc' }, '说明'), desc,
+      h('label', { for: 'nv-code' }, '主题代码'), code,
+      h('span', { class: 'label' }, '封面'), swatches.el),
+    buttons: [{ label: '取消' }, {
+      label: '创建', primary: true,
+      run: async () => {
+        if (!title.value.trim()) { title.focus(); toast('给这个卷起个项目名。'); return false; }
+        try {
+          const id = await lib.createVolume({ title: title.value.trim(), description: desc.value.trim(), color: swatches.value(), code: cleanTopic(code.value) });
+          location.hash = `#/v/${id}`;
+        } catch (e) {
+          if (e instanceof NetworkError) throw new Error('离线中，联网后才能新建卷。');
+          throw e;
+        }
+      },
+    }],
+  });
+}
+
+function clothPicker(current) {
+  let value = current;
+  const el = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': '封面颜色' });
+  for (const [name, c] of CLOTHS) {
+    const b = h('button', { type: 'button', class: 'swatch', role: 'radio', 'aria-checked': String(c === value), 'aria-label': name, title: name, style: { '--cloth': c } });
+    b.onclick = () => { value = c; el.querySelectorAll('.swatch').forEach((s) => s.setAttribute('aria-checked', String(s === b))); };
+    el.append(b);
+  }
+  return { el, value: () => value };
+}
+
+// ---------- volume contents ----------
+function viewVolume(id) {
+  const v = lib.volume(id);
+  if (!v) return viewMissing('笔记本里没有这个卷，可能已改名或删除。');
+  const pages = lib.pages(id);
+  const more = h('button', { class: 'btn icon ghost', 'aria-label': '更多', onclick: (e) => menu(e.currentTarget, [
+    { icon: 'edit', label: '卷信息', run: () => openVolumeDetails(v) },
+    pages.length ? { icon: 'print', label: '打印整卷 / 存为 PDF', run: () => printVolume(id) } : null,
+    { icon: 'search', label: '在本卷中搜索', run: () => openSearch('', id) },
+  ]) }, icon('more'));
+  const root = h('div', { class: 'view volume' },
+    topbar({ back: '#/', backLabel: '所有卷', title: v.title, sub: `第 ${v.number} 卷`, actions: [
+      h('button', { class: 'btn primary', type: 'button', onclick: () => openNewExperiment(id) }, icon('plus', 18), h('span', null, '新建实验')),
+      h('a', { class: 'btn', href: `#/v/${id}/new` }, icon('write', 18), h('span', { class: 'wide-only' }, '普通页')), more] }),
+    demoBanner());
+  const sheet = h('article', { class: 'sheet toc' },
+    h('header', { class: 'sheet-head' },
+      h('div', { class: 'form-row' }, field('项目', v.title, 'grow'), field('卷号', v.number)),
+      h('div', { class: 'form-row' }, field('开始于', fmtDate(v.created), 'grow'), field('页数', pages.length))),
+    v.description ? h('p', { class: 'vol-desc' }, v.description) : null,
+    h('h1', { class: 'toc-title' }, '目录'));
+  if (!pages.length) {
+    sheet.append(h('div', { class: 'empty' }, h('p', null, '还没有页面。'), h('a', { class: 'btn', href: `#/v/${id}/new` }, icon('write', 18), '写第 1 页')));
+  } else {
+    sheet.append(h('table', { class: 'toc-table' },
+      h('thead', null, h('tr', null, h('th', { scope: 'col', class: 'c-no' }, '页'), h('th', { scope: 'col', class: 'c-date' }, '日期'), h('th', { scope: 'col' }, '标题'), h('th', { scope: 'col', class: 'c-sig' }, '已签名'))),
+      h('tbody', null, pages.map((p) => h('tr', { onclick: (e) => { if (!e.target.closest('a')) location.hash = `#/v/${id}/${p.num}`; } },
+        h('td', { class: 'c-no' }, p.num),
+        h('td', { class: 'c-date' }, fmtDate(p.date)),
+        h('td', null, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, h('a', { href: `#/v/${id}/${p.num}` }, p.title),
+          p.pending ? h('span', { class: 'pending-tag' }, '待同步') : null,
+          p.tags.length ? h('span', { class: 'toc-tags' }, p.tags.map((t) => `#${t}`).join(' ')) : null),
+        h('td', { class: 'c-sig' }, p.signed ? h('span', { class: 'initials', title: `Signed ${fmtDate(p.signed)}` }, initials(p.signer || signerName())) : h('span', { class: 'sr' }, '未签名')))))));
+  }
+  root.append(sheet);
+  return root;
+}
+function initials(name) {
+  return String(name).replace(/,.*$/, '').split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 3);
+}
+
+function openVolumeDetails(v) {
+  const title = h('input', { id: 'vd-title', value: v.title });
+  const desc = h('input', { id: 'vd-desc', value: v.description || '' });
+  const code = h('input', { id: 'vd-code', value: v.code || '' });
+  const sw = clothPicker(v.color || CLOTHS[0][1]);
+  modal({
+    title: '卷信息',
+    body: h('div', { class: 'form' },
+      h('label', { for: 'vd-title' }, '项目'), title,
+      h('label', { for: 'vd-desc' }, '说明'), desc,
+      h('label', { for: 'vd-code' }, '主题代码'), code,
+      h('span', { class: 'label' }, '封面'), sw.el,
+      h('p', { class: 'muted' }, `Volume ${v.number}. Its folder in the repository is volumes/${v.id}.`)),
+    buttons: [{ label: '取消' }, {
+      label: '保存', primary: true,
+      run: async () => {
+        if (!title.value.trim()) { toast('项目名不能为空。'); return false; }
+        await lib.updateNotebook((nb) => {
+          const x = nb.volumes.find((y) => y.id === v.id);
+          Object.assign(x, { title: title.value.trim(), description: desc.value.trim(), color: sw.value(), code: cleanTopic(code.value) });
+        }, `Update volume: ${title.value.trim()}`);
+        toast('已保存。');
+      },
+    }],
+  });
+}
+
+// ---------- page ----------
+function pageCtx(vol, num, local, extra = {}) {
+  return {
+    lib, vol, num, urls: view.urls, attNames: vol && num ? lib.attachments(vol, num) : [], ...extra,
+    resolveBlob: async (name) => {
+      name = decodeURIComponent(name);
+      if (local?.has(name)) return local.get(name);
+      if (name.startsWith('/')) return lib.readBlob(name.slice(1));
+      return lib.readAttachment(vol, num, name);
+    },
+  };
+}
+
+function refLink(key, curVol) {
+  const r = parseRef(key);
+  if (!r) return null;
+  const p = lib.page(r.vol, r.num);
+  const label = r.vol === curVol ? `p. ${r.num}` : `${lib.volume(r.vol)?.title || r.vol}, p. ${r.num}`;
+  return h('a', { class: 'pageref', href: `#/v/${r.vol}/${r.num}`, title: p?.title || '' }, label);
+}
+
+// Builds the page sheet; `ready` resolves when figures and charts are drawn.
+async function buildPageSheet(vol, num, { forPrint = false } = {}) {
+  const v = lib.volume(vol);
+  const entry = lib.page(vol, num);
+  const md = await lib.readPage(vol, num);
+  const { fm, body } = parseFrontMatter(md);
+  const content = h('div', { class: 'sheet-body prose' });
+  const ready = renderInto(content, body, pageCtx(vol, num, null, { xid: fm.id || '' }));
+  const panel = await expPanel(fm, vol, num).catch(() => null);
+  const cont = entry?.continues ? parseRef(entry.continues) : null;
+  const next = lib.continuedOn(vol, num);
+  const backs = lib.backlinks(vol, num);
+  const tags = entry?.tags || [];
+  const sig = fm.signed
+    ? h('span', { class: 'sig' }, fm.signer || signerName())
+    : h('span', { class: 'unsigned' }, '未签名');
+  const sheet = h('article', { class: 'sheet page', 'data-vol': vol, 'data-num': num },
+    h('header', { class: 'sheet-head' },
+      h('div', { class: 'form-row' },
+        field('项目', v?.title || vol, 'grow'),
+        field('卷号', v?.number ?? ''),
+        h('div', { class: 'stamp', 'aria-label': `Page ${num}` }, h('span', { class: 'stamp-no' }, 'No'), pad(num))),
+      h('div', { class: 'form-row' },
+        field('标题', h('span', { class: 'title' }, fm.title || '未命名'), 'grow'),
+        field('日期', fmtDate(fm.date))),
+      fm.id ? h('div', { class: 'form-row' }, field('实验编号', h('button', { class: 'linkish xid', type: 'button', title: '复制编号', onclick: () => copyText(fm.id) }, fm.id), 'grow')) : null),
+    panel,
+    cont ? h('p', { class: 'cont from' }, '接上页 ', refLink(entry.continues, vol)) : null,
+    content,
+    next ? h('p', { class: 'cont to' }, '续见 ', refLink(`${next.vol}/${next.num}`, vol)) : null,
+    h('footer', { class: 'sheet-foot' },
+      tags.length ? h('div', { class: 'form-row' }, field('标签', h('span', { class: 'tags' }, tags.map((t) => h('a', { href: `#/search?q=${encodeURIComponent(`#${t}`)}` }, `#${t}`))), 'grow')) : null,
+      backs.length ? h('div', { class: 'form-row' }, field('被引用于', h('span', { class: 'backs' }, backs.map((p) => refLink(`${p.vol}/${p.num}`, vol))), 'grow')) : null,
+      h('div', { class: 'form-row sig-row' }, field('已签名', sig, 'grow'), field('日期', fm.signed ? fmtDate(fm.signed) : '')),
+      h('div', { class: 'form-row sig-row print-only' }, field('见证人', '', 'grow'), field('日期', '')),
+      (fm.amended || []).length ? h('p', { class: 'amended' }, `修订于 ${fm.amended.map(fmtDate).join('、')}`) : null,
+      entry?.pending ? h('p', { class: 'pending-note no-print' }, '已存在本机，联网后提交到 GitHub。') : null));
+  if (forPrint) sheet.classList.add('for-print');
+  return { el: sheet, ready, fm, body };
+}
+
+async function viewPage(vol, num, params) {
+  const v = lib.volume(vol);
+  if (!v) return viewMissing('笔记本里没有这个卷。');
+  if (!lib.page(vol, num)) {
+    return viewMissing(`${v.title} 第 ${num} 页还没写。`, h('a', { class: 'btn primary', href: `#/v/${vol}/new` }, '写新页'));
+  }
+  const { el: sheet, fm } = await buildPageSheet(vol, num);
+  const pages = lib.pages(vol);
+  const idx = pages.findIndex((p) => p.num === num);
+  const prev = pages[idx - 1]; const next = pages[idx + 1];
+  const more = h('button', { class: 'btn icon ghost', 'aria-label': '更多', onclick: (e) => menu(e.currentTarget, [
+    { icon: 'continue', label: '在新页续写', run: () => { location.hash = `#/v/${vol}/new?continues=${num}`; } },
+    { icon: 'copy', label: '复制本页链接', run: () => copyRef(vol, num) },
+    { icon: 'print', label: '打印 / 存为 PDF', run: () => window.print() },
+    { icon: 'history', label: '历史版本', run: () => openHistory(vol, num) },
+    { icon: 'print', label: '打印纸质记录卡', run: () => printCard(vol, num) },
+    fm.id ? { icon: 'copy', label: '命名助手（数据/照片文件名）', run: () => openNaming(fm, num) } : null,
+    (fm.followups || []).length ? { icon: 'download', label: '提醒导出到手机日历', run: () => exportIcs((fm.followups || []).map(parseFollowup).filter((f) => f && !f.done).map((f) => ({ ...f, xid: fm.id, page: { vol, num } }))) } : null,
+  ]) }, icon('more'));
+  const photo = h('button', { class: 'btn', type: 'button', onclick: () => openPhotoCapture(vol, num) }, icon('attach', 18), h('span', { class: 'wide-only' }, '拍照/加图'));
+  const results = /```samples/.test(await lib.readPage(vol, num)) ? h('button', { class: 'btn', type: 'button', onclick: () => openSamplesEditor(vol, num) }, icon('table', 18), h('span', { class: 'wide-only' }, '录入表格')) : null;
+  const edit = h('a', { class: 'btn', href: `#/v/${vol}/${num}/edit` }, icon('edit', 18), h('span', { class: 'wide-only' }, fm.signed ? '修订' : '编辑'));
+  const pager = h('nav', { class: 'pager', 'aria-label': '页数' },
+    prev ? h('a', { class: 'btn ghost', href: `#/v/${vol}/${prev.num}`, 'data-nav': 'prev', rel: 'prev' }, icon('back', 18), `p. ${prev.num}`) : h('span'),
+    h('a', { class: 'btn ghost', href: `#/v/${vol}` }, '目录'),
+    next ? h('a', { class: 'btn ghost', href: `#/v/${vol}/${next.num}`, 'data-nav': 'next', rel: 'next' }, `p. ${next.num}`, icon('next', 18))
+      : h('a', { class: 'btn ghost', href: `#/v/${vol}/new` }, icon('plus', 18), '新页'));
+  const dir = lastPageVisited && lastPageVisited.vol === vol ? Math.sign(num - lastPageVisited.num) : 0;
+  if (dir) sheet.classList.add(dir > 0 ? 'turn-next' : 'turn-prev');
+  lastPageVisited = { vol, num };
+  addSwipe(sheet, prev && `#/v/${vol}/${prev.num}`, next && `#/v/${vol}/${next.num}`);
+  return h('div', { class: 'view page-view' },
+    topbar({ back: `#/v/${vol}`, backLabel: '目录', title: v.title, sub: `第 ${num} 页`, actions: [results, photo, edit, more] }),
+    demoBanner(), sheet, pager);
+}
+let lastPageVisited = null;
+
+function addSwipe(el, prevHref, nextHref) {
+  let x0 = null; let y0 = 0;
+  el.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || e.target.closest('.printout, table, pre, .katex-display, input, textarea')) { x0 = null; return; }
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+  }, { passive: true });
+  el.addEventListener('touchend', (e) => {
+    if (x0 == null) return;
+    const dx = e.changedTouches[0].clientX - x0; const dy = e.changedTouches[0].clientY - y0;
+    x0 = null;
+    if (Math.abs(dx) > 80 && Math.abs(dy) < 50) {
+      if (dx < 0 && nextHref) location.hash = nextHref;
+      if (dx > 0 && prevHref) location.hash = prevHref;
+    }
+  });
+}
+
+async function copyRef(vol, num) {
+  const ref = `[[${vol}/${num}]]`;
+  try { await navigator.clipboard.writeText(ref); toast(`已复制 ${ref}，可粘贴到任何页面。`); } catch { toast(`Link text: ${ref}`); }
+}
+
+async function openHistory(vol, num) {
+  const list = h('div', { class: 'history' }, h('p', { class: 'muted' }, '读取中…'));
+  modal({ title: `第 ${num} 页的历史版本`, body: list, buttons: [{ label: '关闭' }] });
+  try {
+    const items = await lib.history(pagePath(vol, num));
+    list.replaceChildren(items.length ? h('ol', { class: 'ledger-rows' }, items.map((c) => h('li', null,
+      h(c.url ? 'a' : 'span', c.url ? { href: c.url, target: '_blank', rel: 'noopener' } : null,
+        h('span', { class: 'l-date' }, `${fmtDate(c.date)} ${fmtTime(c.date)}`),
+        h('span', { class: 'l-title' }, c.message.split('\n')[0]),
+        h('span', { class: 'l-where' }, c.sha.slice(0, 7)))))) : h('p', null, '还没有保存的版本。'),
+    h('p', { class: 'muted' }, 'GitHub 保存了每个版本，点开可以看具体改动。'));
+  } catch (e) {
+    list.replaceChildren(h('p', null, e instanceof NetworkError ? '查看历史需要连接 GitHub。' : e.message));
+  }
+}
+
+function viewMissing(msg, action) {
+  return h('div', { class: 'view missing' },
+    topbar({ back: '#/', backLabel: '所有卷', title: '找不到' }),
+    h('article', { class: 'sheet plain narrow' }, h('p', null, msg), action || h('a', { class: 'btn', href: '#/' }, '回到首页')));
+}
+
+// ---------- editor ----------
+async function prepareFile(file) {
+  if (S.downscale && /^image\/(jpeg|webp|heic|heif)$/.test(file.type) && file.size > 1.5e6) {
+    try {
+      const bmp = await createImageBitmap(file);
+      const scale = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
+      if (blob && blob.size < file.size) return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
+    } catch { /* keep original */ }
+  }
+  return file;
+}
+
+async function viewEditor(vol, num, params) {
+  const v = lib.volume(vol);
+  if (!v) return viewMissing('笔记本里没有这个卷。');
+  const isNew = num == null;
+  const pending = isNew ? null : lib.pendingFor(vol, num);
+  const dkey = `${lib.key}:draft:${vol}/${isNew ? 'new' : num}`;
+  let fm; let body; let baseSha = null;
+  const local = new Map();
+  const removed = new Set();
+  let existing = [];
+  if (!isNew) {
+    if (!lib.page(vol, num)) return viewMissing(`第 ${num} 页还不存在。`);
+    ({ fm, body } = parseFrontMatter(await lib.readPage(vol, num)));
+    baseSha = pending ? (pending.baseSha ?? null) : (lib.tree.get(pagePath(vol, num)) || null);
+    existing = lib.attachments(vol, num);
+    for (const a of pending?.attachments || []) local.set(a.name, new Blob([a.buf], { type: a.type }));
+  } else {
+    fm = { title: '', date: todayISO(), tags: [] };
+    const c = params.get('continues');
+    if (c) fm.continues = c;
+  }
+  const origSigned = !!fm.signed;
+  let notice = null;
+  const draft = await kv.get(dkey).catch(() => null);
+  if (draft) {
+    fm = draft.fm; body = draft.body;
+    if (!isNew) {
+      if ((draft.baseSha ?? null) !== baseSha) notice = '草稿写完后这一页又被改过。保存时会让你选择保留哪个版本。';
+      baseSha = draft.baseSha ?? null;
+    }
+    for (const name of draft.attachments || []) {
+      const a = await kv.get(`${dkey}:att:${name}`).catch(() => null);
+      if (a) local.set(name, new Blob([a.buf], { type: a.type }));
+    }
+    for (const n of draft.removed || []) removed.add(n);
+    toast(`已恢复 ${fmtTime(new Date(draft.updated).toISOString())} 的未保存草稿。`, { label: '丢弃草稿', run: async () => { await clearDraft(); route(); } });
+  }
+
+  // ----- fields -----
+  const titleIn = h('input', { class: 'val title-input', value: fm.title || '', placeholder: '这一页写什么？', 'aria-label': '标题' });
+  const dateIn = h('input', { type: 'date', class: 'val', value: String(fm.date || todayISO()).slice(0, 10), 'aria-label': '日期' });
+  const tagsIn = h('input', { class: 'val', value: (fm.tags || []).join(', '), placeholder: '逗号分隔，例如 oect, gops', 'aria-label': '标签' });
+  const ta = h('textarea', { class: 'editor-text', spellcheck: 'true', 'aria-label': '正文', placeholder: '在这里写。支持 Markdown、$公式$、[[页面链接]] 和附件。' });
+  ta.value = body || '';
+  const preview = h('div', { class: 'prose preview', 'aria-label': '预览' });
+  const status = h('span', { class: 'ed-status', 'aria-live': 'polite' }, draft ? '已恢复草稿' : '');
+  const strip = h('div', { class: 'att-strip' });
+  const fileIn = h('input', { type: 'file', multiple: true, hidden: true, accept: 'image/*,.csv,.tsv,.json,.ipynb,.pdf,.txt,.xlsx,.zip' });
+
+  let contLine = null;
+  const renderCont = () => {
+    const c = fm.continues ? parseRef(fm.continues, vol) : null;
+    const nl = c ? h('p', { class: 'cont from' }, '接上页 ', refLink(`${c.vol}/${c.num}`, vol), ' ',
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => { delete fm.continues; renderCont(); changed(); } }, '移除')) : h('span', { hidden: true });
+    if (contLine) contLine.replaceWith(nl);
+    contLine = nl;
+  };
+  renderCont();
+
+  const collect = () => ({
+    fm: {
+      ...fm,
+      title: titleIn.value.trim(),
+      date: dateIn.value || todayISO(),
+      tags: [...new Set(tagsIn.value.split(/[,\n]/).map(cleanTag).filter(Boolean))],
+    },
+    body: ta.value,
+  });
+
+  const saveDraft = debounce(async () => {
+    const c = collect();
+    await kv.set(dkey, { fm: c.fm, body: c.body, baseSha, attachments: [...local.keys()], removed: [...removed], updated: Date.now() }).catch(() => {});
+    status.textContent = `草稿已存在本机，${fmtTime(nowISO())}`;
+  }, 700);
+  async function clearDraft() {
+    saveDraft.cancel();
+    for (const k of await kv.keys(`${dkey}:`)) await kv.del(k);
+    await kv.del(dkey);
+  }
+
+  const previewUrls = [];
+  const renderPreview = debounce(async () => {
+    if (!wide() && split.dataset.tab !== 'preview') return;
+    const old = previewUrls.splice(0);
+    const ctx = pageCtx(vol, num ?? lib.nextNumber(vol), local);
+    ctx.urls = previewUrls;
+    const y = preview.scrollTop;
+    await renderInto(preview, ta.value, ctx);
+    preview.scrollTop = y;
+    old.forEach((u) => URL.revokeObjectURL(u));
+  }, 350);
+
+  const autosize = () => { ta.style.height = 'auto'; ta.style.height = `${Math.max(ta.scrollHeight + 4, 360)}px`; };
+  const changed = () => { status.textContent = '编辑中'; saveDraft(); renderPreview(); };
+  for (const el of [titleIn, dateIn, tagsIn]) el.addEventListener('input', changed);
+  ta.addEventListener('input', () => { autosize(); changed(); });
+
+  // ----- text helpers -----
+  const fire = () => ta.dispatchEvent(new Event('input'));
+  function wrap(before, after = before, placeholder = 'text') {
+    const s = ta.selectionStart; const e = ta.selectionEnd;
+    const sel = ta.value.slice(s, e);
+    ta.focus();
+    ta.setRangeText(before + (sel || placeholder) + after, s, e, 'end');
+    if (!sel) { ta.selectionStart = s + before.length; ta.selectionEnd = s + before.length + placeholder.length; }
+    fire();
+  }
+  function prefixLines(prefix) {
+    const s = ta.selectionStart; const e = ta.selectionEnd;
+    const start = ta.value.lastIndexOf('\n', s - 1) + 1;
+    const chunk = ta.value.slice(start, e);
+    ta.focus();
+    ta.setRangeText(chunk.split('\n').map((l) => prefix + l).join('\n'), start, e, 'end');
+    fire();
+  }
+  function insertBlock(text, selectFrom, selectLen) {
+    const s = ta.selectionStart;
+    const before = ta.value.slice(0, s);
+    const lead = !before || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+    ta.focus();
+    ta.setRangeText(`${lead}${text}\n`, s, ta.selectionEnd, 'end');
+    if (selectFrom != null) { ta.selectionStart = s + lead.length + selectFrom; ta.selectionEnd = ta.selectionStart + selectLen; }
+    fire();
+  }
+  function insertInline(text) { ta.focus(); ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, 'end'); fire(); }
+
+  // ----- attachments -----
+  const allNames = () => new Set([...existing.filter((n) => !removed.has(n)), ...local.keys()]);
+  function uniqueName(name) {
+    const taken = allNames();
+    if (!taken.has(name)) return name;
+    const m = name.match(/^(.*?)(\.[^.]*)?$/);
+    let i = 2;
+    while (taken.has(`${m[1]}-${i}${m[2] || ''}`)) i++;
+    return `${m[1]}-${i}${m[2] || ''}`;
+  }
+  async function attach(files) {
+    for (const f0 of files) {
+      const f = await prepareFile(f0);
+      let base = f.name && !/^image\.\w+$/.test(f.name) ? f.name : `pasted-${Date.now().toString(36)}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`;
+      const name = uniqueName(safeFileName(base));
+      local.set(name, f);
+      removed.delete(name);
+      await kv.set(`${dkey}:att:${name}`, { type: f.type || mimeOf(name), buf: await f.arrayBuffer() }).catch(() => {});
+      const ext = name.split('.').pop().toLowerCase();
+      if ((f.type || '').startsWith('image/')) {
+        insertBlock(`![${name.replace(/\.\w+$/, '').replace(/[-_]+/g, ' ')}](${name})`);
+      } else if (['csv', 'tsv'].includes(ext)) {
+        const first = (await f.slice(0, 4096).text()).split(/\r?\n/)[0] || '';
+        const cols = first.split(ext === 'tsv' ? '\t' : ',').map((c) => c.trim().replace(/^"|"$/g, ''));
+        const errCol = cols.slice(1).find((c) => /(^|[_\s-])(sd|se|sem|err|error|ci)$/i.test(c));
+        const ys = cols.slice(1).filter((c) => c !== errCol).slice(0, errCol ? 1 : 2);
+        insertBlock(`\`\`\`chart\ntype: line\ndata: ${name}\nx: ${cols[0] || ''}\ny: ${ys.join(', ')}\n${errCol ? `error: ${errCol}\n` : ''}title: \n\`\`\``);
+      } else if (['ipynb', 'json'].includes(ext)) {
+        insertBlock(`![[${name}]]`);
+      } else insertInline(`[${name}](${name})`);
+    }
+    renderStrip();
+    saveDraft(); renderPreview();
+  }
+  function renderStrip() {
+    const names = [...new Set([...existing, ...local.keys()])].sort();
+    strip.replaceChildren(...names.map((n) => {
+      const isLocal = local.has(n) && !existing.includes(n);
+      const gone = removed.has(n);
+      const size = local.get(n)?.size;
+      return h('span', { class: `att${gone ? ' gone' : ''}` },
+        h('span', { class: 'att-name' }, n), size ? h('span', { class: 'att-size' }, fmtBytes(size)) : null,
+        h('button', {
+          class: 'btn icon small ghost', type: 'button', 'aria-label': gone ? `Keep ${n}` : `Remove ${n}`, title: gone ? '保留' : '移除',
+          onclick: async () => {
+            if (isLocal) { local.delete(n); await kv.del(`${dkey}:att:${n}`).catch(() => {}); } else if (gone) removed.delete(n); else removed.add(n);
+            renderStrip(); saveDraft(); renderPreview();
+          },
+        }, icon(gone ? 'plus' : 'close', 16)));
+    }));
+    strip.hidden = !names.length;
+  }
+  fileIn.addEventListener('change', () => { attach([...fileIn.files]); fileIn.value = ''; });
+  ta.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (files.length) { e.preventDefault(); attach(files); }
+  });
+  ta.addEventListener('dragover', (e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); ta.classList.add('drop'); } });
+  ta.addEventListener('dragleave', () => ta.classList.remove('drop'));
+  ta.addEventListener('drop', (e) => {
+    ta.classList.remove('drop');
+    const files = [...(e.dataTransfer?.files || [])];
+    if (files.length) { e.preventDefault(); attach(files); }
+  });
+
+  // ----- toolbar -----
+  const tb = (ic, label, run) => h('button', { class: 'tool', type: 'button', title: label, 'aria-label': label, onclick: run }, icon(ic, 18));
+  const toolbar = h('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Formatting' },
+    tb('heading', '标题', () => prefixLines('## ')),
+    tb('bold', '加粗', () => wrap('**')),
+    tb('italic', '斜体', () => wrap('*')),
+    tb('list', '列表', () => prefixLines('- ')),
+    tb('check', '清单', () => prefixLines('- [ ] ')),
+    tb('quote', '引用', () => prefixLines('> ')),
+    h('span', { class: 'tool-sep' }),
+    tb('math', '公式', () => {
+      const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+      if (sel && !sel.includes('\n')) wrap('$', '$'); else insertBlock('$$\nE = mc^2\n$$', 3, 8);
+    }),
+    tb('code', '代码', () => insertBlock('```python\n\n```', 10, 0)),
+    tb('table', '表格', () => insertBlock('| Column | Value |\n|---|---|\n|  |  |')),
+    tb('chart', '图表', () => insertBlock('```chart\ntype: line\nx: dose\ny: response\ntitle: \n---\ndose,response\n0,0.1\n1,0.4\n2,0.7\n```')),
+    tb('link', '链接到页面', () => openPagePicker(vol, (ref) => insertInline(`[[${ref}]]`))),
+    tb('attach', '附件', () => fileIn.click()));
+
+  ta.addEventListener('keydown', (e) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(false); }
+    if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); wrap('**'); }
+    if (mod && e.key.toLowerCase() === 'i') { e.preventDefault(); wrap('*'); }
+    if (e.key === 'Tab' && !e.shiftKey && !mod) {
+      const line = ta.value.slice(ta.value.lastIndexOf('\n', ta.selectionStart - 1) + 1, ta.selectionStart);
+      if (/^\s*([-*+]|\d+\.)\s/.test(line)) { e.preventDefault(); prefixLines('  '); }
+    }
+  });
+
+  // ----- write / preview tabs (narrow screens) -----
+  const wide = () => window.matchMedia('(min-width: 1100px)').matches;
+  const writePane = h('div', { class: 'pane write-pane' }, toolbar, ta, strip);
+  const previewPane = h('div', { class: 'pane preview-pane' }, h('div', { class: 'pane-label' }, '预览'), preview);
+  const split = h('div', { class: 'ed-split', 'data-tab': 'write' }, writePane, previewPane);
+  const tabWrite = h('button', { class: 'tab', type: 'button', role: 'tab', 'aria-selected': 'true', onclick: () => setTab('write') }, icon('write', 18), '编写');
+  const tabPrev = h('button', { class: 'tab', type: 'button', role: 'tab', 'aria-selected': 'false', onclick: () => setTab('preview') }, icon('eye', 18), '预览');
+  function setTab(t) {
+    split.dataset.tab = t;
+    tabWrite.setAttribute('aria-selected', String(t === 'write'));
+    tabPrev.setAttribute('aria-selected', String(t === 'preview'));
+    if (t === 'preview') renderPreview.flush(); else { ta.focus(); autosize(); }
+  }
+
+  // ----- save -----
+  let saving = false;
+  const saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => save(false) }, origSigned ? '保存修订' : '保存');
+  const signBtn = origSigned ? null : h('button', { class: 'btn primary', type: 'button', onclick: () => save(true) }, icon('pen', 18), '签名并保存');
+  async function save(sign, opts = {}) {
+    if (saving) return;
+    saving = true; saveBtn.disabled = true; if (signBtn) signBtn.disabled = true;
+    status.textContent = '保存中…';
+    const c = collect();
+    if (!c.fm.title) c.fm.title = '未命名';
+    const now = nowISO();
+    if (origSigned) c.fm.amended = [...(c.fm.amended || []), now];
+    else if (sign) { c.fm.signed = now; c.fm.signer = signerName(); }
+    const item = {
+      id: pending?.id, vol, num: isNew ? null : num, isNew: isNew || !!pending?.isNew, baseSha,
+      fm: c.fm, body: c.body,
+      attachments: [...local].filter(([n]) => !removed.has(n)).map(([name, blob]) => ({ name, blob })),
+      removed: [...removed].filter((n) => existing.includes(n)),
+      ...opts,
+    };
+    try {
+      const r = await lib.savePage(item);
+      await clearDraft();
+      leaving = true;
+      toast(r.queued ? '已存在本机，联网后同步到 GitHub。' : sign ? '已签名并保存。' : origSigned ? '修订已保存。' : '已保存。');
+      location.hash = `#/v/${vol}/${r.num}`;
+    } catch (e) {
+      if (e instanceof ConflictError) {
+        saving = false;
+        const choice = await choose('这一页在别的设备上改过', '你开始编辑之后，有人（可能是你在另一台设备上）保存了这一页的另一个版本。', [
+          ['overwrite', '用我的版本覆盖'], ['new', '把我的另存为新页'], ['cancel', '继续编辑'],
+        ]);
+        if (choice === 'overwrite') return await save(sign, { force: true });
+        if (choice === 'new') return await save(sign, { isNew: true, asNew: true, num: null });
+      } else {
+        toast(e instanceof ApiError && e.status === 403 ? 'GitHub 拒绝了修改。请检查本设备令牌的 Contents 是否为 Read and write。' : `没有保存：${e.message}`);
+      }
+      status.textContent = '还没保存，草稿在本机。';
+    } finally {
+      saving = false; saveBtn.disabled = false; if (signBtn) signBtn.disabled = false;
+    }
+  }
+  let leaving = false;
+  const cancel = async () => {
+    const c = collect();
+    const dirty = draft || c.body !== (body || '') || c.fm.title !== (fm.title || '') || local.size || removed.size;
+    if (dirty) {
+      const choice = await choose('离开这一页？', '草稿会保留在本机，之后可以回来继续。', [['keep', '保留草稿并离开'], ['discard', '丢弃草稿'], ['stay', '继续编辑']]);
+      if (choice === 'stay' || !choice) return;
+      if (choice === 'discard') await clearDraft(); else saveDraft.flush();
+    }
+    leaving = true;
+    location.hash = isNew ? `#/v/${vol}` : `#/v/${vol}/${num}`;
+  };
+
+  const stamp = h('div', { class: 'stamp', 'aria-label': isNew ? '新页' : `Page ${num}` }, h('span', { class: 'stamp-no' }, 'No'), isNew ? pad(lib.nextNumber(vol)) : pad(num));
+  const sheet = h('article', { class: 'sheet page editing' },
+    h('header', { class: 'sheet-head' },
+      h('div', { class: 'form-row' }, field('项目', v.title, 'grow'), field('卷号', v.number), stamp),
+      h('div', { class: 'form-row' },
+        h('label', { class: 'field grow' }, h('span', { class: 'lbl' }, '标题'), titleIn),
+        h('label', { class: 'field' }, h('span', { class: 'lbl' }, '日期'), dateIn)),
+      h('div', { class: 'form-row' }, h('label', { class: 'field grow' }, h('span', { class: 'lbl' }, '标签'), tagsIn))),
+    notice ? h('p', { class: 'warn' }, notice) : null,
+    origSigned ? h('p', { class: 'note' }, `This page was signed on ${fmtDate(fm.signed)}. Changes are saved as a dated amendment, and the earlier version stays in the page history.`) : null,
+    contLine,
+    h('div', { class: 'tabs', role: 'tablist' }, tabWrite, tabPrev),
+    split, fileIn);
+
+  const root = h('div', { class: 'view editor' },
+    topbar({ title: isNew ? `${v.title} · 新页` : `编辑第 ${num} 页`, sub: v.title, actions: [] }),
+    demoBanner(), sheet,
+    h('div', { class: 'action-bar' }, status, h('div', { class: 'ab-buttons' }, h('button', { class: 'btn ghost', type: 'button', onclick: cancel }, '取消'), saveBtn, signBtn)));
+  root.querySelector('.topbar .tb-left').prepend(h('button', { class: 'btn icon ghost', 'aria-label': '取消', title: '取消', onclick: cancel }, icon('close')));
+
+  renderStrip();
+  requestAnimationFrame(() => {
+    autosize(); renderPreview.flush();
+    (isNew && !titleIn.value ? titleIn : ta).focus({ preventScroll: true });
+  });
+  window.addEventListener('resize', () => { if (wide()) renderPreview(); }, { passive: true });
+  const leaveGuard = () => { if (!leaving && view.kind === 'editor') saveDraft.flush(); };
+  window.addEventListener('pagehide', leaveGuard);
+  window.addEventListener('hashchange', leaveGuard, { once: true });
+  return root;
+}
+
+function choose(title, text, options) {
+  return new Promise((resolve) => {
+    let picked = null;
+    modal({
+      title, body: h('p', null, text),
+      buttons: options.map(([value, label], i) => ({ label, primary: i === 0, run: () => { picked = value; } })),
+      onClose: () => resolve(picked),
+    });
+  });
+}
+
+function openPagePicker(curVol, onPick) {
+  const input = h('input', { type: 'search', placeholder: '按标题、编号或文字搜索', autofocus: true, 'aria-label': '找页面' });
+  const list = h('ol', { class: 'picker-list' });
+  let root;
+  const draw = () => {
+    const res = search(lib.allPages(), input.value).slice(0, 30);
+    list.replaceChildren(...res.map(({ page: p }) => h('li', null, h('button', {
+      type: 'button', class: 'picker-item',
+      onclick: () => { onPick(p.vol === curVol ? String(p.num) : `${p.vol}/${p.num}`); root.close(); },
+    }, h('span', { class: 'l-where' }, p.vol === curVol ? `p. ${p.num}` : `${lib.volume(p.vol)?.title || p.vol}, p. ${p.num}`), h('span', { class: 'l-title' }, p.title)))));
+    if (!res.length) list.append(h('li', { class: 'muted' }, '没有匹配的页面。'));
+  };
+  input.addEventListener('input', draw);
+  draw();
+  root = modal({ title: '链接到页面', body: h('div', { class: 'picker' }, input, list), buttons: [] });
+}
+
+// ---------- search ----------
+function openSearch(initial = '', vol = '') {
+  const input = h('input', { type: 'search', value: initial, placeholder: '关键词、日期（2026-11 / 20261101）、实验编号、#09、#标签', autofocus: true, 'aria-label': '搜索笔记本' });
+  const volSel = h('select', { 'aria-label': '卷' }, h('option', { value: '' }, '所有卷'), lib.volumes().map((v) => h('option', { value: v.id, selected: v.id === vol }, v.title)));
+  const from = h('input', { type: 'date', 'aria-label': '起始日期', title: '起始日期' });
+  const to = h('input', { type: 'date', 'aria-label': '截止日期', title: '截止日期' });
+  const tags = h('div', { class: 'tag-cloud' }, lib.tags().slice(0, 24).map(([t, n]) => h('button', {
+    type: 'button', class: 'tag-btn', onclick: () => { input.value = `#${t}`; draw(); input.focus(); },
+  }, `#${t}`, h('span', { class: 'n' }, n))));
+  const out = h('ol', { class: 'results' });
+  let root;
+  const draw = () => {
+    const q = input.value.trim();
+    tags.hidden = !!q;
+    if (!q && !volSel.value && !from.value && !to.value) { out.replaceChildren(); return; }
+    const res = search(lib.allPages(), q, { vol: volSel.value, from: from.value, to: to.value }).slice(0, 60);
+    out.replaceChildren(...res.map(({ page: p, snippet }) => h('li', null, h('a', { href: `#/v/${p.vol}/${p.num}`, onclick: () => root.close() },
+      h('span', { class: 'r-where' }, `${lib.volume(p.vol)?.title || p.vol}, p. ${p.num}`, h('span', { class: 'r-date' }, fmtDate(p.date))),
+      h('span', { class: 'r-title' }, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, p.title),
+      snippet ? h('span', { class: 'r-snip', html: snippet }) : null))));
+    if (!res.length) out.append(h('li', { class: 'muted' }, '没有结果，试试少写几个词。'));
+  };
+  input.addEventListener('input', draw);
+  volSel.addEventListener('change', draw);
+  from.addEventListener('change', draw); to.addEventListener('change', draw);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const a = out.querySelector('a'); if (a) { a.click(); location.hash = a.getAttribute('href'); } } });
+  draw();
+  root = modal({ title: '搜索', wide: true, body: h('div', { class: 'search' }, h('div', { class: 'search-row' }, input, volSel), h('div', { class: 'search-row dates' }, h('span', { class: 'muted' }, '日期'), from, '至', to), tags, out), buttons: [] });
+}
+
+// ---------- printing ----------
+async function printVolume(id) {
+  const v = lib.volume(id);
+  const pr = document.getElementById('print-root');
+  pr.replaceChildren();
+  toast('正在准备打印…');
+  const pages = lib.pages(id);
+  pr.append(h('article', { class: 'sheet print-cover' },
+    h('div', { class: 'cover-label big' },
+      h('span', { class: 'cl-kind' }, '实验记录本'),
+      h('span', { class: 'cl-no' }, `No. ${v.number}`),
+      h('span', { class: 'cl-title' }, v.title),
+      h('span', { class: 'cl-meta' }, `${lib.notebook.owner || ''}`, h('br'), `${fmtDate(v.created)} to ${fmtDate(pages[pages.length - 1]?.date || todayISO())}`))));
+  const toc = viewVolume(id).querySelector('.sheet.toc');
+  pr.append(toc);
+  const readies = [];
+  for (const p of pages) {
+    const { el, ready } = await buildPageSheet(id, p.num, { forPrint: true });
+    pr.append(el); readies.push(ready);
+  }
+  const settle = (p) => Promise.race([p, new Promise((r) => setTimeout(r, 15000))]);
+  await settle(Promise.allSettled(readies));
+  await settle(Promise.all([...pr.querySelectorAll('img')].map((i) => i.decode?.().catch(() => {}))));
+  document.body.classList.add('print-volume');
+  fitChartsForPrint(pr, 680);
+  setTimeout(() => window.print(), 50);
+}
+
+// ---------- settings ----------
+function viewSettings() {
+  const isLib = !!lib;
+  const back = isLib ? '#/' : null;
+  const nbTitle = h('input', { id: 's-title', value: lib?.notebook.title || '' });
+  const owner = h('input', { id: 's-owner', value: lib?.notebook.owner || '', placeholder: '签名用的名字' });
+  const theme = h('select', { id: 's-theme' }, [['auto', '跟随系统'], ['light', '浅色纸'], ['dark', '深色纸']].map(([v, l]) => h('option', { value: v, selected: S.theme === v }, l)));
+  const down = h('input', { type: 'checkbox', id: 's-down', checked: S.downscale });
+  const repo = h('input', { id: 's-repo', value: `${S.owner}/${S.repo}`, spellcheck: 'false' });
+  const branch = h('input', { id: 's-branch', value: S.branch, spellcheck: 'false' });
+  const token = h('input', { id: 's-token', type: 'password', placeholder: S.token ? '已存在本机（粘贴新的即可替换）' : 'github_pat_…', autocomplete: 'off' });
+  const api = h('input', { id: 's-api', value: S.apiBase, spellcheck: 'false' });
+
+  theme.addEventListener('change', () => { S.theme = theme.value; saveSettings(); applyTheme(); });
+  down.addEventListener('change', () => { S.downscale = down.checked; saveSettings(); });
+
+  const section = (title, ...kids) => h('section', { class: 'settings-section' }, h('h2', null, title), ...kids);
+  return h('div', { class: 'view settings' },
+    topbar({ back, backLabel: '所有卷', title: '设置' }),
+    demoBanner(),
+    h('article', { class: 'sheet plain narrow' },
+      isLib ? section('笔记本',
+        h('div', { class: 'form' },
+          h('label', { for: 's-title' }, '笔记本名称'), nbTitle,
+          h('label', { for: 's-owner' }, '签名用的名字'), owner,
+          h('button', { class: 'btn primary', type: 'button', onclick: async (e) => {
+            e.target.disabled = true;
+            try { await lib.updateNotebook((nb) => { nb.title = nbTitle.value.trim() || '实验记录本'; nb.owner = owner.value.trim(); }); toast('已保存。'); } catch (err) { toast(err instanceof NetworkError ? '离线中，联网后再试。' : err.message); } finally { e.target.disabled = false; }
+          } }, '保存'))) : null,
+      section('本设备',
+        h('div', { class: 'form' },
+          h('label', { for: 's-theme' }, '纸张'), theme,
+          h('label', { class: 'check', for: 's-down' }, down, ' 附加前把大照片缩小到 2400 px'))),
+      DEMO ? null : section('连接',
+        h('p', { class: 'muted' }, '记录保存在这个 GitHub 私有仓库里。令牌只存在这个浏览器中。'),
+        h('div', { class: 'form' },
+          h('label', { for: 's-repo' }, '仓库'), repo,
+          h('label', { for: 's-branch' }, '分支'), branch,
+          h('label', { for: 's-token' }, '令牌'), token,
+          h('details', null, h('summary', null, '高级'), h('label', { for: 's-api' }, 'GitHub API 地址'), api),
+          h('div', { class: 'row-actions' },
+            h('button', { class: 'btn primary', type: 'button', onclick: async (e) => {
+              const [o, r] = repo.value.trim().split('/');
+              if (!o || !r) { toast('仓库请写成 用户名/仓库名。'); return; }
+              const next = { ...S, owner: o, repo: r, branch: branch.value.trim() || 'main', apiBase: api.value.trim() || DEFAULTS.apiBase, token: token.value.trim() || S.token };
+              e.target.disabled = true;
+              try {
+                const acc = await new GitHubBackend(next).checkAccess();
+                if (!acc.canWrite) throw new Error('这个令牌不能修改仓库。请把 Contents 设为 Read and write。');
+                if (!(await confirmPrivate(acc, `${o}/${r}`))) return;
+                Object.assign(S, next); saveSettings();
+                await startLibrary(); toast('已连接。'); location.hash = '#/';
+              } catch (err) {
+                toast(err instanceof ApiError && err.status === 401 ? 'GitHub 拒绝了这个令牌。' : err instanceof ApiError && err.status === 404 ? '这个令牌看不到那个仓库。' : err.message);
+              } finally { e.target.disabled = false; }
+            } }, '保存连接'),
+            h('a', { class: 'btn', href: tokenUrl(), target: '_blank', rel: 'noopener' }, '创建新令牌')))),
+      isLib ? section('维护',
+        h('p', { class: 'muted' }, '直接在 GitHub 或电脑上改过页面文件后，重建一下搜索索引。清除缓存只删本机的副本。'),
+        h('div', { class: 'row-actions' },
+          h('button', { class: 'btn', type: 'button', onclick: async (e) => {
+            e.target.disabled = true; toast('正在重建搜索索引…');
+            try { const n = await lib.rebuildIndex(); toast(`搜索索引已重建（读取 ${n} 页）。`); } catch (err) { toast(err.message); } finally { e.target.disabled = false; }
+          } }, '重建搜索索引'),
+          h('button', { class: 'btn', type: 'button', onclick: async () => { await lib.clearCache(); toast('本机缓存已清除，打开页面时会重新下载。'); lib.head = null; await lib.refresh(); } }, '清除本机缓存'))) : null,
+      section('帮助',
+        h('p', null, h('a', { href: '?demo#/v/sample/1' }, '打开示例笔记本'), '，可以看到各种写法和对应的源文本。')),
+      DEMO ? null : section('断开',
+        h('p', { class: 'muted' }, '删除本机的令牌和缓存，GitHub 上的内容不受影响。'),
+        h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+          const ok = await choose('断开这台设备？', lib?.outbox.length ? `${lib.outbox.length} 个页面还没同步，断开会丢失。` : '随时可以用令牌重新连接。', [['yes', '断开'], ['no', '取消']]);
+          if (ok !== 'yes') return;
+          if (lib) { await lib.clearCache(); await kv.del(`${lib.key}:outbox`); }
+          S.token = ''; saveSettings(); location.hash = '#/'; location.reload();
+        } }, '断开这台设备'))));
+}
+
+// ---------- experiments: IDs, sample tables, libraries, reminders ----------
+const thead = (cols) => h('thead', null, h('tr', null, cols.map((c) => h('th', { scope: 'col' }, c))));
+
+function downloadText(name, text, type = 'text/plain') {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = h('a', { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast(`已复制：${text}`); } catch { toast(text); }
+}
+const saveError = (e) => (e instanceof ConflictError ? '这一页刚在别的设备上改过。刷新页面后再试。' : e instanceof NetworkError ? '离线：已存在本机，联网后自动同步。' : `没有保存：${e.message}`);
+
+// Change a page without opening the editor (results, photos, follow-ups).
+// mutate({fm, body}) returns the new {fm, body} and optional attachments [{name, blob}].
+async function updatePage(vol, num, mutate, message) {
+  const pending = lib.pendingFor(vol, num);
+  const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
+  const next = await mutate({ fm: structuredClone(fm), body });
+  if (fm.signed) next.fm.amended = [...(next.fm.amended || []), nowISO()];
+  // Redraw once the dialog that started this has closed.
+  setTimeout(function again() { if (document.querySelector('.modal-root')) setTimeout(again, 100); else route({ quiet: true }); }, 300);
+  return lib.savePage({
+    id: pending?.id, vol, num, isNew: !!pending?.isNew, message,
+    baseSha: pending ? (pending.baseSha ?? null) : (lib.tree.get(pagePath(vol, num)) || null),
+    fm: next.fm, body: next.body, attachments: next.attachments || [], removed: [],
+  });
+}
+
+// Panel under the page header: SOP, reagents, data location, follow-ups.
+async function expPanel(fm, vol, num) {
+  const ids = fm.reagents || [];
+  if (!fm.id && !fm.protocol && !ids.length && !fm.data && !(fm.followups || []).length) return null;
+  const reagents = await loadReagents(lib).catch(() => []);
+  const proto = fm.protocol ? await loadProtocol(lib, fm.protocol).catch(() => null) : null;
+  const panel = h('section', { class: 'exp-panel' });
+  if (fm.protocol) {
+    const body = h('div', { class: 'prose sop-body' });
+    const det = h('details', { class: 'sop' },
+      h('summary', null, h('span', { class: 'lbl' }, '标准步骤'), ' ',
+        h('a', { href: `#/lib/protocols/${encodeURIComponent(fm.protocol)}` }, fm.protocol),
+        proto ? ` · ${proto.title}${proto.version ? `（${proto.version}）` : ''}` : h('span', { class: 'warn' }, ' 步骤库里没有这个编号')),
+      body,
+      proto?.source ? h('p', { class: 'muted small' }, '原始文件：', h('code', null, proto.source)) : null);
+    det.addEventListener('toggle', () => {
+      if (det.open && proto && !body.dataset.done) { body.dataset.done = '1'; renderInto(body, proto.body, pageCtx(vol, num)); }
+    });
+    panel.append(det);
+  }
+  if (ids.length) {
+    const rows = ids.map((id) => reagents.find((r) => r.id === id) || { id, name: '试剂库里没有这个编号', missing: true });
+    const today = todayISO();
+    panel.append(h('div', { class: 'lbl-line' }, h('span', { class: 'lbl' }, '试剂'), h('a', { class: 'small', href: '#/lib/reagents' }, '试剂库')),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'data reagents' },
+        thead(['编号', '名称', '规格', '厂商', '货号', '批号', '有效期至']),
+        h('tbody', null, rows.map((r) => h('tr', { class: r.missing ? 'missing' : null },
+          h('td', null, r.id), h('td', null, r.name), h('td', null, r.spec || ''), h('td', null, r.vendor || ''),
+          h('td', null, r.catalog || ''), h('td', null, r.lot || ''),
+          h('td', { class: r.expires && r.expires < today ? 'warn' : null }, r.expires || '')))))));
+  }
+  if (fm.data) panel.append(h('div', { class: 'lbl-line' }, h('span', { class: 'lbl' }, '原始数据'), h('code', { class: 'path' }, fm.data)));
+  const fus = (fm.followups || []).map(parseFollowup).filter(Boolean);
+  if (fus.length) {
+    panel.append(h('div', { class: 'lbl-line' }, h('span', { class: 'lbl' }, '提醒')),
+      h('ul', { class: 'followups' }, fus.map((f, i) => {
+        const d = daysFrom(f.date);
+        return h('li', { class: f.done ? 'done' : d < 0 ? 'late' : d === 0 ? 'today' : null },
+          h('button', { class: 'btn small ghost no-print', type: 'button', title: f.done ? '标为未完成' : '标为已完成', onclick: () => toggleFollowup(vol, num, i) }, f.done ? '✓' : '○'),
+          h('span', { class: 'l-date' }, f.date), ' ', f.text);
+      })));
+  }
+  return panel;
+}
+
+async function toggleFollowup(vol, num, index) {
+  try {
+    await updatePage(vol, num, ({ fm, body }) => {
+      const list = (fm.followups || []).map(parseFollowup);
+      list[index].done = !list[index].done;
+      fm.followups = list.filter(Boolean).map(formatFollowup);
+      return { fm, body };
+    }, `Follow-up on p. ${num}`);
+    toast('提醒已更新。');
+  } catch (e) { toast(saveError(e)); }
+}
+
+// ----- sample table editor: copy results from the paper card into the page -----
+async function openSamplesEditor(vol, num) {
+  const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
+  const t = readSamples(body) || samplesTemplate([1], [], []);
+  const grid = h('div', { class: 'grid-wrap' });
+  const draw = () => {
+    grid.replaceChildren(h('table', { class: 'grid' },
+      h('thead', null, h('tr', null, t.cols.map((c, j) => h('th', { class: isResultCol(c) ? 'res' : null, title: isResultCol(c) ? '结果列' : '条件列' },
+        h('input', { value: colLabel(c), 'aria-label': `第 ${j + 1} 列名`, oninput: (e) => { t.cols[j] = isResultCol(c) ? `结果: ${e.target.value}` : e.target.value; } }))), h('th'))),
+      h('tbody', null, t.rows.map((r, i) => h('tr', null,
+        r.map((v, j) => h('td', { class: isResultCol(t.cols[j]) ? 'res' : null }, h('input', {
+          value: v, 'aria-label': `${r[0]} ${colLabel(t.cols[j])}`,
+          oninput: (e) => { r[j] = e.target.value; },
+          onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); grid.querySelectorAll('tbody tr')[i + 1]?.children[j]?.querySelector('input')?.focus(); } },
+        }))),
+        h('td', null, h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '删除这一行', onclick: () => { t.rows.splice(i, 1); draw(); } }, icon('close', 16))))))));
+  };
+  draw();
+  const addRow = () => {
+    const nums = t.rows.map((r) => parseInt(String(r[0]).replace(/\D/g, ''), 10) || 0);
+    t.rows.push(t.cols.map((_, j) => (j === 0 ? sampleNo(Math.max(0, ...nums) + 1) : ''))); draw();
+  };
+  const addCol = (result) => {
+    const name = window.prompt(result ? '结果列名称（含单位，例如 gm_max (mS)）' : '条件列名称（含单位，例如 GOPS (wt%)）');
+    if (!name) return;
+    const at = result ? t.cols.length - (t.cols[t.cols.length - 1] === '备注' ? 1 : 0) : Math.max(1, t.cols.findIndex(isResultCol) === -1 ? t.cols.length - 1 : t.cols.findIndex(isResultCol));
+    t.cols.splice(at, 0, result ? `结果: ${name}` : name);
+    for (const r of t.rows) r.splice(at, 0, '');
+    draw();
+  };
+  modal({
+    title: `录入条件与结果 · ${fm.id || `p. ${num}`}`, wide: true,
+    body: h('div', null,
+      h('p', { class: 'muted' }, '按纸质记录卡逐行录入。Enter 跳到下一行同一列。绿色列是结果，Keithley 数据同步时会自动填入空着的结果格。'),
+      grid,
+      h('div', { class: 'row-actions' },
+        h('button', { class: 'btn small', type: 'button', onclick: addRow }, icon('plus', 16), '加一行'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => addCol(false) }, '加条件列'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => addCol(true) }, '加结果列'))),
+    buttons: [{ label: '取消' }, {
+      label: '保存', primary: true,
+      run: async () => {
+        t.rows = t.rows.filter((r) => r.some((v) => String(v).trim()));
+        try {
+          await updatePage(vol, num, ({ fm: f, body: b }) => ({ fm: f, body: writeSamples(b, t) }), `Results for ${fm.id || `p. ${num}`}`);
+          toast(fm.signed ? '已保存为修订（原版本保留在历史中）。' : '已保存。');
+        } catch (e) { toast(saveError(e)); return false; }
+      },
+    }],
+  });
+}
+
+// ----- photos straight from the phone camera -----
+const PHOTO_KINDS = [['photo', '照片'], ['channel', '沟道'], ['gate', '栅极'], ['device', '整片器件'], ['film', '薄膜'], ['solution', '溶液'], ['setup', '测试装置'], ['micro', '显微镜']];
+async function openPhotoCapture(vol, num) {
+  const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
+  const t = readSamples(body);
+  const xid = fm.id || `p${pad(num)}`;
+  const input = h('input', { type: 'file', accept: 'image/*', capture: 'environment', multiple: true, hidden: true });
+  document.body.append(input);
+  input.addEventListener('change', async () => {
+    const files = [...input.files]; input.remove();
+    if (!files.length) return;
+    const who = h('select', { id: 'ph-who' }, h('option', { value: '' }, `整个实验（${xid}）`), (t?.rows || []).map((r) => h('option', { value: sampleNo(r[0]) }, `${sampleNo(r[0])}  ${r.slice(1, 4).filter(Boolean).join(' / ')}`)));
+    const kind = h('select', { id: 'ph-kind' }, PHOTO_KINDS.map(([v, l]) => h('option', { value: v }, `${l} (${v})`)));
+    const cap = h('input', { id: 'ph-cap', placeholder: '例如：溶液呈深蓝色；沟道边缘有裂纹' });
+    const nameOut = h('code', { class: 'name-preview' });
+    const names = () => {
+      const base = who.value ? sampleId(xid, who.value) : xid;
+      return files.map((_, i) => `${base}_${kind.value}${files.length > 1 ? `-${i + 1}` : ''}.jpg`);
+    };
+    const upd = () => { nameOut.textContent = names().join('  '); };
+    [who, kind].forEach((el) => el.addEventListener('change', upd)); upd();
+    modal({
+      title: `添加 ${files.length} 张照片`,
+      body: h('div', { class: 'form' },
+        h('label', { for: 'ph-who' }, '对应样品'), who,
+        h('label', { for: 'ph-kind' }, '拍的是什么'), kind,
+        h('label', { for: 'ph-cap' }, '说明（会写在图下）'), cap,
+        h('p', { class: 'muted' }, '文件名：', nameOut)),
+      buttons: [{ label: '取消' }, {
+        label: '保存到本页', primary: true,
+        run: async () => {
+          const existing = new Set(lib.attachments(vol, num));
+          const atts = [];
+          const lines = [];
+          for (const [i, f0] of files.entries()) {
+            const f = await prepareFile(f0);
+            let name = names()[i];
+            for (let k = 2; existing.has(name); k++) name = name.replace(/(-\d+)?\.jpg$/, `-${k}.jpg`);
+            existing.add(name);
+            atts.push({ name, blob: f });
+            const label = [who.value || '', PHOTO_KINDS.find(([v]) => v === kind.value)?.[1], cap.value.trim()].filter(Boolean).join(' · ');
+            lines.push(`![${label}](${name})`);
+          }
+          try {
+            const r = await updatePage(vol, num, ({ fm: f, body: b }) => {
+              const add = lines.join('\n\n');
+              const head = /^## 照片[ \t]*$/m;
+              b = head.test(b) ? b.replace(head, (m) => `${m}\n\n${add}\n`) : `${b.trimEnd()}\n\n## 照片\n\n${add}\n`;
+              return { fm: f, body: b, attachments: atts };
+            }, `Photos for ${xid}`);
+            toast(r.queued ? '照片已存在本机，联网后同步。' : '照片已保存。');
+          } catch (e) { toast(saveError(e)); return false; }
+        },
+      }],
+    });
+  });
+  input.click();
+}
+
+// ----- naming helper -----
+function openNaming(fm, num) {
+  const xid = fm.id;
+  if (!xid) { toast('这一页没有实验编号。新建实验时会自动生成。'); return; }
+  const year = xid.slice(0, 4);
+  const rows = [
+    ['Keithley 数据文件夹', `01_Data/01_Keithley 4200/${year}/${xid}_简短描述/`, '里面按样品号建子文件夹 1、9、10……（不带 #），数据同步脚本按这个对应。'],
+    ['单个数据文件', `${xid}-#09_TR_VD-0.3V_gm.xls`, '样品号_测试类型_测试条件_目的。测试类型：TR 转移、OUT 输出、IT 电流-时间、CV、EIS。'],
+    ['显微镜 / 照片', `${xid}-#09_micro_20x.jpg`, '放在任何数据目录里，名字以样品号开头就会被同步脚本挂到这一页。'],
+    ['电化学（CHI）', `01_Data/02_CHI/${year}/${xid}-#09_CV_50mVs.txt`, ''],
+    ['预处理文件', `${xid}-#09_TR_20mVs_cond03.xls`, 'SOP v2：预处理数据带 _cond，不计入结果。'],
+  ];
+  modal({
+    title: `命名助手 · ${xid}`, wide: true,
+    body: h('div', null,
+      h('p', { class: 'muted' }, '把 #09 换成实际样品号。点名字即可复制。'),
+      h('table', { class: 'data naming' }, thead(['用途', '名字', '说明']),
+        h('tbody', null, rows.map(([a, b, c]) => h('tr', null, h('td', null, a), h('td', null, h('button', { class: 'linkish', type: 'button', onclick: () => copyText(b) }, h('code', null, b))), h('td', { class: 'muted' }, c)))))),
+    buttons: [{ label: '关闭' }],
+  });
+}
+
+// ----- paper record card: printed before the experiment, filled at the bench -----
+async function printCard(vol, num) {
+  const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
+  const t = readSamples(body) || samplesTemplate([1, 2, 3], [], []);
+  const reagents = await loadReagents(lib).catch(() => []);
+  const proto = fm.protocol ? await loadProtocol(lib, fm.protocol).catch(() => null) : null;
+  const used = (fm.reagents || []).map((id) => reagents.find((r) => r.id === id) || { id, name: '?' });
+  const blankRows = Math.max(2, 10 - t.rows.length);
+  const pr = document.getElementById('print-root');
+  const sheet = h('article', { class: 'sheet card' },
+    h('header', { class: 'card-head' },
+      h('div', null, h('div', { class: 'card-id' }, fm.id || `p. ${num}`), h('div', { class: 'card-title' }, fm.title || '')),
+      h('div', { class: 'card-meta' }, `日期 ${fm.date || ''}`, h('br'), `${lib.volume(vol)?.title || ''}，第 ${num} 页`)),
+    h('p', { class: 'card-line' }, h('b', null, 'SOP '), fm.protocol ? `${fm.protocol} ${proto?.title || ''} ${proto?.version || ''}` : '—', h('span', { class: 'gap' }), h('b', null, '实验人 '), '________', h('b', null, '  温度/湿度 '), '____ ℃ / ____ %RH'),
+    used.length ? h('table', { class: 'card-table small' }, thead(['试剂', '名称', '批号', '实际批号/开封日']), h('tbody', null, used.map((r) => h('tr', null, h('td', null, r.id), h('td', null, r.name), h('td', null, r.lot || ''), h('td'))))) : null,
+    h('table', { class: 'card-table' },
+      thead([...t.cols.map(colLabel), '✓']),
+      h('tbody', null,
+        t.rows.map((r) => h('tr', null, t.cols.map((c, j) => h('td', { class: isResultCol(c) ? 'blank' : null }, j === 0 ? sampleNo(r[0]) : (isResultCol(c) ? '' : r[j]))), h('td'))),
+        Array.from({ length: blankRows }, () => h('tr', null, t.cols.map(() => h('td')), h('td'))))),
+    h('div', { class: 'card-notes' }, h('b', null, '与 SOP 的偏离 / 现象 / 时间点'), ...Array.from({ length: 6 }, () => h('div', { class: 'ruled' }))),
+    (fm.followups || []).length ? h('p', { class: 'card-line' }, h('b', null, '后续提醒 '), (fm.followups || []).join('；')) : null,
+    h('p', { class: 'card-foot' }, '录入：打开这一页 → “录入表格”。照片和 Keithley 数据按命名助手里的名字保存，会自动挂到对应样品。'));
+  pr.replaceChildren(sheet);
+  document.body.classList.add('print-volume');
+  setTimeout(() => window.print(), 50);
+}
+
+// ----- calendar export -----
+function exportIcs(items, name = 'lab-reminders.ics') {
+  if (!items.length) { toast('没有未完成的提醒。'); return; }
+  downloadText(name, icsFor(items.map((it) => ({
+    date: it.date, summary: it.xid ? `${it.xid} ${it.text}` : it.text,
+    description: it.page ? `${location.origin}${location.pathname}#/v/${it.page.vol}/${it.page.num}` : '',
+    uid: `${it.xid || it.reagent || 'x'}-${it.date}-${it.text}`.replace(/[^\w-]+/g, ''),
+  }))), 'text/calendar');
+}
+
+async function openFollowups() {
+  const items = await allFollowups();
+  const open = items.filter((x) => !x.done);
+  exportIcs(open);
+}
+async function allFollowups() {
+  const items = [];
+  for (const p of lib.allPages()) {
+    (p.followups || []).forEach((s, i) => { const f = parseFollowup(s); if (f) items.push({ ...f, index: i, page: p, xid: p.xid }); });
+  }
+  const reagents = await loadReagents(lib).catch(() => []);
+  for (const a of reagentAlerts(reagents)) items.push({ ...a, done: false });
+  return items.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Home: what is due now.
+function todoPanel() {
+  const box = h('section', { class: 'sheet ledger todo' }, h('h2', null, '今日待办'), h('p', { class: 'muted' }, '读取中…'));
+  allFollowups().then((items) => {
+    const open = items.filter((x) => !x.done && daysFrom(x.date) <= 7);
+    const kids = [h('h2', null, '今日待办', h('span', { class: 'h-actions' },
+      h('button', { class: 'btn small', type: 'button', onclick: () => exportIcs(items.filter((x) => !x.done)) }, '导出到手机日历')))];
+    if (!open.length) kids.push(h('p', { class: 'muted' }, '未来 7 天没有到期的提醒。新建实验时可以设置稳定性复测等提醒。'));
+    else {
+      kids.push(h('ol', { class: 'ledger-rows' }, open.map((x) => {
+        const d = daysFrom(x.date);
+        const when = d < 0 ? `逾期 ${-d} 天` : d === 0 ? '今天' : `${d} 天后`;
+        return h('li', { class: d < 0 ? 'late' : d === 0 ? 'today' : null },
+          h(x.page ? 'a' : 'span', x.page ? { href: `#/v/${x.page.vol}/${x.page.num}` } : { class: 'row' },
+            h('span', { class: 'l-date' }, `${x.date} · ${when}`),
+            h('span', { class: 'l-title' }, x.text),
+            h('span', { class: 'l-where' }, x.xid || (x.reagent ? h('a', { href: '#/lib/reagents' }, '试剂库') : ''))),
+          x.page ? h('button', { class: 'btn small no-print', type: 'button', onclick: () => toggleFollowup(x.page.vol, x.page.num, x.index) }, '完成') : null);
+      })));
+    }
+    box.replaceChildren(...kids);
+  }).catch((e) => box.replaceChildren(h('h2', null, '今日待办'), h('p', { class: 'warn' }, e.message)));
+  return box;
+}
+
+// ----- new experiment -----
+async function openNewExperiment(volId) {
+  const vols = lib.volumes();
+  if (!vols.length) { toast('先建一个卷（项目），再在里面新建实验。'); openNewVolume(); return; }
+  const protocols = await loadProtocols(lib).catch(() => []);
+  const reagents = await loadReagents(lib).catch(() => []);
+  const volSel = h('select', { id: 'ne-vol' }, vols.map((v) => h('option', { value: v.id, selected: v.id === volId }, v.title)));
+  const date = h('input', { id: 'ne-date', type: 'date', value: todayISO() });
+  const topic = h('input', { id: 'ne-topic', placeholder: '例如 OECT、GLU3E、H2O2', autocapitalize: 'characters' });
+  const idOut = h('code', { class: 'exp-id' });
+  const title = h('input', { id: 'ne-title', placeholder: '例如：GOPS 浓度对 PEDOT:PSS 沟道稳定性的影响' });
+  const purpose = h('textarea', { id: 'ne-purpose', rows: 2, placeholder: '一两句话写清楚想回答的问题' });
+  const proto = h('select', { id: 'ne-proto' }, h('option', { value: '' }, '（不使用 SOP）'), protocols.map((p) => h('option', { value: p.id }, `${p.id} · ${p.title}`)));
+  const nums = h('input', { id: 'ne-nums', value: '1-3', placeholder: '例如 1, 9, 10 或 1-6' });
+  const vars = h('input', { id: 'ne-vars', placeholder: '逗号分隔，例如 GOPS (wt%), 退火 (°C)' });
+  const res = h('input', { id: 'ne-res', placeholder: '逗号分隔，例如 gm_max (mS), Vth (V), on/off' });
+  const rFilter = h('input', { type: 'search', placeholder: '筛选试剂', 'aria-label': '筛选试剂' });
+  const picked = new Set();
+  const rList = h('div', { class: 'check-list' });
+  const drawR = () => {
+    const q = rFilter.value.trim().toLowerCase();
+    rList.replaceChildren(...reagents.filter((r) => !q || `${r.id} ${r.name} ${r.vendor}`.toLowerCase().includes(q)).map((r) => h('label', { class: 'check' },
+      h('input', { type: 'checkbox', checked: picked.has(r.id), onchange: (e) => { if (e.target.checked) picked.add(r.id); else picked.delete(r.id); } }),
+      ` ${r.id} ${r.name}`, r.vendor ? h('span', { class: 'muted' }, ` · ${r.vendor}`) : null)));
+    if (!reagents.length) rList.append(h('p', { class: 'muted' }, '试剂库还是空的。可在“试剂库”里导入。'));
+  };
+  rFilter.addEventListener('input', drawR); drawR();
+  const fuDays = h('input', { id: 'ne-fu', placeholder: '例如 1, 3, 7（天后）' });
+  const fuText = h('input', { id: 'ne-fu-text', value: '稳定性复测' });
+  const curVol = () => lib.volume(volSel.value);
+  const upd = () => {
+    if (!topic.dataset.touched) topic.value = curVol()?.code || '';
+    const tp = cleanTopic(topic.value);
+    idOut.textContent = tp ? expId(date.value, tp, nextSeq(lib.allPages(), date.value, tp)) : '（先填主题代码）';
+  };
+  topic.addEventListener('input', () => { topic.dataset.touched = '1'; upd(); });
+  volSel.addEventListener('change', upd); date.addEventListener('change', upd);
+  proto.addEventListener('change', () => {
+    const p = protocols.find((x) => x.id === proto.value);
+    if (!p) return;
+    p.reagents.forEach((id) => picked.add(id)); drawR();
+    if (!vars.value) vars.value = p.variables.join(', ');
+    if (!res.value) res.value = p.results.join(', ');
+  });
+  upd();
+  modal({
+    title: '新建实验', wide: true,
+    body: h('div', { class: 'form two' },
+      h('div', null,
+        h('label', { for: 'ne-vol' }, '放在哪个卷'), volSel,
+        h('div', { class: 'pair' }, h('div', null, h('label', { for: 'ne-date' }, '日期'), date), h('div', null, h('label', { for: 'ne-topic' }, '主题代码'), topic)),
+        h('p', { class: 'id-line' }, '实验编号 ', idOut),
+        h('label', { for: 'ne-title' }, '标题'), title,
+        h('label', { for: 'ne-purpose' }, '目的'), purpose,
+        h('label', { for: 'ne-proto' }, '标准步骤（SOP）'), proto,
+        h('label', { for: 'ne-nums' }, '样品 / 条件编号'), nums,
+        h('label', { for: 'ne-vars' }, '每个编号不同的条件'), vars,
+        h('label', { for: 'ne-res' }, '要记录的结果'), res),
+      h('div', null,
+        h('span', { class: 'label' }, '用到的试剂'), rFilter, rList,
+        h('label', { for: 'ne-fu' }, '提醒（可选）'), h('div', { class: 'pair' }, fuDays, fuText),
+        h('p', { class: 'muted' }, '提醒会出现在首页“今日待办”，也能导出到手机日历。'))),
+    buttons: [{ label: '取消' }, {
+      label: '创建并打印记录卡', run: () => create(true),
+    }, {
+      label: '创建', primary: true, run: () => create(false),
+    }],
+  });
+  async function create(print) {
+    const tp = cleanTopic(topic.value);
+    if (!tp) { toast('填一个主题代码，例如 OECT。'); topic.focus(); return false; }
+    if (!title.value.trim()) { toast('写一个标题。'); title.focus(); return false; }
+    const vol = volSel.value;
+    const xid = expId(date.value, tp, nextSeq(lib.allPages(), date.value, tp));
+    const split = (s) => s.split(/[,，]/).map((x) => x.trim()).filter(Boolean);
+    const t = samplesTemplate(parseNumbers(nums.value), split(vars.value), split(res.value));
+    const p = protocols.find((x) => x.id === proto.value);
+    const fus = parseNumbers(fuDays.value).map((d) => formatFollowup({ date: addDays(date.value, d), text: `${fuText.value.trim() || '复测'}（第 ${d} 天）` }));
+    const fm = {
+      title: title.value.trim(), date: date.value, id: xid,
+      tags: [...new Set([tp.toLowerCase(), ...(p?.tags || []).map(cleanTag)])].filter(Boolean),
+      protocol: p?.id || undefined, reagents: [...picked], followups: fus,
+    };
+    const bodyText = [
+      '## 目的', '', purpose.value.trim() || '', '',
+      '## 条件与结果', '',
+      '> 编号与纸质记录卡一一对应。结果可用“录入表格”填写；Keithley 数据同步后自动填入空着的结果格。', '',
+      `\`\`\`samples\n${toCSV([t.cols, ...t.rows]).trimEnd()}\n\`\`\``, '',
+      '## 与 SOP 的偏离', '', '- ', '',
+      '## 现象与讨论', '', '',
+      '## 照片', '',
+    ].join('\n');
+    try {
+      const r = await lib.savePage({ vol, isNew: true, fm, body: bodyText, attachments: [], message: `New experiment ${xid}` });
+      toast(r.queued ? `${xid} 已存在本机，联网后同步。` : `已创建 ${xid}。`);
+      location.hash = `#/v/${vol}/${r.num}`;
+      if (print) setTimeout(() => printCard(vol, r.num), 600);
+    } catch (e) { toast(saveError(e)); return false; }
+  }
+}
+
+// ----- reagent library -----
+async function viewReagents() {
+  const list = await loadReagents(lib);
+  const filter = h('input', { type: 'search', placeholder: '按编号、名称、厂商、批号筛选', 'aria-label': '筛选' });
+  const body = h('tbody');
+  const today = todayISO();
+  const usedBy = (id) => lib.allPages().filter((p) => (p.reagents || []).includes(id));
+  const draw = () => {
+    const q = filter.value.trim().toLowerCase();
+    body.replaceChildren(...list.filter((r) => !q || Object.values(r).join(' ').toLowerCase().includes(q)).map((r) => {
+      const n = usedBy(r.id).length;
+      return h('tr', { onclick: () => editReagent(list, r) },
+        REAGENT_FIELDS.slice(0, 10).map(([k]) => h('td', { class: k === 'expires' && r.expires && r.expires < today ? 'warn' : null }, r[k] || '')),
+        h('td', null, n ? h('a', { href: `#/search?q=${encodeURIComponent(r.id)}`, onclick: (e) => e.stopPropagation() }, `${n} 次`) : ''));
+    }));
+  };
+  filter.addEventListener('input', draw); draw();
+  const importIn = h('input', { type: 'file', accept: '.csv,text/csv', hidden: true, onchange: async (e) => {
+    const f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    const incoming = parseReagents(await f.text());
+    if (!incoming.length) { toast('文件里没有读到试剂（第一行要是列名，必须有 id 列）。'); return; }
+    const byId = new Map(list.map((r) => [r.id, r]));
+    for (const r of incoming) byId.set(r.id, { ...(byId.get(r.id) || {}), ...r });
+    await saveReagents([...byId.values()], `Import ${incoming.length} reagents`);
+    toast(`已导入 ${incoming.length} 条。`); route();
+  } });
+  return h('div', { class: 'view library' },
+    topbar({ back: '#/', backLabel: '首页', title: '试剂库', sub: `${list.length} 条`, actions: [
+      h('button', { class: 'btn primary', type: 'button', onclick: () => editReagent(list, null) }, icon('plus', 18), h('span', null, '新增试剂'))] }),
+    demoBanner(),
+    h('article', { class: 'sheet plain' },
+      h('div', { class: 'search-row' }, filter,
+        h('button', { class: 'btn', type: 'button', onclick: () => importIn.click() }, '导入 CSV'),
+        h('button', { class: 'btn', type: 'button', onclick: () => downloadText('reagents.csv', `﻿${reagentsCSV(list)}`, 'text/csv') }, '导出 CSV'), importIn),
+      h('div', { class: 'table-wrap tall' }, h('table', { class: 'data lib-table' }, thead([...REAGENT_FIELDS.slice(0, 10).map(([, l]) => l), '使用']), body)),
+      h('p', { class: 'muted' }, '点一行可修改。批号换了就新建一条（新编号），旧实验仍指向旧批号，保证可溯源。')));
+}
+
+async function saveReagents(list, message) {
+  list.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  return lib.commit(message, async () => ({ changes: [{ path: REAGENTS_PATH, data: `﻿${reagentsCSV(list)}` }] }));
+}
+
+function editReagent(list, r) {
+  const isNew = !r;
+  const cur = r ? { ...r } : { id: nextReagentId(list) };
+  const inputs = Object.fromEntries(REAGENT_FIELDS.map(([k]) => [k, h('input', {
+    id: `rg-${k}`, value: cur[k] || '', type: k === 'opened' || k === 'expires' ? 'date' : 'text', readonly: k === 'id' && !isNew,
+  })]));
+  modal({
+    title: isNew ? '新增试剂' : `修改 ${cur.id}`,
+    body: h('div', { class: 'form grid2' }, REAGENT_FIELDS.map(([k, l]) => h('div', null, h('label', { for: `rg-${k}` }, l), inputs[k]))),
+    buttons: [
+      isNew ? null : { label: '用新批号复制', run: () => { setTimeout(() => editReagent(list, null), 0); setTimeout(() => { for (const [k] of REAGENT_FIELDS) if (!['id', 'lot', 'opened', 'expires'].includes(k)) { const el = document.getElementById(`rg-${k}`); if (el) el.value = cur[k] || ''; } }, 60); } },
+      { label: '取消' },
+      { label: '保存', primary: true, run: async () => {
+        const next = Object.fromEntries(REAGENT_FIELDS.map(([k]) => [k, inputs[k].value.trim()]));
+        if (!next.id || !next.name) { toast('编号和名称不能为空。'); return false; }
+        if (isNew && list.some((x) => x.id === next.id)) { toast('这个编号已经有了。'); return false; }
+        const all = isNew ? [...list, next] : list.map((x) => (x.id === cur.id ? next : x));
+        try { await saveReagents(all, `${isNew ? 'Add' : 'Update'} reagent ${next.id}`); toast('已保存。'); route(); } catch (e) { toast(saveError(e)); return false; }
+      } },
+    ].filter(Boolean),
+  });
+}
+
+// ----- protocol library -----
+async function viewProtocols() {
+  const list = await loadProtocols(lib);
+  const importIn = h('input', { type: 'file', accept: '.md,text/markdown', multiple: true, hidden: true, onchange: async (e) => {
+    const files = [...e.target.files]; e.target.value = '';
+    const changes = [];
+    for (const f of files) {
+      const text = await f.text();
+      const p = parseProtocol(text);
+      const id = cleanProtocolId(p.id || f.name.replace(/\.md$/i, ''));
+      if (id) changes.push({ path: protocolPath(id), data: text });
+    }
+    if (!changes.length) return;
+    try { await lib.commit(`Import ${changes.length} protocols`, async () => ({ changes })); toast(`已导入 ${changes.length} 个 SOP。`); route(); } catch (err) { toast(saveError(err)); }
+  } });
+  return h('div', { class: 'view library' },
+    topbar({ back: '#/', backLabel: '首页', title: '步骤库（SOP）', sub: `${list.length} 个`, actions: [
+      h('button', { class: 'btn', type: 'button', onclick: () => importIn.click() }, '导入 .md'), importIn,
+      h('button', { class: 'btn primary', type: 'button', onclick: () => editProtocol(null) }, icon('plus', 18), h('span', null, '新建 SOP'))] }),
+    demoBanner(),
+    h('article', { class: 'sheet plain' },
+      list.length ? h('table', { class: 'data lib-table' }, thead(['编号', '名称', '版本', '试剂', '用过']),
+        h('tbody', null, list.map((p) => h('tr', { onclick: () => { location.hash = `#/lib/protocols/${encodeURIComponent(p.id)}`; } },
+          h('td', null, p.id), h('td', null, p.title), h('td', null, p.version), h('td', null, p.reagents.join(' ')),
+          h('td', null, `${lib.allPages().filter((x) => x.protocol === p.id).length} 次`)))))
+        : h('p', { class: 'muted' }, '还没有 SOP。点“导入 .md”导入预置的步骤库，或者新建。'),
+      h('p', { class: 'muted' }, 'SOP 改版时请新建一个带新版本号的编号（例如 …-v3），不要改旧的：旧实验仍然指向当时用的版本。')));
+}
+
+async function viewProtocol(id) {
+  const p = await loadProtocol(lib, id);
+  if (!p) return viewMissing(`步骤库里没有 ${id}。`);
+  const body = h('div', { class: 'prose' });
+  await renderInto(body, p.body, { lib, vol: null, num: null, urls: view.urls, resolveBlob: async () => { throw new Error('no attachments'); } });
+  const uses = lib.allPages().filter((x) => x.protocol === p.id).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  return h('div', { class: 'view library' },
+    topbar({ back: '#/lib/protocols', backLabel: '步骤库', title: p.id, sub: p.version, actions: [
+      h('button', { class: 'btn', type: 'button', onclick: () => editProtocol(p) }, icon('edit', 18), h('span', null, '修改')),
+      h('button', { class: 'btn primary', type: 'button', onclick: () => openNewExperiment('').then(() => { const s = document.getElementById('ne-proto'); if (s) { s.value = p.id; s.dispatchEvent(new Event('change')); } }) }, '用它新建实验')] }),
+    demoBanner(),
+    h('article', { class: 'sheet plain' },
+      h('h1', null, p.title),
+      h('p', { class: 'muted' }, [p.version && `版本 ${p.version}`, p.source && `原始文件 ${p.source}`].filter(Boolean).join(' · ')),
+      p.reagents.length ? h('p', null, h('b', null, '试剂 '), p.reagents.join('、')) : null,
+      p.variables.length ? h('p', null, h('b', null, '常变条件 '), p.variables.join('、')) : null,
+      p.results.length ? h('p', null, h('b', null, '结果 '), p.results.join('、')) : null,
+      body,
+      uses.length ? h('section', null, h('h2', null, '用过这个 SOP 的实验'), h('ol', { class: 'ledger-rows' }, uses.map((x) => h('li', null, h('a', { href: `#/v/${x.vol}/${x.num}` },
+        h('span', { class: 'l-date' }, x.date), h('span', { class: 'l-title' }, x.title), h('span', { class: 'l-where' }, x.xid || '')))))) : null));
+}
+
+function editProtocol(p) {
+  const tpl = p ? null : '---\nid: SOP-NEW-v1\ntitle: \nversion: v1\nsource: \nreagents: []\nvariables: []\nresults: []\ntags: []\n---\n\n## 步骤\n\n1. \n';
+  const ta = h('textarea', { class: 'editor-text', rows: 22, spellcheck: 'false' });
+  const load = p ? lib.readText(protocolPath(p.id)) : Promise.resolve(tpl);
+  load.then((t) => { ta.value = t; });
+  modal({
+    title: p ? `修改 ${p.id}` : '新建 SOP', wide: true,
+    body: h('div', null, h('p', { class: 'muted' }, '开头 --- 之间是信息：id 编号、title 名称、version 版本、source 原始 PDF 路径、reagents 常用试剂编号、variables 常变条件、results 要记录的结果。下面是步骤正文（Markdown）。'), ta),
+    buttons: [{ label: '取消' }, { label: '保存', primary: true, run: async () => {
+      const np = parseProtocol(ta.value);
+      const id = cleanProtocolId(np.id);
+      if (!id) { toast('id 不能为空。'); return false; }
+      const changes = [{ path: protocolPath(id), data: ta.value }];
+      if (p && p.id !== id) changes.push({ path: protocolPath(p.id), delete: true });
+      try { await lib.commit(`${p ? 'Update' : 'Add'} protocol ${id}`, async () => ({ changes })); toast('已保存。'); location.hash = `#/lib/protocols/${encodeURIComponent(id)}`; route(); } catch (e) { toast(saveError(e)); return false; }
+    } }],
+  });
+}
+
+boot();
