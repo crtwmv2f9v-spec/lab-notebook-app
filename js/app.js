@@ -9,10 +9,10 @@ import { renderInto, fitChartsForPrint, loadLib } from './render.js';
 import {
   expId, cleanTopic, nextSeq, sampleNo, sampleId, parseNumbers, readSamples, writeSamples, samplesTemplate, isResultCol, colLabel,
   parseFollowup, formatFollowup, addDays, daysFrom, icsFor, toCSV, REAGENTS_PATH, REAGENT_FIELDS, parseReagents, reagentsCSV,
-  nextReagentId, loadReagents, loadProtocol, loadProtocols, parseProtocol, protocolPath, cleanProtocolId, reagentAlerts,
+  nextReagentId, loadReagents, reagentFields, LOCKED_REAGENT_KEYS, loadProtocol, loadProtocols, parseProtocol, protocolPath, cleanProtocolId, reagentAlerts,
 } from './lab.js';
 import { search } from './search.js';
-import { h, icon, debounce, fmtBytes } from './util.js';
+import { h, icon, debounce, fmtBytes, loadScript } from './util.js';
 
 // ---------- settings (per device) ----------
 const SKEY = 'labnote.settings';
@@ -57,8 +57,18 @@ async function startLibrary() {
   await lib.open();
 }
 
+// Web fonts load in the background: where Google Fonts is blocked the page
+// still opens at once with the system's Chinese fonts.
+function loadFonts() {
+  const l = document.createElement('link');
+  l.rel = 'stylesheet';
+  l.href = 'https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600&family=Homemade+Apple&family=IBM+Plex+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap';
+  document.head.append(l);
+}
+
 async function boot() {
   applyTheme();
+  loadFonts();
   if ('serviceWorker' in navigator && !DEMO && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
@@ -383,6 +393,7 @@ function viewHome() {
     h('button', { class: 'btn primary', type: 'button', onclick: () => openNewExperiment('') }, icon('plus', 18), h('span', null, '新建实验')),
     h('a', { class: 'btn ghost', href: '#/lib/reagents' }, '试剂库'),
     h('a', { class: 'btn ghost', href: '#/lib/protocols' }, '步骤库'),
+    h('button', { class: 'btn ghost', type: 'button', onclick: () => openExport('') }, '导出'),
     h('button', { class: 'btn icon ghost', 'aria-label': '搜索', title: '搜索（/）', onclick: () => openSearch() }, icon('search')),
     h('a', { class: 'btn icon ghost', href: '#/settings', 'aria-label': '设置', title: '设置' }, icon('gear')),
   ];
@@ -487,6 +498,8 @@ function viewVolume(id) {
     { icon: 'edit', label: '卷信息', run: () => openVolumeDetails(v) },
     pages.length ? { icon: 'print', label: '打印整卷 / 存为 PDF', run: () => printVolume(id) } : null,
     { icon: 'search', label: '在本卷中搜索', run: () => openSearch('', id) },
+    { icon: 'download', label: '导出（按日期，PDF / Word）', run: () => openExport(id) },
+    { icon: 'trash', label: '删除这个卷…', run: () => openDeleteVolume(v) },
   ]) }, icon('more'));
   const root = h('div', { class: 'view volume' },
     topbar({ back: '#/', backLabel: '所有卷', title: v.title, sub: `第 ${v.number} 卷`, actions: [
@@ -504,10 +517,10 @@ function viewVolume(id) {
   } else {
     sheet.append(h('table', { class: 'toc-table' },
       h('thead', null, h('tr', null, h('th', { scope: 'col', class: 'c-no' }, '页'), h('th', { scope: 'col', class: 'c-date' }, '日期'), h('th', { scope: 'col' }, '标题'), h('th', { scope: 'col', class: 'c-sig' }, '已签名'))),
-      h('tbody', null, pages.map((p) => h('tr', { onclick: (e) => { if (!e.target.closest('a')) location.hash = `#/v/${id}/${p.num}`; } },
+      h('tbody', null, pages.map((p) => h('tr', { class: p.void ? 'voided' : null, onclick: (e) => { if (!e.target.closest('a')) location.hash = `#/v/${id}/${p.num}`; } },
         h('td', { class: 'c-no' }, p.num),
         h('td', { class: 'c-date' }, fmtDate(p.date)),
-        h('td', null, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, h('a', { href: `#/v/${id}/${p.num}` }, p.title),
+        h('td', null, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, h('a', { href: `#/v/${id}/${p.num}` }, p.title), p.void ? h('span', { class: 'void-tag' }, '已作废') : null,
           p.pending ? h('span', { class: 'pending-tag' }, '待同步') : null,
           p.tags.length ? h('span', { class: 'toc-tags' }, p.tags.map((t) => `#${t}`).join(' ')) : null),
         h('td', { class: 'c-sig' }, p.signed ? h('span', { class: 'initials', title: `Signed ${fmtDate(p.signed)}` }, initials(p.signer || signerName())) : h('span', { class: 'sr' }, '未签名')))))));
@@ -593,6 +606,7 @@ async function buildPageSheet(vol, num, { forPrint = false } = {}) {
         field('标题', h('span', { class: 'title' }, fm.title || '未命名'), 'grow'),
         field('日期', fmtDate(fm.date))),
       fm.id ? h('div', { class: 'form-row' }, field('实验编号', h('button', { class: 'linkish xid', type: 'button', title: '复制编号', onclick: () => copyText(fm.id) }, fm.id), 'grow')) : null),
+    fm.void ? h('div', { class: 'void-banner' }, h('strong', null, '已作废'), ` ${fm.void}`) : null,
     panel,
     cont ? h('p', { class: 'cont from' }, '接上页 ', refLink(entry.continues, vol)) : null,
     content,
@@ -605,6 +619,7 @@ async function buildPageSheet(vol, num, { forPrint = false } = {}) {
       (fm.amended || []).length ? h('p', { class: 'amended' }, `修订于 ${fm.amended.map(fmtDate).join('、')}`) : null,
       entry?.pending ? h('p', { class: 'pending-note no-print' }, '已存在本机，联网后提交到 GitHub。') : null));
   if (forPrint) sheet.classList.add('for-print');
+  if (fm.void) sheet.classList.add('voided');
   return { el: sheet, ready, fm, body };
 }
 
@@ -625,6 +640,8 @@ async function viewPage(vol, num, params) {
     { icon: 'history', label: '历史版本', run: () => openHistory(vol, num) },
     { icon: 'print', label: '打印纸质记录卡', run: () => printCard(vol, num) },
     fm.id ? { icon: 'copy', label: '命名助手（数据/照片文件名）', run: () => openNaming(fm, num) } : null,
+    fm.void ? { icon: 'history', label: '取消作废', run: () => setVoid(vol, num, null) } : { icon: 'close', label: '作废这一页…', run: () => setVoid(vol, num, fm) },
+    fm.signed ? null : { icon: 'trash', label: '删除这一页…', run: () => openDeletePage(vol, num, fm) },
     (fm.followups || []).length ? { icon: 'download', label: '提醒导出到手机日历', run: () => exportIcs((fm.followups || []).map(parseFollowup).filter((f) => f && !f.done).map((f) => ({ ...f, xid: fm.id, page: { vol, num } }))) } : null,
   ]) }, icon('more'));
   const photo = h('button', { class: 'btn', type: 'button', onclick: () => openPhotoCapture(vol, num) }, icon('attach', 18), h('span', { class: 'wide-only' }, '拍照/加图'));
@@ -1195,7 +1212,7 @@ function viewSettings() {
 const thead = (cols) => h('thead', null, h('tr', null, cols.map((c) => h('th', { scope: 'col' }, c))));
 
 function downloadText(name, text, type = 'text/plain') {
-  const url = URL.createObjectURL(new Blob([text], { type }));
+  const url = URL.createObjectURL(text instanceof Blob ? text : new Blob([text], { type }));
   const a = h('a', { href: url, download: name });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -1457,6 +1474,7 @@ async function openFollowups() {
 async function allFollowups() {
   const items = [];
   for (const p of lib.allPages()) {
+    if (p.void) continue;
     (p.followups || []).forEach((s, i) => { const f = parseFollowup(s); if (f) items.push({ ...f, index: i, page: p, xid: p.xid }); });
   }
   const reagents = await loadReagents(lib).catch(() => []);
@@ -1487,6 +1505,202 @@ function todoPanel() {
     box.replaceChildren(...kids);
   }).catch((e) => box.replaceChildren(h('h2', null, '今日待办'), h('p', { class: 'warn' }, e.message)));
   return box;
+}
+
+// ----- export a date range for the supervisor: PDF (print) or Word -----
+function openExport(vol) {
+  const from = h('input', { id: 'ex-from', type: 'date', value: addDays(todayISO(), -6) });
+  const to = h('input', { id: 'ex-to', type: 'date', value: todayISO() });
+  const volSel = h('select', { id: 'ex-vol' }, h('option', { value: '' }, '所有卷'), lib.volumes().map((v) => h('option', { value: v.id, selected: v.id === vol }, v.title)));
+  const withVoid = h('input', { type: 'checkbox', id: 'ex-void' });
+  const count = h('p', { class: 'muted' });
+  const pick = () => lib.allPages().filter((p) => p.date >= from.value && p.date <= to.value && (!volSel.value || p.vol === volSel.value) && (withVoid.checked || !p.void))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.vol.localeCompare(b.vol) || a.num - b.num);
+  const upd = () => { count.textContent = `共 ${pick().length} 页。`; };
+  [from, to, volSel, withVoid].forEach((el) => el.addEventListener('change', upd)); upd();
+  const quick = (label, a, b) => h('button', { class: 'btn small', type: 'button', onclick: () => { from.value = a; to.value = b; upd(); } }, label);
+  const t = todayISO(); const dow = (new Date(`${t}T12:00:00`).getDay() + 6) % 7;
+  modal({
+    title: '导出实验记录',
+    body: h('div', { class: 'form' },
+      h('div', { class: 'row-actions' },
+        quick('最近 7 天', addDays(t, -6), t),
+        quick('本周', addDays(t, -dow), t),
+        quick('上周', addDays(t, -dow - 7), addDays(t, -dow - 1)),
+        quick('本月', `${t.slice(0, 7)}-01`, t)),
+      h('div', { class: 'pair' }, h('div', null, h('label', { for: 'ex-from' }, '从'), from), h('div', null, h('label', { for: 'ex-to' }, '到'), to)),
+      h('label', { for: 'ex-vol' }, '卷'), volSel,
+      h('label', { class: 'check', for: 'ex-void' }, withVoid, ' 包含已作废的页'),
+      count,
+      h('p', { class: 'muted' }, 'PDF：在打印窗口里选“存储为 PDF”。Word：直接下载 .docx，导师可以在里面批注。')),
+    buttons: [{ label: '取消' },
+      { label: '导出 Word', run: async () => { const ps = pick(); if (!ps.length) { toast('这个范围里没有记录。'); return false; } await exportWord(ps, from.value, to.value); } },
+      { label: '导出 PDF', primary: true, run: async () => { const ps = pick(); if (!ps.length) { toast('这个范围里没有记录。'); return false; } await exportPdf(ps, from.value, to.value); } }],
+  });
+}
+
+async function summaryRows(pages) {
+  const rows = [];
+  for (const p of pages) {
+    const t = readSamples(parseFrontMatter(await lib.readPage(p.vol, p.num)).body);
+    rows.push([p.date, p.xid || '', p.title + (p.void ? '（已作废）' : ''), lib.volume(p.vol)?.title || p.vol, p.protocol || '', t ? String(t.rows.length) : '', p.signed ? '已签名' : '未签名']);
+  }
+  return rows;
+}
+const SUMMARY_HEAD = ['日期', '实验编号', '标题', '卷', 'SOP', '样品数', '签名'];
+const exportName = (a, b) => `实验记录_${a.replace(/-/g, '')}-${b.replace(/-/g, '')}`;
+
+async function exportPdf(pages, a, b) {
+  const pr = document.getElementById('print-root');
+  pr.replaceChildren();
+  toast('正在准备 PDF…');
+  const rows = await summaryRows(pages);
+  pr.append(h('article', { class: 'sheet plain report-cover' },
+    h('div', { class: 'rc-kind' }, lib.notebook.title || '实验记录本'),
+    h('h1', null, '实验记录汇总'),
+    h('p', { class: 'rc-range' }, `${a} 至 ${b}`),
+    h('p', { class: 'muted' }, `${lib.notebook.owner || ''}　共 ${pages.length} 页　导出于 ${todayISO()}`),
+    h('table', { class: 'data report-table' }, thead(SUMMARY_HEAD), h('tbody', null, rows.map((r) => h('tr', null, r.map((c) => h('td', null, c))))))));
+  const readies = [];
+  for (const p of pages) { const { el, ready } = await buildPageSheet(p.vol, p.num, { forPrint: true }); pr.append(el); readies.push(ready); }
+  const settle = (x) => Promise.race([x, new Promise((r) => setTimeout(r, 15000))]);
+  await settle(Promise.allSettled(readies));
+  await settle(Promise.all([...pr.querySelectorAll('img')].map((i) => i.decode?.().catch(() => {}))));
+  document.body.classList.add('print-volume');
+  fitChartsForPrint(pr, 680);
+  const title = document.title; document.title = exportName(a, b);
+  window.addEventListener('afterprint', () => { document.title = title; }, { once: true });
+  setTimeout(() => window.print(), 50);
+}
+
+async function exportWord(pages, a, b) {
+  toast('正在生成 Word…');
+  await loadScript('vendor/docx.umd.js');
+  const D = window.docx;
+  const W = 9638; // A4 text width in twips with 2 cm margins
+  const font = { ascii: 'Arial', hAnsi: 'Arial', eastAsia: '等线', cs: 'Arial' };
+  const P = (text, o = {}) => new D.Paragraph({ spacing: { after: 80 }, ...o.para, children: [new D.TextRun({ text: String(text ?? ''), font, size: o.size || 21, bold: o.bold, italics: o.italics, color: o.color })] });
+  const border = { style: D.BorderStyle.SINGLE, size: 4, color: '999999' };
+  const table = (rows, head) => {
+    const n = Math.max(...[head, ...rows].filter(Boolean).map((r) => r.length));
+    const w = Math.floor(W / n);
+    const cell = (t, th) => new D.TableCell({ width: { size: w, type: D.WidthType.DXA }, borders: { top: border, bottom: border, left: border, right: border },
+      shading: th ? { type: D.ShadingType.CLEAR, color: 'auto', fill: 'EEF2EE' } : undefined,
+      margins: { top: 40, bottom: 40, left: 80, right: 80 }, children: [P(t, { bold: th, size: 18, para: { spacing: { after: 0 } } })] });
+    const all = [...(head ? [head] : []), ...rows].map((r, i) => new D.TableRow({ tableHeader: !!head && i === 0, children: Array.from({ length: n }, (_, j) => cell(r[j] ?? '', !!head && i === 0)) }));
+    return new D.Table({ width: { size: w * n, type: D.WidthType.DXA }, columnWidths: Array(n).fill(w), rows: all });
+  };
+  const image = async (src, maxW = 560) => {
+    const buf = await (await fetch(src)).arrayBuffer();
+    const bmp = await createImageBitmap(new Blob([buf]));
+    const k = Math.min(1, maxW / bmp.width);
+    const type = /^\x89PNG/.test(String.fromCharCode(...new Uint8Array(buf.slice(0, 4)))) ? 'png' : 'jpg';
+    return new D.Paragraph({ alignment: D.AlignmentType.CENTER, children: [new D.ImageRun({ type, data: buf, transformation: { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) } })] });
+  };
+  const tableRows = (t) => [...t.querySelectorAll('tr:not(.group)')].map((tr) => [...tr.children].map((c) => c.textContent.trim()));
+  // Walk the rendered page and turn it into Word blocks.
+  async function blocks(root) {
+    const out = [];
+    for (const el of root.children) {
+      const tag = el.tagName;
+      if (/^H[1-4]$/.test(tag)) out.push(new D.Paragraph({ heading: [D.HeadingLevel.HEADING_2, D.HeadingLevel.HEADING_2, D.HeadingLevel.HEADING_3, D.HeadingLevel.HEADING_4][+tag[1] - 1], children: [new D.TextRun({ text: el.textContent, font })] }));
+      else if (tag === 'P') { if (el.textContent.trim()) out.push(P(el.textContent)); }
+      else if (tag === 'UL' || tag === 'OL') [...el.children].forEach((li, i) => out.push(P(`${tag === 'OL' ? `${i + 1}.` : '•'} ${li.textContent.trim()}`, { para: { indent: { left: 360 } } })));
+      else if (tag === 'BLOCKQUOTE') out.push(P(el.textContent.trim(), { italics: true, color: '666666' }));
+      else if (tag === 'PRE') out.push(P(el.textContent, { size: 18 }));
+      else if (tag === 'TABLE') out.push(table(tableRows(el)), P(''));
+      else if (el.querySelector?.(':scope > table')) out.push(table(tableRows(el.querySelector(':scope > table'))), P(''));
+      else if (tag === 'FIGURE') {
+        const img = el.querySelector('img');
+        const plot = el.querySelector('.js-plotly-plot');
+        try {
+          if (img?.src) out.push(await image(img.src));
+          else if (plot && window.Plotly) out.push(await image(await window.Plotly.toImage(plot, { format: 'png', width: 900, height: 500 })));
+          else if (el.querySelector('table')) out.push(table(tableRows(el.querySelector('table'))));
+        } catch { /* leave the caption only */ }
+        const cap = el.querySelector(':scope > figcaption');
+        if (cap) out.push(P(cap.textContent.trim().replace(/^(图 \d+)\s*/, '$1  '), { size: 18, color: '555555', para: { alignment: D.AlignmentType.CENTER } }));
+      } else if (tag === 'DIV' || tag === 'SECTION') out.push(...await blocks(el));
+    }
+    return out;
+  }
+  const rows = await summaryRows(pages);
+  const children = [
+    P(lib.notebook.title || '实验记录本', { color: '4F7D66' }),
+    new D.Paragraph({ heading: D.HeadingLevel.TITLE, children: [new D.TextRun({ text: '实验记录汇总', font })] }),
+    P(`${a} 至 ${b}　共 ${pages.length} 页　${lib.notebook.owner || ''}　导出于 ${todayISO()}`),
+    table(rows, SUMMARY_HEAD),
+  ];
+  const stage = h('div', { class: 'export-stage' });
+  document.body.append(stage);
+  try {
+    for (const p of pages) {
+      const { el, ready, fm } = await buildPageSheet(p.vol, p.num, { forPrint: true });
+      stage.replaceChildren(el);
+      await Promise.race([ready, new Promise((r) => setTimeout(r, 15000))]);
+      children.push(new D.Paragraph({ children: [new D.PageBreak()] }),
+        new D.Paragraph({ heading: D.HeadingLevel.HEADING_1, children: [new D.TextRun({ text: `${fm.id ? `${fm.id}  ` : ''}${fm.title || '未命名'}`, font })] }),
+        P([`日期 ${fm.date || ''}`, `${lib.volume(p.vol)?.title || p.vol} 第 ${p.num} 页`, fm.protocol ? `SOP ${fm.protocol}` : '', fm.signed ? `签名 ${fm.signer || ''} ${String(fm.signed).slice(0, 10)}` : '未签名'].filter(Boolean).join('　'), { color: '555555' }));
+      if (fm.void) children.push(P(`已作废 ${fm.void}`, { bold: true, color: 'B4322B' }));
+      const panel = el.querySelector('.exp-panel');
+      if (panel) {
+        const rt = panel.querySelector('table');
+        if (rt) children.push(P('试剂', { bold: true }), table(tableRows(rt)));
+        const path = panel.querySelector('code.path');
+        if (path) children.push(P(`原始数据：${path.textContent}`, { size: 18 }));
+        const fus = [...panel.querySelectorAll('ul.followups li')].map((li) => li.textContent.replace(/^[✓○]/, '').trim());
+        if (fus.length) children.push(P(`提醒：${fus.join('；')}`, { size: 18 }));
+      }
+      children.push(...await blocks(el.querySelector('.sheet-body')));
+    }
+  } finally { stage.remove(); }
+  const doc = new D.Document({
+    styles: { default: { document: { run: { font, size: 21 } } } },
+    sections: [{ properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1134, bottom: 1134, left: 1134, right: 1134 } } }, children }],
+  });
+  downloadText(`${exportName(a, b)}.docx`, await D.Packer.toBlob(doc), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  toast('Word 已下载。');
+}
+
+// ----- delete / void -----
+function confirmTyped(title, text, word, label) {
+  return new Promise((resolve) => {
+    const input = h('input', { id: 'cf-word', autocomplete: 'off', placeholder: word });
+    let ok = false;
+    modal({
+      title,
+      body: h('div', { class: 'form' }, h('p', null, text), h('label', { for: 'cf-word' }, `请输入“${word}”确认`), input),
+      buttons: [{ label: '取消' }, { label, danger: true, run: () => { if (input.value.trim() !== word) { toast('输入的内容不一致。'); return false; } ok = true; } }],
+      onClose: () => resolve(ok),
+    });
+  });
+}
+async function openDeleteVolume(v) {
+  const n = lib.pages(v.id).length;
+  const ok = await confirmTyped(`删除卷“${v.title}”`, `将删除这个卷和其中的 ${n} 页（含照片附件）。GitHub 历史和硬盘上的每周备份里仍保留旧版本，必要时可以找回。`, v.title, '删除');
+  if (!ok) return;
+  try { await lib.deleteVolume(v.id); toast(`已删除“${v.title}”。`); location.hash = '#/'; } catch (e) { toast(saveError(e)); }
+}
+async function openDeletePage(vol, num, fm) {
+  const word = fm.id || `${num}`;
+  const ok = await confirmTyped('删除这一页', `“${fm.title || '未命名'}”及其照片附件会被删除（GitHub 历史中仍可找回）。已签名的记录不能删除，只能作废。`, word, '删除');
+  if (!ok) return;
+  try { await lib.deletePage(vol, num); toast('已删除。'); location.hash = `#/v/${vol}`; } catch (e) { toast(saveError(e)); }
+}
+async function setVoid(vol, num, fm) {
+  let reason = '';
+  if (fm) {
+    reason = window.prompt('作废原因（会写在页面顶部，例如：样品污染，数据无效；或：重复记录，见 20261101-OECT-02）');
+    if (reason == null) return;
+    if (!reason.trim()) { toast('请写一个作废原因。'); return; }
+  }
+  try {
+    await updatePage(vol, num, ({ fm: f, body }) => {
+      if (fm) f.void = `${todayISO()} ${reason.trim()}`; else delete f.void;
+      return { fm: f, body };
+    }, fm ? `Void p. ${num}` : `Restore p. ${num}`);
+    toast(fm ? '已作废。页面保留，搜索和导出时默认隐藏。' : '已取消作废。');
+  } catch (e) { toast(saveError(e)); }
 }
 
 // ----- new experiment -----
@@ -1593,6 +1807,7 @@ async function openNewExperiment(volId) {
 // ----- reagent library -----
 async function viewReagents() {
   const list = await loadReagents(lib);
+  const fields = reagentFields(lib.notebook);
   const filter = h('input', { type: 'search', placeholder: '按编号、名称、厂商、批号筛选', 'aria-label': '筛选' });
   const body = h('tbody');
   const today = todayISO();
@@ -1602,7 +1817,7 @@ async function viewReagents() {
     body.replaceChildren(...list.filter((r) => !q || Object.values(r).join(' ').toLowerCase().includes(q)).map((r) => {
       const n = usedBy(r.id).length;
       return h('tr', { onclick: () => editReagent(list, r) },
-        REAGENT_FIELDS.slice(0, 10).map(([k]) => h('td', { class: k === 'expires' && r.expires && r.expires < today ? 'warn' : null }, r[k] || '')),
+        fields.map(([k]) => h('td', { class: k === 'expires' && r.expires && r.expires < today ? 'warn' : null }, r[k] || '')),
         h('td', null, n ? h('a', { href: `#/search?q=${encodeURIComponent(r.id)}`, onclick: (e) => e.stopPropagation() }, `${n} 次`) : ''));
     }));
   };
@@ -1610,7 +1825,7 @@ async function viewReagents() {
   const importIn = h('input', { type: 'file', accept: '.csv,text/csv', hidden: true, onchange: async (e) => {
     const f = e.target.files[0]; e.target.value = '';
     if (!f) return;
-    const incoming = parseReagents(await f.text());
+    const incoming = parseReagents(await f.text(), fields);
     if (!incoming.length) { toast('文件里没有读到试剂（第一行要是列名，必须有 id 列）。'); return; }
     const byId = new Map(list.map((r) => [r.id, r]));
     for (const r of incoming) byId.set(r.id, { ...(byId.get(r.id) || {}), ...r });
@@ -1619,35 +1834,75 @@ async function viewReagents() {
   } });
   return h('div', { class: 'view library' },
     topbar({ back: '#/', backLabel: '首页', title: '试剂库', sub: `${list.length} 条`, actions: [
+      h('button', { class: 'btn', type: 'button', onclick: () => editReagentColumns(list) }, icon('table', 18), h('span', { class: 'wide-only' }, '管理列')),
       h('button', { class: 'btn primary', type: 'button', onclick: () => editReagent(list, null) }, icon('plus', 18), h('span', null, '新增试剂'))] }),
     demoBanner(),
     h('article', { class: 'sheet plain' },
       h('div', { class: 'search-row' }, filter,
         h('button', { class: 'btn', type: 'button', onclick: () => importIn.click() }, '导入 CSV'),
-        h('button', { class: 'btn', type: 'button', onclick: () => downloadText('reagents.csv', `﻿${reagentsCSV(list)}`, 'text/csv') }, '导出 CSV'), importIn),
-      h('div', { class: 'table-wrap tall' }, h('table', { class: 'data lib-table' }, thead([...REAGENT_FIELDS.slice(0, 10).map(([, l]) => l), '使用']), body)),
+        h('button', { class: 'btn', type: 'button', onclick: () => downloadText('reagents.csv', `\uFEFF${reagentsCSV(list, fields)}`, 'text/csv') }, '导出 CSV'), importIn),
+      h('div', { class: 'table-wrap tall' }, h('table', { class: 'data lib-table' }, thead([...fields.map(([, l]) => l), '使用']), body)),
       h('p', { class: 'muted' }, '点一行可修改。批号换了就新建一条（新编号），旧实验仍指向旧批号，保证可溯源。')));
 }
 
 async function saveReagents(list, message) {
   list.sort((a, b) => String(a.id).localeCompare(String(b.id)));
-  return lib.commit(message, async () => ({ changes: [{ path: REAGENTS_PATH, data: `﻿${reagentsCSV(list)}` }] }));
+  return lib.commit(message, async () => ({ changes: [{ path: REAGENTS_PATH, data: `\uFEFF${reagentsCSV(list, reagentFields(lib.notebook))}` }] }));
+}
+
+// Rename, add, remove and reorder reagent columns.
+function editReagentColumns(list) {
+  const cols = reagentFields(lib.notebook).map(([k, l]) => ({ k, l }));
+  const box = h('div', { class: 'col-list' });
+  const draw = () => box.replaceChildren(...cols.map((c, i) => h('div', { class: 'col-row' },
+    h('input', { value: c.l, 'aria-label': '列名', oninput: (e) => { c.l = e.target.value; } }),
+    h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '上移', disabled: i === 0, onclick: () => { cols.splice(i - 1, 0, cols.splice(i, 1)[0]); draw(); } }, '↑'),
+    h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '下移', disabled: i === cols.length - 1, onclick: () => { cols.splice(i + 1, 0, cols.splice(i, 1)[0]); draw(); } }, '↓'),
+    LOCKED_REAGENT_KEYS.includes(c.k) ? h('span', { class: 'muted small lock' }, '必需')
+      : h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '删除这一列', onclick: () => { cols.splice(i, 1); draw(); } }, icon('close', 16)))));
+  draw();
+  modal({
+    title: '管理试剂库的列',
+    body: h('div', null,
+      h('p', { class: 'muted' }, '改名直接改文字；↑↓ 调整顺序；× 删除这一列（这一列里填过的内容会一起删除，但 GitHub 历史里能找回）。“编号”和“名称”不能删。'),
+      box,
+      h('button', { class: 'btn small', type: 'button', onclick: () => { cols.push({ k: `c${Date.now().toString(36)}`, l: '新列' }); draw(); box.lastChild.querySelector('input').select(); } }, icon('plus', 16), '加一列')),
+    buttons: [{ label: '取消' }, { label: '保存', primary: true, run: async () => {
+      if (cols.some((c) => !c.l.trim())) { toast('列名不能为空。'); return false; }
+      const removed = reagentFields(lib.notebook).filter(([k]) => !cols.some((c) => c.k === k));
+      const lost = removed.filter(([k]) => list.some((r) => String(r[k] || '').trim()));
+      if (lost.length && !window.confirm(`“${lost.map(([, l]) => l).join('、')}”里有填过的内容，会一起删除。确定吗？`)) return false;
+      const fields = cols.map((c) => [c.k, c.l.trim()]);
+      try {
+        await lib.commit('Change reagent columns', async (l) => {
+          const nb = structuredClone(l.notebook);
+          nb.reagentColumns = fields;
+          return {
+            changes: [{ path: 'notebook.json', data: `${JSON.stringify(nb, null, 2)}\n` }, { path: REAGENTS_PATH, data: `\uFEFF${reagentsCSV(list, fields)}` }],
+            after: () => { l.notebook = nb; },
+          };
+        });
+        toast('列已更新。'); setTimeout(() => route(), 300);
+      } catch (e) { toast(saveError(e)); return false; }
+    } }],
+  });
 }
 
 function editReagent(list, r) {
   const isNew = !r;
   const cur = r ? { ...r } : { id: nextReagentId(list) };
-  const inputs = Object.fromEntries(REAGENT_FIELDS.map(([k]) => [k, h('input', {
+  const fields = reagentFields(lib.notebook);
+  const inputs = Object.fromEntries(fields.map(([k]) => [k, h('input', {
     id: `rg-${k}`, value: cur[k] || '', type: k === 'opened' || k === 'expires' ? 'date' : 'text', readonly: k === 'id' && !isNew,
   })]));
   modal({
     title: isNew ? '新增试剂' : `修改 ${cur.id}`,
-    body: h('div', { class: 'form grid2' }, REAGENT_FIELDS.map(([k, l]) => h('div', null, h('label', { for: `rg-${k}` }, l), inputs[k]))),
+    body: h('div', { class: 'form grid2' }, fields.map(([k, l]) => h('div', null, h('label', { for: `rg-${k}` }, l), inputs[k]))),
     buttons: [
-      isNew ? null : { label: '用新批号复制', run: () => { setTimeout(() => editReagent(list, null), 0); setTimeout(() => { for (const [k] of REAGENT_FIELDS) if (!['id', 'lot', 'opened', 'expires'].includes(k)) { const el = document.getElementById(`rg-${k}`); if (el) el.value = cur[k] || ''; } }, 60); } },
+      isNew ? null : { label: '用新批号复制', run: () => { setTimeout(() => editReagent(list, null), 0); setTimeout(() => { for (const [k] of fields) if (!['id', 'lot', 'opened', 'expires'].includes(k)) { const el = document.getElementById(`rg-${k}`); if (el) el.value = cur[k] || ''; } }, 60); } },
       { label: '取消' },
       { label: '保存', primary: true, run: async () => {
-        const next = Object.fromEntries(REAGENT_FIELDS.map(([k]) => [k, inputs[k].value.trim()]));
+        const next = { ...(cur || {}), ...Object.fromEntries(fields.map(([k]) => [k, inputs[k].value.trim()])) };
         if (!next.id || !next.name) { toast('编号和名称不能为空。'); return false; }
         if (isNew && list.some((x) => x.id === next.id)) { toast('这个编号已经有了。'); return false; }
         const all = isNew ? [...list, next] : list.map((x) => (x.id === cur.id ? next : x));

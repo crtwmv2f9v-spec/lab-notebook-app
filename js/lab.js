@@ -116,13 +116,17 @@ export const REAGENT_FIELDS = [
   ['id', '编号'], ['name', '名称'], ['spec', '规格/纯度/浓度'], ['vendor', '厂商'], ['catalog', '货号'],
   ['lot', '批号'], ['cas', 'CAS'], ['location', '存放位置'], ['opened', '开封日期'], ['expires', '有效期至'], ['notes', '备注'],
 ];
-export function parseReagents(text) {
+// Columns can be renamed, added and removed; they are kept in notebook.json as [[key, label], …].
+export const reagentFields = (nb) => (Array.isArray(nb?.reagentColumns) && nb.reagentColumns.length ? nb.reagentColumns : REAGENT_FIELDS);
+export const LOCKED_REAGENT_KEYS = ['id', 'name'];
+export function parseReagents(text, fields = REAGENT_FIELDS) {
   const rows = parseCSV(text);
-  const head = (rows.shift() || []).map((c) => c.toLowerCase());
-  const keys = head.map((c) => REAGENT_FIELDS.find(([k, l]) => k === c || l.toLowerCase() === c)?.[0] || c);
+  const head = rows.shift() || [];
+  const all = [...fields, ...REAGENT_FIELDS];
+  const keys = head.map((c) => all.find(([k, l]) => k === c || k === c.toLowerCase() || l === c)?.[0] || c);
   return rows.map((r) => Object.fromEntries(keys.map((k, i) => [k, r[i] ?? '']))).filter((r) => r.id);
 }
-export const reagentsCSV = (list) => toCSV([REAGENT_FIELDS.map(([k]) => k), ...list.map((r) => REAGENT_FIELDS.map(([k]) => r[k] ?? ''))]);
+export const reagentsCSV = (list, fields = REAGENT_FIELDS) => toCSV([fields.map(([k]) => k), ...list.map((r) => fields.map(([k]) => r[k] ?? ''))]);
 export function nextReagentId(list) {
   const max = Math.max(0, ...list.map((r) => parseInt(String(r.id).replace(/\D/g, ''), 10) || 0));
   return `R-${String(max + 1).padStart(4, '0')}`;
@@ -149,7 +153,7 @@ async function cached(lib, path, parse) {
   if (!cache.has(k)) cache.set(k, lib.readText(path).then(parse).catch((e) => { cache.delete(k); throw e; }));
   return cache.get(k);
 }
-export async function loadReagents(lib) { return (await cached(lib, REAGENTS_PATH, parseReagents)) || []; }
+export async function loadReagents(lib) { return (await cached(lib, REAGENTS_PATH, (t) => parseReagents(t, reagentFields(lib.notebook)))) || []; }
 export function protocolIds(lib) {
   return [...lib.tree.keys()].filter((p) => p.startsWith(PROTOCOL_DIR) && p.endsWith('.md')).map((p) => p.slice(PROTOCOL_DIR.length, -3)).sort();
 }

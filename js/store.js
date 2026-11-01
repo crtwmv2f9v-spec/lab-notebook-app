@@ -555,6 +555,37 @@ export class Library {
       };
     });
   }
+  // Removes the volume and all its pages; earlier versions stay in the git history.
+  async deleteVolume(id) {
+    return this.commit(`Delete volume ${id}`, async (lib) => {
+      const nb = structuredClone(lib.notebook);
+      nb.volumes = (nb.volumes || []).filter((v) => v.id !== id);
+      const changes = [{ path: 'notebook.json', data: `${JSON.stringify(nb, null, 2)}\n` }];
+      for (const path of lib.tree.keys()) if (path.startsWith(`volumes/${id}/`)) changes.push({ path, delete: true });
+      return {
+        changes,
+        after: () => {
+          lib.notebook = nb;
+          for (const k of Object.keys(lib.pagesByKey)) if (k.startsWith(`${id}/`)) delete lib.pagesByKey[k];
+        },
+      };
+    });
+  }
+  async deletePage(vol, num) {
+    const pending = this.pendingFor(vol, num);
+    if (pending) await this.dropOutbox(pending.id);
+    const key = `${vol}/${num}`;
+    if (!this.tree.has(pagePath(vol, num))) { delete this.pagesByKey[key]; this.emit('data'); return; }
+    return this.commit(`Delete p. ${num} of ${vol}`, async (lib) => {
+      const changes = [{ path: pagePath(vol, num), delete: true }];
+      for (const path of lib.tree.keys()) if (path.startsWith(attDir(vol, num))) changes.push({ path, delete: true });
+      const rest = { ...lib.pagesByKey }; delete rest[key];
+      const pages = {};
+      for (const p of Object.values(rest)) if (p.vol === vol) pages[p.num] = p;
+      changes.push({ path: volIndexPath(vol), data: JSON.stringify({ version: 1, volume: vol, pages }) });
+      return { changes, after: () => { delete lib.pagesByKey[key]; } };
+    });
+  }
   async updateNotebook(mutate, message = 'Update notebook settings') {
     return this.commit(message, async (lib) => {
       const nb = structuredClone(lib.notebook);

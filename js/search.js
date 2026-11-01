@@ -11,7 +11,9 @@ export function search(pages, query, { vol = '', tag = '', from = '', to = '' } 
   const terms = words.filter((w) => !w.startsWith('#') || /^#\d/.test(w));
   if (tag) tagTerms.push(tag);
   const results = [];
+  const showVoid = /作废|void/.test(raw);
   for (const p of pages) {
+    if (p.void && !showVoid) continue;
     if (vol && p.vol !== vol) continue;
     if (from && !(p.date >= from)) continue;
     if (to && !(p.date <= to)) continue;
