@@ -1,7 +1,7 @@
 // Markdown, math, page links, charts, data tables and Jupyter notebooks.
 import { esc, h, loadScript, icon } from './util.js';
 import { parseRef, parseFrontMatter } from './model.js';
-import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions } from './lab.js';
+import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions, loadHypothesis, evidenceCounts } from './lab.js';
 
 const CDN = 'https://cdn.jsdelivr.net/npm/';
 export const LIBS = {
@@ -139,7 +139,7 @@ export async function hydrate(root, ctx) {
   for (const el of root.querySelectorAll('.math[data-tex]')) renderMath(el);
   for (const code of root.querySelectorAll('pre > code')) {
     const lang = (code.className.match(/language-([\w+-]+)/) || [])[1];
-    if (['chart', 'samples', 'steps', 'reaction', 'quote'].includes(lang)) continue;
+    if (['chart', 'samples', 'steps', 'reaction', 'quote', 'hypothesis'].includes(lang)) continue;
     if (lang && window.hljs?.getLanguage(lang)) { try { window.hljs.highlightElement(code); } catch { /* ignore */ } }
   }
   if (!root.dataset.wired) {
@@ -168,6 +168,7 @@ export async function hydrate(root, ctx) {
   for (const code of root.querySelectorAll('pre > code.language-samples')) jobs.push(renderSamples(code.parentElement, code.textContent, ctx));
   for (const el of root.querySelectorAll('div.embed[data-embed]')) jobs.push(renderEmbed(el, ctx));
   for (const code of root.querySelectorAll('pre > code.language-quote')) jobs.push(renderQuote(code.parentElement, code.textContent, ctx));
+  for (const code of root.querySelectorAll('pre > code.language-hypothesis')) jobs.push(renderHypothesis(code.parentElement, code.textContent, ctx));
   for (const code of root.querySelectorAll('pre > code.language-reaction')) renderReactions(code.parentElement, code.textContent);
   for (const code of root.querySelectorAll('pre > code.language-steps')) renderSteps(code.parentElement, code.textContent);
   markQuantities(root);
@@ -446,6 +447,30 @@ async function renderQuote(pre, src, ctx) {
     content.innerHTML = renderMarkdown(md, sub);
     await hydrate(content, sub);
   } catch (e) { content.append(h('p', { class: 'quote-missing' }, `读取失败：${e.message}`)); }
+}
+
+// ---------- a hypothesis this experiment tests: ```hypothesis  H-0001 \n 本次检验：… ----------
+export function hypBadge(hyp) {
+  return h('span', { class: 'hyp-badges' },
+    h('span', { class: `hyp-status st-${hyp.status}` }, hyp.status),
+    h('span', { class: `hyp-conf cf-${hyp.confidence}`, title: `可信度：${hyp.confidence}` }, h('i'), h('i'), h('i'), ` 可信度 ${hyp.confidence}`));
+}
+async function renderHypothesis(pre, src, ctx) {
+  const [first = '', ...rest] = String(src).split('\n');
+  const id = (first.match(/H-\d{4}/) || [])[0];
+  const note = rest.join('\n').trim();
+  const box = h('aside', { class: 'hyp-box' });
+  pre.replaceWith(box);
+  const hyp = id && ctx.lib ? await loadHypothesis(ctx.lib, id).catch(() => null) : null;
+  if (!hyp) { box.append(h('p', { class: 'quote-missing' }, `思维笔记本里没有假设 ${id || first}。`)); return; }
+  const n = evidenceCounts(hyp);
+  const ev = (hyp.evidence || []).slice(-4);
+  box.append(
+    h('div', { class: 'hyp-head' }, h('span', { class: 'hyp-tag' }, '检验假设'), h('a', { href: `#/think/${hyp.id}` }, hyp.id), h('span', { class: 'hyp-title' }, hyp.title), hypBadge(hyp)),
+    note ? h('p', { class: 'hyp-note' }, note) : null,
+    h('div', { class: 'hyp-sum' }, h('span', { class: 'ev-k k-支持' }, `支持 ${n['支持']}`), h('span', { class: 'ev-k k-反对' }, `反对 ${n['反对']}`), h('span', { class: 'ev-k k-待定' }, `待定 ${n['待定']}`)),
+    ev.length ? h('ol', { class: 'hyp-ev' }, ev.map((e) => h('li', { class: `k-${e.kind}` }, h('b', null, `证据 ${e.id.slice(1)}`), h('span', { class: 'ev-date' }, e.date || ''), ` ${e.text}`, e.src?.xid ? h('span', { class: 'ev-src' }, ` · ${e.src.xid}`) : null))) : h('p', { class: 'muted' }, '还没有证据。'),
+    (hyp.predictions || []).length ? h('div', { class: 'hyp-pred' }, h('span', { class: 'lbl' }, '若成立，应看到：'), h('ul', null, hyp.predictions.map((p) => h('li', null, p)))) : null);
 }
 
 // ---------- chemical equations ----------

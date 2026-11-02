@@ -72,7 +72,7 @@ export function parseFrontMatter(md) {
   }
   if (fm.tags && !Array.isArray(fm.tags)) fm.tags = String(fm.tags).split(',').map((t) => t.trim()).filter(Boolean);
   if (fm.amended && !Array.isArray(fm.amended)) fm.amended = [fm.amended];
-  for (const k of ['reagents', 'followups']) if (fm[k] && !Array.isArray(fm[k])) fm[k] = [fm[k]];
+  for (const k of ['reagents', 'followups', 'hypotheses']) if (fm[k] && !Array.isArray(fm[k])) fm[k] = [fm[k]];
   return { fm, body: md.slice(m[0].length) };
 }
 
@@ -81,7 +81,7 @@ function q(s) {
   const plain = /^[A-Za-z0-9][\w .\-/+()]*$/.test(s) && s.trim() === s && !/^(true|false|null|yes|no|on|off)$/i.test(s);
   return plain ? s : JSON.stringify(s);
 }
-const KEY_ORDER = ['title', 'date', 'id', 'series', 'void', 'tags', 'protocol', 'reagents', 'data', 'followups', 'continues', 'signed', 'signer', 'amended'];
+const KEY_ORDER = ['title', 'date', 'id', 'series', 'hypotheses', 'void', 'tags', 'protocol', 'reagents', 'data', 'followups', 'continues', 'signed', 'signer', 'amended'];
 export function serializePage(fm, body) {
   const keys = [...KEY_ORDER.filter((k) => k in fm), ...Object.keys(fm).filter((k) => !KEY_ORDER.includes(k))];
   const lines = [];

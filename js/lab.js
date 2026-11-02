@@ -301,3 +301,25 @@ export function solutionAlerts(list, within = 14, today = todayISO()) {
   return list.filter((s) => !['用完', '废弃'].includes(s.status) && /^\d{4}-\d{2}-\d{2}$/.test(s.expires) && daysFrom(s.expires, today) <= within)
     .map((s) => ({ date: s.expires, text: `溶液到期：${s.id} ${s.name}`, solution: s.id }));
 }
+
+// ---------- thinking notebook: hypotheses and their evidence (thinking/H-0001.json) ----------
+// { id, title, status, confidence, description, predictions: [text], evidence: [{ id: 'E1', kind, date, text, src?: { xid, vol, num } | { url }, photos: [repo path] }],
+//   history: [{ at, status, confidence, why }], created, updated }
+export const THINK_DIR = 'thinking/';
+export const HYP_STATUS = ['提出', '验证中', '支持', '否定', '搁置'];
+export const HYP_CONF = ['低', '中', '高'];
+export const EV_KIND = ['支持', '反对', '待定'];
+export const hypPath = (id) => `${THINK_DIR}${id}.json`;
+export const HYP_RE = /\bH-\d{4}\b/;
+export const hypIds = (lib) => [...lib.tree.keys()].map((p) => (p.match(/^thinking\/(H-\d{4})\.json$/) || [])[1]).filter(Boolean).sort();
+export async function loadHypothesis(lib, id) { return cached(lib, hypPath(id), (t) => JSON.parse(t)); }
+export async function loadHypotheses(lib) { return (await Promise.all(hypIds(lib).map((id) => loadHypothesis(lib, id).catch(() => null)))).filter(Boolean); }
+export function nextHypId(ids) {
+  const max = Math.max(0, ...ids.map((x) => parseInt(String(x).replace(/\D/g, ''), 10) || 0));
+  return `H-${String(max + 1).padStart(4, '0')}`;
+}
+export const evidenceCounts = (hyp) => Object.fromEntries(EV_KIND.map((k) => [k, (hyp.evidence || []).filter((e) => e.kind === k).length]));
+export function nextEvidenceId(hyp) {
+  const max = Math.max(0, ...(hyp.evidence || []).map((e) => parseInt(String(e.id).replace(/\D/g, ''), 10) || 0));
+  return `E${max + 1}`;
+}
