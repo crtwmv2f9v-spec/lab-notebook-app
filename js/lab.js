@@ -240,3 +240,43 @@ export function reactionHTML(line) {
   }
   return { lead, html, label };
 }
+
+// ---------- sections and quotes of other experiments ----------
+// A ```quote block:  first line = experiment number or vol/num, optionally "#section"; the rest is a note.
+const headingRE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+export function headings(body) {
+  let fence = false;
+  return String(body || '').split('\n').flatMap((l) => {
+    if (/^```/.test(l)) fence = !fence;
+    const m = !fence && l.match(headingRE);
+    return m ? [{ level: m[1].length, text: m[2] }] : [];
+  });
+}
+// Lines of the section under the heading `name` (until the next heading of the same or a higher level).
+function sectionRange(lines, name) {
+  let fence = false; let start = -1; let level = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^```/.test(lines[i])) fence = !fence;
+    const m = !fence && lines[i].match(headingRE);
+    if (!m) continue;
+    if (start >= 0 && m[1].length <= level) return [start, i];
+    if (start < 0 && m[2] === name) { start = i + 1; level = m[1].length; }
+  }
+  return start >= 0 ? [start, lines.length] : null;
+}
+export function sectionOf(body, name) {
+  if (!name) return String(body || '');
+  const lines = String(body || '').split('\n'); const r = sectionRange(lines, name);
+  return r ? lines.slice(r[0], r[1]).join('\n').trim() : null;
+}
+export function replaceSection(body, name, content) {
+  const lines = String(body || '').split('\n'); const r = sectionRange(lines, name);
+  if (!r) return `${String(body || '').trimEnd()}\n\n## ${name}\n\n${content}\n`;
+  return [...lines.slice(0, r[0]), '', content, '', ...lines.slice(r[1])].join('\n').replace(/\n{3,}/g, '\n\n');
+}
+export function parseQuote(src) {
+  const [first = '', ...rest] = String(src || '').split('\n');
+  const [ref, section = ''] = first.trim().split('#').map((x) => x.trim());
+  return { ref, section, note: rest.join('\n').trim() };
+}
+export const quoteBlock = (ref, section, note) => `\`\`\`quote\n${ref}${section ? ` #${section}` : ''}\n${note || ''}`.trimEnd() + '\n```';

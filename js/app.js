@@ -10,7 +10,7 @@ import {
   expId, cleanTopic, nextSeq, sampleNo, sampleId, parseNumbers, readSamples, writeSamples, samplesTemplate, isResultCol, colLabel,
   parseFollowup, formatFollowup, addDays, daysFrom, icsFor, toCSV, REAGENTS_PATH, REAGENT_FIELDS, parseReagents, reagentsCSV,
   nextReagentId, loadReagents, reagentFields, LOCKED_REAGENT_KEYS, loadProtocol, loadProtocols, parseProtocol, protocolPath, cleanProtocolId, reagentAlerts,
-  STEP_FIELDS, STEP_OPS, STEP_CONTAINERS, readSteps, writeSteps, stepsText,
+  STEP_FIELDS, STEP_OPS, STEP_CONTAINERS, readSteps, writeSteps, stepsText, headings, replaceSection, quoteBlock,
 } from './lab.js';
 import { search } from './search.js';
 import { h, icon, debounce, fmtBytes, loadScript } from './util.js';
@@ -19,10 +19,14 @@ import { h, icon, debounce, fmtBytes, loadScript } from './util.js';
 const SKEY = 'labnote.settings';
 const DEFAULTS = {
   owner: '', repo: '', branch: 'main', token: '',
-  apiBase: 'https://api.github.com', theme: 'auto', downscale: true, font: 'song', size: 'normal',
+  apiBase: 'https://api.github.com', theme: 'auto', downscale: true, font: 'sans', size: 'normal',
 };
 function loadSettings() {
-  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SKEY) || '{}') }; } catch { return { ...DEFAULTS }; }
+  try {
+    const s = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SKEY) || '{}') };
+    if (!s.fontV) { if (s.font === 'song') s.font = 'sans'; s.fontV = 2; } // sans-serif became the default
+    return s;
+  } catch { return { ...DEFAULTS }; }
 }
 function saveSettings() { try { localStorage.setItem(SKEY, JSON.stringify(S)); } catch { /* ignore */ } }
 const S = loadSettings();
@@ -44,12 +48,22 @@ function applyTheme() {
   else delete document.documentElement.dataset.theme;
   document.documentElement.dataset.font = S.font;
   document.documentElement.dataset.size = S.size;
-  if (S.font === 'kai' && !document.getElementById('font-kai')) {
-    // LXGW WenKai: a handwriting-style Kai typeface that stays clear on screen; split by character range, so only the glyphs in use download.
-    document.head.append(h('link', { id: 'font-kai', rel: 'stylesheet', href: 'https://cdn.jsdelivr.net/npm/lxgw-wenkai-screen-webfont@1.7.0/lxgwwenkaigbscreen.css' }));
+  // Web fonts are split by character range, so only the glyphs on screen download.
+  for (const href of FONT_CSS[S.font] || []) {
+    if (!document.querySelector(`link[href="${href}"]`)) document.head.append(h('link', { rel: 'stylesheet', href }));
   }
 }
-export const FONTS = [['song', '宋体（印刷感，默认）'], ['kai', '文楷（手写感，清晰）'], ['hei', '黑体（简洁）']];
+const FONT_CSS = {
+  noto: ['https://cdn.jsdelivr.net/npm/@fontsource/noto-sans-sc@5.2.6/400.css', 'https://cdn.jsdelivr.net/npm/@fontsource/noto-sans-sc@5.2.6/700.css'],
+  xiaolai: ['https://cdn.jsdelivr.net/npm/cn-fontsource-xiaolai-sc-regular@1.0.2/font.css'],
+  kai: ['https://cdn.jsdelivr.net/npm/lxgw-wenkai-screen-webfont@1.7.0/lxgwwenkaigbscreen.css'],
+  marker: ['https://cdn.jsdelivr.net/npm/@fontsource/lxgw-marker-gothic@5.2.3/400.css'],
+};
+export const FONTS = [
+  ['sans', '苹方 · 系统无衬线（推荐）'], ['noto', '思源黑体（无衬线，各设备一致）'],
+  ['xiaolai', '小赖（圆润手写感，易读）'], ['kai', '文楷（手写楷体）'], ['marker', '漫黑（马克笔手写）'],
+  ['song', '宋体（印刷衬线）'],
+];
 
 async function startLibrary() {
   if (lib) lib.listeners.clear();
@@ -103,7 +117,9 @@ async function boot() {
 let rerenderTimer = null;
 function onLibraryEvent(kind) {
   if (kind === 'status') { updateSync(); return; }
-  if (kind === 'data' && ['home', 'volume', 'page'].includes(view.kind) && !document.querySelector('.modal-root')) {
+  // Don't redraw under someone typing a task.
+  if (kind === 'data' && document.activeElement?.closest?.('.dash') && document.activeElement.value) { updateSync(); return; }
+  if (kind === 'data' && ['home', 'volume', 'page', 'plan'].includes(view.kind) && !document.querySelector('.modal-root')) {
     clearTimeout(rerenderTimer);
     rerenderTimer = setTimeout(() => route({ quiet: true }), 120);
   }
@@ -140,6 +156,7 @@ async function route(opts = {}) {
   if (a === 'lib' && b === 'protocols' && !c) return show('library', viewProtocols);
   if (a === 'lib' && b === 'protocols' && c) return show('library', () => viewProtocol(c));
   if (a === 'series' && b) return show('library', () => viewSeries(b));
+  if (a === 'plan') return show('plan', () => viewPlan(b));
   if (a === 'new-exp') { await show('home', viewHome, opts); openNewExperiment(params.get('vol') || ''); return; }
   if (a === 'search') { await show('home', viewHome, opts); openSearch(params.get('q') || ''); return; }
   if (a === 'v' && b && !c) return show('volume', () => viewVolume(b), opts);
@@ -427,7 +444,8 @@ function viewHome() {
     return root;
   }
 
-  root.append(todoPanel());
+  root.append(hero(), dashboard());
+  root.append(h('h2', { class: 'section-title' }, '记录本', h('span', null, `${vols.length} 卷 · ${lib.allPages().length} 页`)));
   const shelf = h('section', { class: 'shelf', 'aria-label': '卷' });
   for (const v of vols) shelf.append(cover(v));
   shelf.append(h('button', { class: 'cover new-cover', type: 'button', onclick: openNewVolume },
@@ -437,8 +455,7 @@ function viewHome() {
 
   const recent = lib.allPages().sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.num - a.num).slice(0, 8);
   if (recent.length) {
-    root.append(h('section', { class: 'sheet ledger recent' },
-      h('h2', null, '最近的记录'),
+    root.append(h('h2', { class: 'section-title' }, '最近的记录'), h('section', { class: 'tile recent' },
       h('ol', { class: 'ledger-rows' }, recent.map((p) => h('li', null, h('a', { href: `#/v/${p.vol}/${p.num}` },
         h('span', { class: 'l-date' }, fmtDate(p.date)),
         h('span', { class: 'l-title' }, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, p.title, p.series ? h('span', { class: 'series-tag small' }, p.series) : null, p.pending ? h('span', { class: 'pending-tag' }, '待同步') : null),
@@ -449,12 +466,19 @@ function viewHome() {
 
 function cover(v) {
   const pages = lib.pages(v.id);
-  return h('a', { class: 'cover', href: `#/v/${v.id}`, style: { '--cloth': v.color || CLOTHS[0][1] } },
-    h('span', { class: 'cover-label' },
-      h('span', { class: 'cl-kind' }, '实验记录本'),
-      h('span', { class: 'cl-no' }, `No. ${v.number}`),
-      h('span', { class: 'cl-title' }, v.title),
-      h('span', { class: 'cl-meta' }, `${pages.length} 页`, h('br'), `开始于 ${fmtDate(v.created)}`)));
+  const last = pages.reduce((m, p) => (String(p.date) > m ? String(p.date) : m), '');
+  const href = `#/v/${v.id}`;
+  return h('div', { class: 'book' },
+    h('a', { class: 'cover', href, 'aria-label': v.title, style: { '--cloth': v.color || CLOTHS[0][1] } },
+      h('span', { class: 'cover-label' },
+        h('span', { class: 'cl-kind' }, 'LABORATORY NOTEBOOK'),
+        h('span', { class: 'cl-no' }, `No.${String(v.number).padStart(2, '0')}`),
+        h('span', { class: 'cl-rule' }),
+        h('span', { class: 'cl-title' }, v.title)),
+      h('span', { class: 'cover-band', 'aria-hidden': 'true' })),
+    h('a', { class: 'book-cap', href },
+      h('span', { class: 'bc-title' }, v.title),
+      h('span', { class: 'bc-meta' }, `${pages.length} 页${last ? ` · 最近 ${fmtDate(last)}` : ''}`)));
 }
 
 function openNewVolume() {
@@ -577,6 +601,7 @@ function openVolumeDetails(v) {
 function pageCtx(vol, num, local, extra = {}) {
   return {
     lib, vol, num, urls: view.urls, attNames: vol && num ? lib.attachments(vol, num) : [], ...extra,
+    ctxFor: (v, n) => pageCtx(v, n, null, { xid: lib.page(v, n)?.xid || '' }),
     resolveBlob: async (name) => {
       name = decodeURIComponent(name);
       if (local?.has(name)) return local.get(name);
@@ -697,6 +722,7 @@ async function viewPage(vol, num, params) {
     fm.id ? { icon: 'copy', label: '命名助手（数据/照片文件名）', run: () => openNaming(fm, num) } : null,
     { icon: 'list', label: fm.series ? '更改所属系列…' : '加入系列…', run: () => setSeries(vol, num, fm) },
     { icon: 'list', label: '录入操作步骤（用量、容器、条件）', run: () => openStepsEditor(vol, num) },
+    { icon: 'link', label: '引用另一次实验（步骤完全相同时）…', run: () => openQuoteDialog(vol, num, null) },
     fm.void ? { icon: 'history', label: '取消作废', run: () => setVoid(vol, num, null) } : { icon: 'close', label: '作废这一页…', run: () => setVoid(vol, num, fm) },
     fm.signed ? null : { icon: 'trash', label: '删除这一页…', run: () => openDeletePage(vol, num, fm) },
     (fm.followups || []).length ? { icon: 'download', label: '提醒导出到手机日历', run: () => exportIcs((fm.followups || []).map(parseFollowup).filter((f) => f && !f.done).map((f) => ({ ...f, xid: fm.id, page: { vol, num } }))) } : null,
@@ -988,6 +1014,12 @@ async function viewEditor(vol, num, params) {
     }),
     tb('code', '代码', () => insertBlock('```python\n\n```', 10, 0)),
     tb('table', '表格', () => insertBlock('| Column | Value |\n|---|---|\n|  |  |')),
+    h('span', { class: 'tool-sep' }),
+    h('button', { class: 'tool text mk-hl', type: 'button', title: '荧光笔 ==文字==', onclick: () => wrap('==', '==', '重点') }, '荧光'),
+    h('button', { class: 'tool text mk-ul', type: 'button', title: '下划线 ++文字++', onclick: () => wrap('++', '++', '重点') }, '下划线'),
+    h('button', { class: 'tool text mk-ci', type: 'button', title: '画圈 {{文字}}', onclick: () => wrap('{{', '}}', '重点') }, '圈出'),
+    h('button', { class: 'tool text', type: 'button', title: '引用另一次实验的某一节（例如完全相同的操作步骤）', onclick: () => openQuoteDialog(vol, num, (block) => insertBlock(block)) }, '引用实验'),
+    h('span', { class: 'tool-sep' }),
     h('button', { class: 'tool text', type: 'button', title: '反应方程式（一行一个）', onclick: () => insertBlock('```reaction\n2 H2O2 ->[Pt] 2 H2O + O2 | (1)\n```') }, '反应式'),
     h('button', { class: 'tool text', type: 'button', title: '操作步骤：操作 | 用量 | 物质 | 加到/容器 | 条件 | 细节', onclick: () => insertBlock('```steps\n移取 | 10 mL | DI 水 | 20 mL 玻璃瓶 | 室温 | 沿瓶壁缓慢加入\n```') }, '步骤'),
     tb('chart', '图表', () => insertBlock('```chart\ntype: line\nx: dose\ny: response\ntitle: \n---\ndose,response\n0,0.1\n1,0.4\n2,0.7\n```')),
@@ -1472,6 +1504,45 @@ async function openStepsEditor(vol, num) {
   });
 }
 
+// Quote a section of another experiment instead of copying it: "same steps as 20261029-OECT-01".
+// onInsert(block) puts it into the editor; without it the block replaces (or adds) that section of the page.
+function openQuoteDialog(curVol, curNum, onInsert) {
+  openPagePicker(curVol, async (ref) => {
+    const r = parseRef(ref, curVol);
+    const target = r && lib.page(r.vol, r.num);
+    if (!target) return;
+    const { body } = parseFrontMatter(await lib.readPage(r.vol, r.num));
+    const hs = headings(body).filter((x) => x.level <= 3);
+    const sec = h('select', { id: 'q-sec' }, h('option', { value: '' }, '整页'), hs.map((x) => h('option', { value: x.text, selected: x.text === '操作步骤' }, `${'　'.repeat(x.level - 2 < 0 ? 0 : x.level - 2)}${x.text}`)));
+    const note = h('input', { id: 'q-note', value: '本次完全按照此步骤操作，未作任何改动。' });
+    const own = !onInsert && curNum ? parseFrontMatter(await lib.readPage(curVol, curNum)).body : '';
+    const replace = h('input', { type: 'checkbox', id: 'q-rep', checked: true });
+    const repRow = h('label', { class: 'check', for: 'q-rep' }, replace, h('span', { class: 'q-rep-text' }));
+    const upd = () => { const has = sec.value && headings(own).some((x) => x.text === sec.value); repRow.hidden = !onInsert && has ? false : true; repRow.querySelector('.q-rep-text').textContent = ` 用引用替换本页“${sec.value}”一节现有的内容`; };
+    sec.addEventListener('change', upd); upd();
+    modal({
+      title: `引用 ${target.xid || target.title}`,
+      body: h('div', { class: 'form' },
+        h('p', { class: 'muted' }, `${target.date || ''}　${target.title}`),
+        h('label', { for: 'q-sec' }, '引用哪一节'), sec,
+        h('label', { for: 'q-note' }, '说明（可改，例如：仅退火温度改为 150 °C）'), note,
+        onInsert ? null : repRow,
+        h('p', { class: 'muted' }, '引用不复制内容：页面上显示原页那一节的实时内容，加框、换字体，并链接回原实验。')),
+      buttons: [{ label: '取消' }, {
+        label: '引用', primary: true,
+        run: async () => {
+          const block = quoteBlock(target.xid || `${target.vol}/${target.num}`, sec.value, note.value.trim());
+          if (onInsert) { onInsert(block); return; }
+          try {
+            await updatePage(curVol, curNum, ({ fm: f, body: b }) => ({ fm: f, body: sec.value && (replace.checked || !headings(b).some((x) => x.text === sec.value)) ? replaceSection(b, sec.value, block) : `${b.trimEnd()}\n\n${block}\n` }), `Quote ${target.xid || ref}`);
+            toast('已引用。');
+          } catch (e) { toast(saveError(e)); return false; }
+        },
+      }],
+    });
+  });
+}
+
 // Put several existing pages into one series at once.
 function openBulkSeries(volId) {
   const pages = lib.pages(volId);
@@ -1639,29 +1710,182 @@ async function allFollowups() {
   return items.sort((a, b) => a.date.localeCompare(b.date));
 }
 
-// Home: what is due now.
-function todoPanel() {
-  const box = h('section', { class: 'sheet ledger todo' }, h('h2', null, '今日待办'), h('p', { class: 'muted' }, '读取中…'));
-  allFollowups().then((items) => {
-    const open = items.filter((x) => !x.done && daysFrom(x.date) <= 7);
-    const kids = [h('h2', null, '今日待办', h('span', { class: 'h-actions' },
-      h('button', { class: 'btn small', type: 'button', onclick: () => exportIcs(items.filter((x) => !x.done)) }, '导出到手机日历')))];
-    if (!open.length) kids.push(h('p', { class: 'muted' }, '未来 7 天没有到期的提醒。新建实验时可以设置稳定性复测等提醒。'));
-    else {
-      kids.push(h('ol', { class: 'ledger-rows' }, open.map((x) => {
-        const d = daysFrom(x.date);
-        const when = d < 0 ? `逾期 ${-d} 天` : d === 0 ? '今天' : `${d} 天后`;
-        return h('li', { class: d < 0 ? 'late' : d === 0 ? 'today' : null },
-          h(x.page ? 'a' : 'span', x.page ? { href: `#/v/${x.page.vol}/${x.page.num}` } : { class: 'row' },
-            h('span', { class: 'l-date' }, `${x.date} · ${when}`),
-            h('span', { class: 'l-title' }, x.text),
-            h('span', { class: 'l-where' }, x.xid || (x.reagent ? h('a', { href: '#/lib/reagents' }, '试剂库') : ''))),
-          x.page ? h('button', { class: 'btn small no-print', type: 'button', onclick: () => toggleFollowup(x.page.vol, x.page.num, x.index) }, '完成') : null);
-      })));
-    }
-    box.replaceChildren(...kids);
-  }).catch((e) => box.replaceChildren(h('h2', null, '今日待办'), h('p', { class: 'warn' }, e.message)));
+// ----- planner: today's to-dos and the week's plan, kept in planner/tasks.json -----
+// task = { id, text, week: <Monday ISO>, date?: <ISO> (a to-do for that day; none = a weekly goal), done, doneAt?, created }
+const TASKS_PATH = 'planner/tasks.json';
+const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
+const weekStart = (iso) => addDays(iso, -((new Date(`${iso}T12:00:00`).getDay() + 6) % 7));
+let tasksLocal = null; // { sha, list } — shown at once; commits follow in order
+let taskQueue = Promise.resolve();
+async function loadTasks() {
+  const sha = lib.tree.get(TASKS_PATH) || null;
+  if (tasksLocal && (tasksLocal.sha === sha || tasksLocal.dirty)) return tasksLocal.list;
+  const d = await lib.readJSON(TASKS_PATH, { tasks: [] });
+  tasksLocal = { sha, list: Array.isArray(d.tasks) ? d.tasks : [] };
+  return tasksLocal.list;
+}
+function changeTasks(mutate, message, redraw) {
+  mutate(tasksLocal.list); tasksLocal.dirty = (tasksLocal.dirty || 0) + 1;
+  redraw?.();
+  taskQueue = taskQueue.then(() => lib.commit(message, async (l) => {
+    const d = await l.readJSON(TASKS_PATH, { tasks: [] });
+    const list = Array.isArray(d.tasks) ? d.tasks : [];
+    mutate(list);
+    return { changes: [{ path: TASKS_PATH, data: `${JSON.stringify({ tasks: list }, null, 1)}\n` }], after: () => { tasksLocal.dirty -= 1; if (!tasksLocal.dirty) tasksLocal.list = list; } };
+  })).then(() => { if (!tasksLocal.dirty) tasksLocal.sha = lib.tree.get(TASKS_PATH); })
+    .catch((e) => { toast(e instanceof NetworkError ? '离线中：待办没有同步，联网后请再操作一次。' : `待办没有保存：${e.message}`); tasksLocal = null; redraw?.(); });
+  return taskQueue;
+}
+const newTask = (text, week, date) => ({ id: `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, text, week, ...(date ? { date } : {}), done: false, created: nowISO() });
+const toggleTask = (id, redraw) => changeTasks((list) => { const t = list.find((x) => x.id === id); if (t) { t.done = !t.done; if (t.done) t.doneAt = nowISO(); else delete t.doneAt; } }, 'Planner: tick', redraw);
+const removeTask = (id, redraw) => changeTasks((list) => { const k = list.findIndex((x) => x.id === id); if (k >= 0) list.splice(k, 1); }, 'Planner: remove', redraw);
+const moveTask = (id, date, redraw) => changeTasks((list) => { const t = list.find((x) => x.id === id); if (t) { t.date = date; t.week = weekStart(date); } }, 'Planner: move', redraw);
+
+function ring(done, total, size = 64) {
+  const r = (size - 8) / 2; const c = 2 * Math.PI * r; const f = total ? done / total : 0;
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${size} ${size}`); svg.setAttribute('class', 'ring'); svg.setAttribute('width', size); svg.setAttribute('height', size);
+  svg.innerHTML = `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-bg"/><circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-fg" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - f)}" transform="rotate(-90 ${size / 2} ${size / 2})"/>`;
+  return h('div', { class: 'ring-box', role: 'img', 'aria-label': `已完成 ${done} / ${total}` }, svg, h('span', { class: 'ring-num' }, total ? `${Math.round(f * 100)}%` : '—'));
+}
+function taskRow(t, { redraw, extra, meta } = {}) {
+  return h('li', { class: `task${t.done ? ' done' : ''}` },
+    h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!t.done), 'aria-label': t.done ? '标为未完成' : '标为完成', onclick: () => toggleTask(t.id, redraw) }),
+    h('span', { class: 'task-text' }, t.text, meta ? h('span', { class: 'task-meta' }, meta) : null),
+    extra || null,
+    h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => removeTask(t.id, redraw) }, icon('close', 14)));
+}
+function reminderRow(x, redraw) {
+  const d = daysFrom(x.date);
+  return h('li', { class: `task reminder${x.done ? ' done' : ''}${d < 0 && !x.done ? ' late' : ''}` },
+    x.page ? h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!x.done), 'aria-label': '完成', onclick: async () => { await toggleFollowup(x.page.vol, x.page.num, x.index); redraw(); } }) : h('span', { class: 'tick static' }),
+    h(x.page ? 'a' : 'span', { class: 'task-text', href: x.page ? `#/v/${x.page.vol}/${x.page.num}` : null }, x.text,
+      h('span', { class: 'task-meta' }, [d < 0 ? `逾期 ${-d} 天` : d === 0 ? '今天' : `${d} 天后`, x.xid || (x.reagent ? '试剂库' : '')].filter(Boolean).join(' · '))),
+    h('span', { class: 'chip' }, x.reagent ? '试剂' : '复测'));
+}
+function addBox(placeholder, onAdd) {
+  const input = h('input', { class: 'add-input', placeholder, enterkeyhint: 'done', 'aria-label': placeholder });
+  const go = () => { const v = input.value.trim(); if (!v) return; input.value = ''; onAdd(v); input.focus(); };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } });
+  return h('div', { class: 'add-row' }, h('span', { class: 'add-plus' }, icon('plus', 16)), input, h('button', { class: 'btn small add-btn', type: 'button', onclick: go }, '添加'));
+}
+
+function hero() {
+  const t = todayISO(); const d = new Date(`${t}T12:00:00`);
+  const hr = new Date().getHours();
+  const greet = hr < 5 ? '夜深了' : hr < 11 ? '早上好' : hr < 13 ? '中午好' : hr < 18 ? '下午好' : '晚上好';
+  const name = (lib.notebook.owner || '').trim();
+  return h('header', { class: 'hero' },
+    h('p', { class: 'hero-eyebrow' }, `${d.getMonth() + 1} 月 ${d.getDate()} 日 · 星期${WEEKDAYS[(d.getDay() + 6) % 7]}`),
+    h('h1', { class: 'hero-title' }, `${greet}${name ? `，${name}` : ''}。`));
+}
+
+// Home: today's to-dos (your own + experiment reminders) and this week's plan, each with progress.
+function dashboard() {
+  const t = todayISO(); const wk = weekStart(t);
+  const box = h('section', { class: 'dash' }, h('div', { class: 'tile' }, h('p', { class: 'muted' }, '读取中…')));
+  const draw = async () => {
+    let tasks; let fus;
+    try { [tasks, fus] = await Promise.all([loadTasks(), allFollowups()]); } catch (e) { box.replaceChildren(h('div', { class: 'tile' }, h('p', { class: 'warn' }, e.message))); return; }
+    const focused = box.querySelector('input:focus')?.dataset.k;
+    const mine = tasks.filter((x) => x.date === t);
+    const carried = tasks.filter((x) => x.date && x.date < t && !x.done);
+    const due = fus.filter((x) => (x.date === t) || (!x.done && x.date < t));
+    const soon = fus.filter((x) => !x.done && x.date > t && daysFrom(x.date) <= 7);
+    const all = [...mine, ...carried, ...due];
+    const doneN = all.filter((x) => x.done).length;
+    const todayAdd = addBox('添加今天要做的事，回车保存', (text) => changeTasks((list) => list.push(newTask(text, wk, t)), 'Planner: add to-do', draw));
+    todayAdd.querySelector('input').dataset.k = 'today';
+    const todayCard = h('div', { class: 'tile today-card' },
+      h('div', { class: 'tile-head' },
+        h('div', null, h('h2', null, '今日待办'), h('p', { class: 'card-sub' }, all.length ? `已完成 ${doneN} 项 · 还剩 ${all.length - doneN} 项` : '今天还没有安排')),
+        ring(doneN, all.length)),
+      todayAdd,
+      h('ul', { class: 'tasks' },
+        carried.map((x) => taskRow(x, { redraw: draw, meta: `原定 ${x.date.slice(5)}`, extra: h('button', { class: 'btn small ghost', type: 'button', onclick: () => moveTask(x.id, t, draw) }, '移到今天') })),
+        mine.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: draw })),
+        due.map((x) => reminderRow(x, draw))),
+      soon.length ? h('details', { class: 'soon' }, h('summary', null, `接下来 7 天的实验提醒（${soon.length}）`),
+        h('ul', { class: 'tasks' }, soon.map((x) => reminderRow(x, draw))),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => exportIcs(fus.filter((x) => !x.done)) }, '导出到手机日历')) : null);
+
+    const goals = tasks.filter((x) => x.week === wk && !x.date);
+    const gDone = goals.filter((x) => x.done).length;
+    const days = WEEKDAYS.map((w, k) => {
+      const day = addDays(wk, k); const list = tasks.filter((x) => x.date === day);
+      const dn = list.filter((x) => x.done).length;
+      return h('a', { class: `day${day === t ? ' is-today' : ''}${day < t ? ' past' : ''}`, href: `#/plan/${wk}`, title: `${day}：${dn}/${list.length}` },
+        h('span', { class: 'day-w' }, w),
+        h('span', { class: 'day-bar' }, h('span', { style: { height: `${list.length ? (dn / list.length) * 100 : 0}%` } })),
+        h('span', { class: 'day-n' }, list.length ? `${dn}/${list.length}` : '·'));
+    });
+    const weekAdd = addBox('添加本周计划（例如：完成 GOPS 稳定性测试）', (text) => changeTasks((list) => list.push(newTask(text, wk)), 'Planner: add weekly goal', draw));
+    weekAdd.querySelector('input').dataset.k = 'week';
+    const weekCard = h('div', { class: 'tile week-card' },
+      h('div', { class: 'tile-head' },
+        h('div', null, h('h2', null, '本周计划'), h('p', { class: 'card-sub' }, goals.length ? `已完成 ${gDone} 项 · 还剩 ${goals.length - gDone} 项` : `${wk.slice(5)} 至 ${addDays(wk, 6).slice(5)}`)),
+        ring(gDone, goals.length)),
+      weekAdd,
+      h('ul', { class: 'tasks' }, goals.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: draw }))),
+      h('div', { class: 'week-days', 'aria-label': '本周每天的待办完成情况' }, days),
+      h('a', { class: 'more-link', href: `#/plan/${wk}` }, '查看周计划与历史 ›'));
+    box.replaceChildren(todayCard, weekCard);
+    if (focused) box.querySelector(`input[data-k="${focused}"]`)?.focus();
+  };
+  draw();
   return box;
+}
+
+// Week view: every day's to-dos and the week's goals, with history of earlier weeks.
+async function viewPlan(param) {
+  const t = todayISO();
+  const wk = weekStart(/^\d{4}-\d{2}-\d{2}$/.test(param || '') ? param : t);
+  const body = h('div', { class: 'plan-body' });
+  const draw = async () => {
+    const tasks = await loadTasks();
+    const goals = tasks.filter((x) => x.week === wk && !x.date);
+    const dayCols = WEEKDAYS.map((w, k) => {
+      const day = addDays(wk, k);
+      const list = tasks.filter((x) => x.date === day).sort((a, b) => Number(a.done) - Number(b.done));
+      const dn = list.filter((x) => x.done).length;
+      const add = addBox('添加', (text) => changeTasks((l) => l.push(newTask(text, wk, day)), 'Planner: add to-do', draw));
+      add.querySelector('input').dataset.k = day;
+      return h('div', { class: `tile day-col${day === t ? ' is-today' : ''}` },
+        h('div', { class: 'dc-head' }, h('span', { class: 'dc-w' }, `周${w}`), h('span', { class: 'dc-d' }, day.slice(5)), h('span', { class: 'dc-n' }, list.length ? `${dn}/${list.length}` : '')),
+        h('ul', { class: 'tasks' }, list.map((x) => taskRow(x, { redraw: draw }))), add);
+    });
+    const allDay = tasks.filter((x) => x.week === wk && x.date);
+    const gd = goals.filter((x) => x.done).length; const dd = allDay.filter((x) => x.done).length;
+    const goalAdd = addBox('添加本周计划', (text) => changeTasks((l) => l.push(newTask(text, wk)), 'Planner: add weekly goal', draw));
+    goalAdd.querySelector('input').dataset.k = 'goal';
+    const weeks = [...new Set(tasks.map((x) => x.week))].filter((w) => w < wk).sort().reverse().slice(0, 12);
+    const focused = body.querySelector('input:focus')?.dataset.k;
+    body.replaceChildren(...[
+      h('div', { class: 'plan-stats' },
+        h('div', { class: 'tile stat' }, ring(gd, goals.length, 56), h('div', null, h('b', null, `${gd} / ${goals.length}`), h('span', null, '本周计划完成'))),
+        h('div', { class: 'tile stat' }, ring(dd, allDay.length, 56), h('div', null, h('b', null, `${dd} / ${allDay.length}`), h('span', null, '每日待办完成'))),
+        h('div', { class: 'tile stat' }, h('div', null, h('b', null, `${goals.length - gd + allDay.length - dd}`), h('span', null, '尚未完成')))),
+      h('h2', { class: 'section-title' }, '本周计划'),
+      h('div', { class: 'tile' }, goalAdd, h('ul', { class: 'tasks' }, goals.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: draw })))),
+      h('h2', { class: 'section-title' }, '每日待办'),
+      h('div', { class: 'day-grid' }, dayCols),
+      weeks.length ? h('h2', { class: 'section-title' }, '往周') : null,
+      weeks.length ? h('div', { class: 'tile' }, h('ul', { class: 'history' }, weeks.map((w) => {
+        const all = tasks.filter((x) => x.week === w); const dn = all.filter((x) => x.done).length;
+        return h('li', null, h('a', { href: `#/plan/${w}` }, h('span', { class: 'hw' }, `${w} 至 ${addDays(w, 6).slice(5)}`),
+          h('span', { class: 'hbar' }, h('span', { style: { width: `${all.length ? (dn / all.length) * 100 : 0}%` } })),
+          h('span', { class: 'hn' }, `${dn} / ${all.length}`)));
+      }))) : null].filter(Boolean));
+    if (focused) body.querySelector(`input[data-k="${focused}"]`)?.focus();
+  };
+  await draw().catch((e) => body.replaceChildren(h('p', { class: 'warn' }, e.message)));
+  return h('div', { class: 'view plan' },
+    topbar({ back: '#/', backLabel: '首页', title: '周计划', sub: `${wk} 至 ${addDays(wk, 6)}`, actions: [
+      h('a', { class: 'btn ghost', href: `#/plan/${addDays(wk, -7)}` }, '‹ 上一周'),
+      wk !== weekStart(t) ? h('a', { class: 'btn ghost', href: '#/plan' }, '本周') : null,
+      h('a', { class: 'btn ghost', href: `#/plan/${addDays(wk, 7)}` }, '下一周 ›')] }),
+    demoBanner(), h('div', { class: 'plan-wrap' }, body));
 }
 
 // ----- export a date range for the supervisor: PDF (print) or Word -----

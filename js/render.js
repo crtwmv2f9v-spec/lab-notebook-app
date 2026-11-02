@@ -1,7 +1,7 @@
 // Markdown, math, page links, charts, data tables and Jupyter notebooks.
 import { esc, h, loadScript, icon } from './util.js';
-import { parseRef } from './model.js';
-import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents } from './lab.js';
+import { parseRef, parseFrontMatter } from './model.js';
+import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE } from './lab.js';
 
 const CDN = 'https://cdn.jsdelivr.net/npm/';
 export const LIBS = {
@@ -51,6 +51,17 @@ function setup() {
         },
         renderer(t) { return `<a class="file-chip" href="#" data-att-link="${esc(t.target)}">${esc(t.target)}</a>`; },
       },
+      // ==highlighter==  ++underline++  {{circled}}
+      ...[['mark', '==', '==', 'mark', 'hl'], ['uline', '++', '++', 'span', 'pen-ul'], ['circle', '{{', '}}', 'span', 'pen-circle']].map(([name, a, b, tag, cls]) => ({
+        name, level: 'inline',
+        start(src) { const i = src.indexOf(a); return i < 0 ? undefined : i; },
+        tokenizer(src) {
+          const esc = (x) => x.replace(/[{}+=]/g, '\\$&');
+          const m = new RegExp(`^${esc(a)}(?=\\S)([^\\n]*?\\S)${esc(b)}`).exec(src);
+          if (m) return { type: name, raw: m[0], tokens: this.lexer.inlineTokens(m[1]) };
+        },
+        renderer(t) { return `<${tag} class="${cls}">${this.parser.parseInline(t.tokens)}</${tag}>`; },
+      })),
       {
         name: 'wikilink', level: 'inline',
         start(src) { const i = src.indexOf('[['); return i < 0 ? undefined : i; },
@@ -128,7 +139,7 @@ export async function hydrate(root, ctx) {
   for (const el of root.querySelectorAll('.math[data-tex]')) renderMath(el);
   for (const code of root.querySelectorAll('pre > code')) {
     const lang = (code.className.match(/language-([\w+-]+)/) || [])[1];
-    if (['chart', 'samples', 'steps', 'reaction'].includes(lang)) continue;
+    if (['chart', 'samples', 'steps', 'reaction', 'quote'].includes(lang)) continue;
     if (lang && window.hljs?.getLanguage(lang)) { try { window.hljs.highlightElement(code); } catch { /* ignore */ } }
   }
   if (!root.dataset.wired) {
@@ -156,6 +167,7 @@ export async function hydrate(root, ctx) {
   for (const code of root.querySelectorAll('pre > code.language-chart')) jobs.push(renderChart(code.parentElement, code.textContent, ctx));
   for (const code of root.querySelectorAll('pre > code.language-samples')) jobs.push(renderSamples(code.parentElement, code.textContent, ctx));
   for (const el of root.querySelectorAll('div.embed[data-embed]')) jobs.push(renderEmbed(el, ctx));
+  for (const code of root.querySelectorAll('pre > code.language-quote')) jobs.push(renderQuote(code.parentElement, code.textContent, ctx));
   for (const code of root.querySelectorAll('pre > code.language-reaction')) renderReactions(code.parentElement, code.textContent);
   for (const code of root.querySelectorAll('pre > code.language-steps')) renderSteps(code.parentElement, code.textContent);
   markQuantities(root);
@@ -405,6 +417,35 @@ async function renderSamples(pre, src, ctx) {
   }
   pre.replaceWith(h('div', { class: 'samples-wrap' }, table));
   await Promise.allSettled(jobs);
+}
+
+// ---------- quoting another experiment (same steps, not copied) ----------
+async function renderQuote(pre, src, ctx) {
+  const q = parseQuote(src);
+  const lib = ctx.lib;
+  const target = EXP_RE.test(q.ref) && lib ? lib.allPages().find((p) => p.xid === q.ref) : (() => { const r = parseRef(q.ref, ctx.vol); return r && lib?.page(r.vol, r.num); })();
+  const box = h('aside', { class: 'quote-box' });
+  pre.replaceWith(box);
+  if (!target) { box.append(h('p', { class: 'quote-missing' }, `引用的实验 ${q.ref} 找不到（可能被删除或改了编号）。`)); return; }
+  const head = h('div', { class: 'quote-head' },
+    h('span', { class: 'quote-tag' }, '引用'),
+    h('a', { href: `#/v/${target.vol}/${target.num}` }, target.xid || `p. ${target.num}`), ' ',
+    h('span', { class: 'quote-title' }, target.title),
+    q.section ? h('span', { class: 'quote-sec' }, `§ ${q.section}`) : null,
+    h('span', { class: 'quote-date' }, target.date || ''));
+  box.append(head);
+  if (q.note) box.append(h('p', { class: 'quote-note' }, q.note));
+  const content = h('div', { class: 'quote-body prose' });
+  box.append(content);
+  if ((ctx.quoteDepth || 0) >= 2) { content.append(h('p', { class: 'muted' }, '（嵌套引用，请打开原页面查看）')); return; }
+  try {
+    const { body } = parseFrontMatter(await lib.readPage(target.vol, target.num));
+    const md = sectionOf(body, q.section);
+    if (md == null) { content.append(h('p', { class: 'quote-missing' }, `原页面里没有“${q.section}”这一节。`)); return; }
+    const sub = { ...(ctx.ctxFor ? ctx.ctxFor(target.vol, target.num) : ctx), quoteDepth: (ctx.quoteDepth || 0) + 1 };
+    content.innerHTML = renderMarkdown(md, sub);
+    await hydrate(content, sub);
+  } catch (e) { content.append(h('p', { class: 'quote-missing' }, `读取失败：${e.message}`)); }
 }
 
 // ---------- chemical equations ----------
