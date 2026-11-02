@@ -1,7 +1,7 @@
 // Markdown, math, page links, charts, data tables and Jupyter notebooks.
 import { esc, h, loadScript, icon } from './util.js';
 import { parseRef, parseFrontMatter } from './model.js';
-import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE } from './lab.js';
+import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions } from './lab.js';
 
 const CDN = 'https://cdn.jsdelivr.net/npm/';
 export const LIBS = {
@@ -476,7 +476,7 @@ function renderSteps(pre, src) {
 }
 
 // Amounts with units ("10 mL", "37 °C", "500 rpm") and reagent numbers stand out in running text.
-const QTY_RE = /(^|[^\w.#-])([~≈<>≤≥±]?\s?\d+(?:\.\d+)?(?:\s?[-–~]\s?\d+(?:\.\d+)?)?\s?(?:µL|μL|uL|mL|L|µg|μg|mg|kg|g|mmol|µmol|μmol|mol|mM|µM|μM|nM|M|wt%|vol%|%|°C|℃|rpm|min|ms|s|h|mV|V|mA|µA|μA|nA|kHz|Hz|nm|µm|μm|mm|cm|mS|µS|μS|W|Pa|mbar|cP))(?![A-Za-z0-9µμ])|(R-\d{4})\b/g;
+const QTY_RE = /(^|[^\w.#-])([~≈<>≤≥±]?\s?\d+(?:\.\d+)?(?:\s?[-–~]\s?\d+(?:\.\d+)?)?\s?(?:µL|μL|uL|mL|L|µg|μg|mg|kg|g|mmol|µmol|μmol|mol|mM|µM|μM|nM|M|wt%|vol%|%|°C|℃|rpm|min|ms|s|h|mV|V|mA|µA|μA|nA|kHz|Hz|nm|µm|μm|mm|cm|mS|µS|μS|W|Pa|mbar|cP))(?![A-Za-z0-9µμ])|([RS]-\d{4})\b/g;
 function markQuantities(root) {
   const skip = 'pre, code, a, .math, .katex, .samples, .steps-wrap, .reactions, h1, h2, h3, h4, .st-what, figcaption';
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.parentElement?.closest(skip) || !/\d/.test(n.nodeValue) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
@@ -497,14 +497,14 @@ function markQuantities(root) {
 async function nameReagents(root, ctx) {
   const ids = root.querySelectorAll('.rg-id, .st-what');
   if (!ids.length || !ctx.lib?.tree) return;
-  const list = await loadReagents(ctx.lib).catch(() => []);
-  const by = new Map(list.map((r) => [r.id, r]));
+  const [list, sols] = await Promise.all([loadReagents(ctx.lib).catch(() => []), loadSolutions(ctx.lib).catch(() => [])]);
+  const by = new Map([...list, ...sols.map((x) => ({ ...x, spec: x.conc, vendor: x.prepared && `配于 ${x.prepared}` }))].map((r) => [r.id, r]));
   for (const el of root.querySelectorAll('.rg-id')) { const r = by.get(el.dataset.rid); if (r) el.title = [r.name, r.spec, r.vendor, r.lot && `批号 ${r.lot}`].filter(Boolean).join(' · '); }
   for (const el of root.querySelectorAll('.st-what')) {
-    const m = el.textContent.match(/^(.*?)\s*(R-\d{4})\s*$/);
+    const m = el.textContent.match(/^(.*?)\s*([RS]-\d{4})\s*$/);
     if (!m) continue;
     const r = by.get(m[2]);
-    el.replaceChildren(m[1] || r?.name || m[2], ' ', h('span', { class: 'rg-id', title: r ? [r.name, r.spec, r.vendor, r.lot && `批号 ${r.lot}`].filter(Boolean).join(' · ') : '' }, m[2]));
+    el.replaceChildren(m[1] || r?.name || m[2], ' ', h('span', { class: 'rg-id', 'data-rid': m[2], title: r ? [r.name, r.spec, r.vendor, r.lot && `批号 ${r.lot}`].filter(Boolean).join(' · ') : '' }, m[2]));
   }
 }
 

@@ -280,3 +280,24 @@ export function parseQuote(src) {
   return { ref, section, note: rest.join('\n').trim() };
 }
 export const quoteBlock = (ref, section, note) => `\`\`\`quote\n${ref}${section ? ` #${section}` : ''}\n${note || ''}`.trimEnd() + '\n```';
+
+// ---------- lab-made solutions: library/solutions.csv (S-0001, one row per batch) ----------
+export const SOLUTIONS_PATH = 'library/solutions.csv';
+export const SOLUTION_FIELDS = [
+  ['id', '编号'], ['name', '名称'], ['recipe', '组成（试剂/溶液 × 用量）'], ['conc', '浓度/配比'], ['volume', '总量'],
+  ['prepared', '配制日期'], ['by', '配制人'], ['expires', '有效期至'], ['location', '存放位置'], ['page', '配制记录'], ['status', '状态'], ['notes', '备注'],
+];
+export const SOLUTION_STATUS = ['在用', '用完', '废弃'];
+export function nextSolutionId(list) {
+  const max = Math.max(0, ...list.map((r) => parseInt(String(r.id).replace(/\D/g, ''), 10) || 0));
+  return `S-${String(max + 1).padStart(4, '0')}`;
+}
+// "R-0001 × 1 mL; R-0002 × 10 µL" <-> [{ id, amount }]
+export const parseRecipe = (s) => String(s || '').split(/[;；]/).map((x) => x.trim()).filter(Boolean)
+  .map((x) => { const m = x.match(/^([RS]-\d{4})\s*(?:[×x*]\s*)?(.*)$/i); return m ? { id: m[1].toUpperCase(), amount: m[2].trim() } : { id: '', amount: x }; });
+export const recipeText = (rows) => rows.filter((r) => r.id || r.amount).map((r) => `${r.id}${r.amount ? ` × ${r.amount}` : ''}`.trim()).join('; ');
+export async function loadSolutions(lib) { return (await cached(lib, SOLUTIONS_PATH, (t) => parseReagents(t, SOLUTION_FIELDS))) || []; }
+export function solutionAlerts(list, within = 14, today = todayISO()) {
+  return list.filter((s) => !['用完', '废弃'].includes(s.status) && /^\d{4}-\d{2}-\d{2}$/.test(s.expires) && daysFrom(s.expires, today) <= within)
+    .map((s) => ({ date: s.expires, text: `溶液到期：${s.id} ${s.name}`, solution: s.id }));
+}

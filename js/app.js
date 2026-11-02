@@ -10,7 +10,8 @@ import {
   expId, cleanTopic, nextSeq, sampleNo, sampleId, parseNumbers, readSamples, writeSamples, samplesTemplate, isResultCol, colLabel,
   parseFollowup, formatFollowup, addDays, daysFrom, icsFor, toCSV, REAGENTS_PATH, REAGENT_FIELDS, parseReagents, reagentsCSV,
   nextReagentId, loadReagents, reagentFields, LOCKED_REAGENT_KEYS, loadProtocol, loadProtocols, parseProtocol, protocolPath, cleanProtocolId, reagentAlerts,
-  STEP_FIELDS, STEP_OPS, STEP_CONTAINERS, readSteps, writeSteps, stepsText, headings, replaceSection, quoteBlock,
+  STEP_FIELDS, STEP_OPS, STEP_CONTAINERS, readSteps, writeSteps, stepsText, headings, replaceSection, quoteBlock, sectionOf,
+  SOLUTIONS_PATH, SOLUTION_FIELDS, SOLUTION_STATUS, nextSolutionId, parseRecipe, recipeText, loadSolutions, solutionAlerts,
 } from './lab.js';
 import { search } from './search.js';
 import { h, icon, debounce, fmtBytes, loadScript } from './util.js';
@@ -183,6 +184,7 @@ async function route(opts = {}) {
   if (!a) return show('home', viewHome, opts);
   if (a === 'settings') return show('settings', viewSettings);
   if (a === 'lib' && b === 'reagents') return show('library', viewReagents);
+  if (a === 'lib' && b === 'solutions') return show('library', viewSolutions);
   if (a === 'lib' && b === 'protocols' && !c) return show('library', viewProtocols);
   if (a === 'lib' && b === 'protocols' && c) return show('library', () => viewProtocol(c));
   if (a === 'series' && b) return show('library', () => viewSeries(b));
@@ -453,6 +455,7 @@ function viewHome() {
   const actions = [
     h('button', { class: 'btn primary', type: 'button', onclick: () => openNewExperiment('') }, icon('plus', 18), h('span', null, '新建实验')),
     h('a', { class: 'btn ghost', href: '#/lib/reagents' }, '试剂库'),
+    h('a', { class: 'btn ghost', href: '#/lib/solutions' }, '溶液库'),
     h('a', { class: 'btn ghost', href: '#/lib/protocols' }, '步骤库'),
     h('button', { class: 'btn ghost', type: 'button', onclick: () => openExport('') }, '导出'),
     h('button', { class: 'btn icon ghost', 'aria-label': '搜索', title: '搜索（/）', onclick: () => openSearch() }, icon('search')),
@@ -601,6 +604,40 @@ function viewVolume(id) {
   root.append(sheet);
   return root;
 }
+// Each line under "## 下一步" gets a button that turns it into a to-do (today, tomorrow, this week, or a date).
+async function nextStepButtons(sheet, vol, num, fm) {
+  const head = [...sheet.querySelectorAll('.sheet-body.prose > h2')].find((x) => x.textContent.trim() === '下一步');
+  if (!head) return;
+  const items = [];
+  for (let el = head.nextElementSibling; el && el.tagName !== 'H2'; el = el.nextElementSibling) {
+    if (/^(UL|OL)$/.test(el.tagName)) items.push(...el.querySelectorAll(':scope > li'));
+  }
+  const tasks = await loadTasks().catch(() => []);
+  const src = { vol, num, xid: fm.id || '' };
+  for (const li of items) {
+    const text = li.textContent.trim();
+    if (!text) continue;
+    const has = tasks.find((t) => t.src?.vol === vol && t.src?.num === num && t.text === text);
+    const t = todayISO();
+    const add = (date) => changeTasks((list) => list.push({ ...newTask(text, weekStart(date || t), date), src }), 'Planner: add next step', () => {
+      btn.replaceWith(h('span', { class: 'ns-added no-print' }, `✓ 已加入${date ? ` ${dayLabel(date)}` : '本周计划'}`));
+    });
+    const btn = has ? h('span', { class: 'ns-added no-print' }, `✓ 已在待办${has.date ? ` ${dayLabel(has.date)}` : '（本周计划）'}${has.done ? ' · 已完成' : ''}`)
+      : h('button', { class: 'ns-btn no-print', type: 'button', onclick: (e) => menu(e.currentTarget, [
+        { icon: 'plus', label: '今天', run: () => add(t) },
+        { icon: 'plus', label: '明天', run: () => add(addDays(t, 1)) },
+        { icon: 'list', label: '本周计划', run: () => add(null) },
+        { icon: 'history', label: '选日期…', run: () => { const d = window.prompt('哪一天？（YYYY-MM-DD）', addDays(t, 1)); if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) add(d); } },
+      ]) }, icon('plus', 14), '加入待办');
+    li.append(' ', btn);
+  }
+}
+
+function amendList(list) {
+  return h('details', { class: 'amended' }, h('summary', null, `修订记录（${list.length} 次）`),
+    h('ol', { class: 'amend-list' }, list.map(parseAmend).map((a) => h('li', null,
+      h('span', { class: 'am-at' }, `${fmtDate(a.at)} ${String(a.at).slice(11, 16)}`), h('span', { class: 'am-by' }, a.by), h('span', { class: 'am-why' }, a.why || '（未写原因）')))));
+}
 function initials(name) {
   return String(name).replace(/,.*$/, '').split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 3);
 }
@@ -683,6 +720,7 @@ async function buildPageSheet(vol, num, { forPrint = false } = {}) {
       fm.id ? h('div', { class: 'form-row' }, field('实验编号', h('button', { class: 'linkish xid', type: 'button', title: '复制编号', onclick: () => copyText(fm.id) }, fm.id), 'grow')) : null,
       entry?.series ? seriesRow(entry) : null),
     fm.void ? h('div', { class: 'void-banner' }, h('strong', null, '已作废'), ` ${fm.void}`) : null,
+    body.includes('原始数据与首次记录不一致') ? h('div', { class: 'void-banner data-alert' }, h('strong', null, '⚠ 原始数据已变动'), ' 有数据文件与首次记录的指纹不一致或已缺失，详见页末“自动挂接”。') : null,
     panel,
     cont ? h('p', { class: 'cont from' }, '接上页 ', refLink(entry.continues, vol)) : null,
     content,
@@ -692,7 +730,7 @@ async function buildPageSheet(vol, num, { forPrint = false } = {}) {
       backs.length ? h('div', { class: 'form-row' }, field('被引用于', h('span', { class: 'backs' }, backs.map((p) => refLink(`${p.vol}/${p.num}`, vol))), 'grow')) : null,
       h('div', { class: 'form-row sig-row' }, field('已签名', sig, 'grow'), field('日期', fm.signed ? fmtDate(fm.signed) : '')),
       h('div', { class: 'form-row sig-row print-only' }, field('见证人', '', 'grow'), field('日期', '')),
-      (fm.amended || []).length ? h('p', { class: 'amended' }, `修订于 ${fm.amended.map(fmtDate).join('、')}`) : null,
+      (fm.amended || []).length ? amendList(fm.amended) : null,
       entry?.pending ? h('p', { class: 'pending-note no-print' }, '已存在本机，联网后提交到 GitHub。') : null));
   if (forPrint) sheet.classList.add('for-print');
   if (fm.void) sheet.classList.add('voided');
@@ -716,6 +754,8 @@ function recordSheet(vol, num, fm, panel, content) {
     fm.void ? h('div', { class: 'void-banner' }, h('strong', null, '已作废'), ` ${fm.void}`) : null,
     panel,
     content,
+    (fm.amended || []).length ? h('div', { class: 'rec-amend' }, h('span', { class: 'rh-lbl' }, '修订记录'),
+      h('ol', null, fm.amended.map(parseAmend).map((x) => h('li', null, `${fmtDate(x.at)} ${String(x.at).slice(11, 16)}　${x.by}　${x.why}`)))) : null,
     h('footer', { class: 'rec-foot' },
       h('span', { class: 'rh-lbl' }, '相关实验数据'),
       h('div', { class: 'rf-val' }, data.length ? data.map((d) => h('div', null, d)) : h('div', { class: 'rf-blank' }))));
@@ -745,6 +785,7 @@ async function viewPage(vol, num, params) {
     return viewMissing(`${v.title} 第 ${num} 页还没写。`, h('a', { class: 'btn primary', href: `#/v/${vol}/new` }, '写新页'));
   }
   const { el: sheet, fm } = await buildPageSheet(vol, num);
+  nextStepButtons(sheet, vol, num, fm);
   const pages = lib.pages(vol);
   const idx = pages.findIndex((p) => p.num === num);
   const prev = pages[idx - 1]; const next = pages[idx + 1];
@@ -758,6 +799,7 @@ async function viewPage(vol, num, params) {
     { icon: 'list', label: fm.series ? '更改所属系列…' : '加入系列…', run: () => setSeries(vol, num, fm) },
     { icon: 'list', label: '录入操作步骤（用量、容器、条件）', run: () => openStepsEditor(vol, num) },
     { icon: 'link', label: '引用另一次实验（步骤完全相同时）…', run: () => openQuoteDialog(vol, num, null) },
+    { icon: 'plus', label: '登记本页配制的溶液（S-编号）…', run: async () => editSolution(await loadSolutions(lib), null, { page: fm.id || `${vol}/${num}`, prepared: fm.date, steps: readSteps(raw) || [] }) },
     fm.void ? { icon: 'history', label: '取消作废', run: () => setVoid(vol, num, null) } : { icon: 'close', label: '作废这一页…', run: () => setVoid(vol, num, fm) },
     fm.signed ? null : { icon: 'trash', label: '删除这一页…', run: () => openDeletePage(vol, num, fm) },
     (fm.followups || []).length ? { icon: 'download', label: '提醒导出到手机日历', run: () => exportIcs((fm.followups || []).map(parseFollowup).filter((f) => f && !f.done).map((f) => ({ ...f, xid: fm.id, page: { vol, num } }))) } : null,
@@ -1089,15 +1131,17 @@ async function viewEditor(vol, num, params) {
   // ----- save -----
   let saving = false;
   const saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => save(false) }, origSigned ? '保存修订' : '保存');
+  const whyInput = h('input', { class: 'why-input', placeholder: '修改原因（必填），例如：补充漏记的退火时间', 'aria-label': '修改原因' });
   const signBtn = origSigned ? null : h('button', { class: 'btn primary', type: 'button', onclick: () => save(true) }, icon('pen', 18), '签名并保存');
   async function save(sign, opts = {}) {
     if (saving) return;
+    if (origSigned && !whyInput.value.trim()) { toast('本页已签名，请在下方写明修改原因。'); whyInput.focus(); return; }
     saving = true; saveBtn.disabled = true; if (signBtn) signBtn.disabled = true;
     status.textContent = '保存中…';
     const c = collect();
     if (!c.fm.title) c.fm.title = '未命名';
     const now = nowISO();
-    if (origSigned) c.fm.amended = [...(c.fm.amended || []), now];
+    if (origSigned) c.fm.amended = [...(c.fm.amended || []), amendEntry(whyInput.value)];
     else if (sign) { c.fm.signed = now; c.fm.signer = signerName(); }
     const item = {
       id: pending?.id, vol, num: isNew ? null : num, isNew: isNew || !!pending?.isNew, baseSha,
@@ -1158,7 +1202,7 @@ async function viewEditor(vol, num, params) {
   const root = h('div', { class: 'view editor' },
     topbar({ title: isNew ? `${v.title} · 新页` : `编辑第 ${num} 页`, sub: v.title, actions: [] }),
     demoBanner(), sheet,
-    h('div', { class: 'action-bar' }, status, h('div', { class: 'ab-buttons' }, h('button', { class: 'btn ghost', type: 'button', onclick: cancel }, '取消'), saveBtn, signBtn)));
+    h('div', { class: 'action-bar' }, status, origSigned ? whyInput : null, h('div', { class: 'ab-buttons' }, h('button', { class: 'btn ghost', type: 'button', onclick: cancel }, '取消'), saveBtn, signBtn)));
   root.querySelector('.topbar .tb-left').prepend(h('button', { class: 'btn icon ghost', 'aria-label': '取消', title: '取消', onclick: cancel }, icon('close')));
 
   renderStrip();
@@ -1382,15 +1426,31 @@ function downloadText(name, text, type = 'text/plain') {
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); toast(`已复制：${text}`); } catch { toast(text); }
 }
+// Changes to a signed page are logged as "time | who | why" (GLP-style audit trail).
+const amendEntry = (why) => `${nowISO()} | ${signerName()} | ${String(why || '').replace(/\s*\n\s*/g, ' ').trim()}`;
+function parseAmend(s) {
+  const [at, by = '', ...why] = String(s).split(' | ');
+  return { at: at.trim(), by: by.trim(), why: why.join(' | ').trim() };
+}
+// A required "reason for change" field, shown only when the page is signed.
+function reasonField(fm, id = 'rf-why') {
+  if (!fm.signed) return { el: null, ok: () => true, value: () => '' };
+  const input = h('input', { id, placeholder: '例如：录入错误，#09 Vth 应为 0.45 V；补充漏记的退火时间' });
+  return {
+    el: h('div', { class: 'reason-field' }, h('label', { for: id }, '修改原因（本页已签名，必填）'), input),
+    ok: () => { if (input.value.trim()) return true; toast('本页已签名，请写明修改原因。'); input.focus(); return false; },
+    value: () => input.value.trim(),
+  };
+}
 const saveError = (e) => (e instanceof ConflictError ? '这一页刚在别的设备上改过。刷新页面后再试。' : e instanceof NetworkError ? '离线：已存在本机，联网后自动同步。' : `没有保存：${e.message}`);
 
 // Change a page without opening the editor (results, photos, follow-ups).
 // mutate({fm, body}) returns the new {fm, body} and optional attachments [{name, blob}].
-async function updatePage(vol, num, mutate, message) {
+async function updatePage(vol, num, mutate, message, reason = '') {
   const pending = lib.pendingFor(vol, num);
   const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
   const next = await mutate({ fm: structuredClone(fm), body });
-  if (fm.signed) next.fm.amended = [...(next.fm.amended || []), nowISO()];
+  if (fm.signed) next.fm.amended = [...(next.fm.amended || []), amendEntry(reason || message)];
   // Redraw once the dialog that started this has closed.
   setTimeout(function again() { if (document.querySelector('.modal-root')) setTimeout(again, 100); else route({ quiet: true }); }, 300);
   return lib.savePage({
@@ -1453,7 +1513,7 @@ async function toggleFollowup(vol, num, index) {
       list[index].done = !list[index].done;
       fm.followups = list.filter(Boolean).map(formatFollowup);
       return { fm, body };
-    }, `Follow-up on p. ${num}`);
+    }, `Follow-up on p. ${num}`, '更新复测提醒的完成状态');
     toast('提醒已更新。');
   } catch (e) { toast(saveError(e)); }
 }
@@ -1488,11 +1548,12 @@ async function openSamplesEditor(vol, num) {
     for (const r of t.rows) r.splice(at, 0, '');
     draw();
   };
+  const why = reasonField(fm, 'se-why');
   modal({
     title: `录入条件与结果 · ${fm.id || `p. ${num}`}`, wide: true,
     body: h('div', null,
       h('p', { class: 'muted' }, '按纸质记录卡逐行录入。Enter 跳到下一行同一列。绿色列是结果，Keithley 数据同步时会自动填入空着的结果格。'),
-      grid,
+      grid, why.el,
       h('div', { class: 'row-actions' },
         h('button', { class: 'btn small', type: 'button', onclick: addRow }, icon('plus', 16), '加一行'),
         h('button', { class: 'btn small', type: 'button', onclick: () => addCol(false) }, '加条件列'),
@@ -1500,9 +1561,10 @@ async function openSamplesEditor(vol, num) {
     buttons: [{ label: '取消' }, {
       label: '保存', primary: true,
       run: async () => {
+        if (!why.ok()) return false;
         t.rows = t.rows.filter((r) => r.some((v) => String(v).trim()));
         try {
-          await updatePage(vol, num, ({ fm: f, body: b }) => ({ fm: f, body: writeSamples(b, t) }), `Results for ${fm.id || `p. ${num}`}`);
+          await updatePage(vol, num, ({ fm: f, body: b }) => ({ fm: f, body: writeSamples(b, t) }), `Results for ${fm.id || `p. ${num}`}`, why.value());
           toast(fm.signed ? '已保存为修订（原版本保留在历史中）。' : '已保存。');
         } catch (e) { toast(saveError(e)); return false; }
       },
@@ -1515,7 +1577,7 @@ async function openStepsEditor(vol, num) {
   const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
   const steps = readSteps(body) || [];
   if (!steps.length) steps.push(Object.fromEntries(STEP_FIELDS.map(([k]) => [k, ''])));
-  const reagents = await loadReagents(lib).catch(() => []);
+  const reagents = [...await loadReagents(lib).catch(() => []), ...(await loadSolutions(lib).catch(() => [])).filter((x) => !['用完', '废弃'].includes(x.status)).map((x) => ({ ...x, spec: x.conc, vendor: '自配溶液' }))];
   const used = (k) => steps.map((x) => x[k]).filter(Boolean);
   const lists = h('div', { hidden: true },
     h('datalist', { id: 'st-ops' }, [...new Set([...STEP_OPS, ...used('op')])].map((v) => h('option', { value: v }))),
@@ -1543,6 +1605,7 @@ async function openStepsEditor(vol, num) {
   const addRow = () => { steps.push(Object.fromEntries(STEP_FIELDS.map(([k]) => [k, '']))); draw(); };
   showMore.addEventListener('change', draw);
   draw();
+  const why = reasonField(fm, 'st-why');
   modal({
     title: `操作步骤 · ${fm.id || `p. ${num}`}`, wide: true,
     body: h('div', null,
@@ -1550,13 +1613,15 @@ async function openStepsEditor(vol, num) {
       lists,
       h('label', { class: 'check', for: 'st-more' }, showMore, ' 显示细节列（条件、具体操作细节）'),
       grid,
-      h('div', { class: 'row-actions' }, h('button', { class: 'btn small', type: 'button', onclick: addRow }, icon('plus', 16), '加一步'))),
+      h('div', { class: 'row-actions' }, h('button', { class: 'btn small', type: 'button', onclick: addRow }, icon('plus', 16), '加一步')),
+      why.el),
     buttons: [{ label: '取消' }, {
       label: '保存', primary: true,
       run: async () => {
+        if (!why.ok()) return false;
         const keep = steps.filter((x) => STEP_FIELDS.some(([k]) => String(x[k] || '').trim()));
         try {
-          await updatePage(vol, num, ({ fm: f, body: b }) => ({ fm: f, body: writeSteps(b, keep) }), `Steps for ${fm.id || `p. ${num}`}`);
+          await updatePage(vol, num, ({ fm: f, body: b }) => ({ fm: f, body: writeSteps(b, keep) }), `Steps for ${fm.id || `p. ${num}`}`, why.value());
           toast(fm.signed ? '已保存为修订（原版本保留在历史中）。' : '已保存。');
         } catch (e) { toast(saveError(e)); return false; }
       },
@@ -1575,7 +1640,9 @@ function openQuoteDialog(curVol, curNum, onInsert) {
     const hs = headings(body).filter((x) => x.level <= 3);
     const sec = h('select', { id: 'q-sec' }, h('option', { value: '' }, '整页'), hs.map((x) => h('option', { value: x.text, selected: x.text === '操作步骤' }, `${'　'.repeat(x.level - 2 < 0 ? 0 : x.level - 2)}${x.text}`)));
     const note = h('input', { id: 'q-note', value: '本次完全按照此步骤操作，未作任何改动。' });
-    const own = !onInsert && curNum ? parseFrontMatter(await lib.readPage(curVol, curNum)).body : '';
+    const ownPage = !onInsert && curNum ? parseFrontMatter(await lib.readPage(curVol, curNum)) : { fm: {}, body: '' };
+    const own = ownPage.body;
+    const why = reasonField(ownPage.fm, 'q-why');
     const replace = h('input', { type: 'checkbox', id: 'q-rep', checked: true });
     const repRow = h('label', { class: 'check', for: 'q-rep' }, replace, h('span', { class: 'q-rep-text' }));
     const upd = () => { const has = sec.value && headings(own).some((x) => x.text === sec.value); repRow.hidden = !onInsert && has ? false : true; repRow.querySelector('.q-rep-text').textContent = ` 用引用替换本页“${sec.value}”一节现有的内容`; };
@@ -1586,15 +1653,16 @@ function openQuoteDialog(curVol, curNum, onInsert) {
         h('p', { class: 'muted' }, `${target.date || ''}　${target.title}`),
         h('label', { for: 'q-sec' }, '引用哪一节'), sec,
         h('label', { for: 'q-note' }, '说明（可改，例如：仅退火温度改为 150 °C）'), note,
-        onInsert ? null : repRow,
+        onInsert ? null : repRow, why.el,
         h('p', { class: 'muted' }, '引用不复制内容：页面上显示原页那一节的实时内容，加框、换字体，并链接回原实验。')),
       buttons: [{ label: '取消' }, {
         label: '引用', primary: true,
         run: async () => {
           const block = quoteBlock(target.xid || `${target.vol}/${target.num}`, sec.value, note.value.trim());
           if (onInsert) { onInsert(block); return; }
+          if (!why.ok()) return false;
           try {
-            await updatePage(curVol, curNum, ({ fm: f, body: b }) => ({ fm: f, body: sec.value && (replace.checked || !headings(b).some((x) => x.text === sec.value)) ? replaceSection(b, sec.value, block) : `${b.trimEnd()}\n\n${block}\n` }), `Quote ${target.xid || ref}`);
+            await updatePage(curVol, curNum, ({ fm: f, body: b }) => ({ fm: f, body: sec.value && (replace.checked || !headings(b).some((x) => x.text === sec.value)) ? replaceSection(b, sec.value, block) : `${b.trimEnd()}\n\n${block}\n` }), `Quote ${target.xid || ref}`, why.value() || `引用 ${target.xid || ref}`);
             toast('已引用。');
           } catch (e) { toast(saveError(e)); return false; }
         },
@@ -1627,7 +1695,7 @@ function openBulkSeries(volId) {
         if (!n) { toast('写一个系列名称。'); return false; }
         if (!sel.length) { toast('至少勾选一页。'); return false; }
         try {
-          for (const p of sel) await updatePage(p.vol || volId, p.num, ({ fm: f, body }) => { f.series = n; return { fm: f, body }; }, `Series of p. ${p.num}`);
+          for (const p of sel) await updatePage(p.vol || volId, p.num, ({ fm: f, body }) => { f.series = n; return { fm: f, body }; }, `Series of p. ${p.num}`, `归入系列“${n}”`);
           toast(`${sel.length} 页已归入“${n}”。`);
         } catch (e) { toast(saveError(e)); return false; }
       },
@@ -1684,7 +1752,7 @@ async function openPhotoCapture(vol, num) {
               const head = /^## 照片[ \t]*$/m;
               b = head.test(b) ? b.replace(head, (m) => `${m}\n\n${add}\n`) : `${b.trimEnd()}\n\n## 照片\n\n${add}\n`;
               return { fm: f, body: b, attachments: atts };
-            }, `Photos for ${xid}`);
+            }, `Photos for ${xid}`, `补充照片 ${atts.map((a) => a.name).join('、')}`);
             toast(r.queued ? '照片已存在本机，联网后同步。' : '照片已保存。');
           } catch (e) { toast(saveError(e)); return false; }
         },
@@ -1767,6 +1835,7 @@ async function allFollowups() {
   }
   const reagents = await loadReagents(lib).catch(() => []);
   for (const a of reagentAlerts(reagents)) items.push({ ...a, done: false });
+  for (const a of solutionAlerts(await loadSolutions(lib).catch(() => []))) items.push({ ...a, done: false });
   return items.sort((a, b) => a.date.localeCompare(b.date));
 }
 
@@ -1836,6 +1905,7 @@ function ring(done, total, size = 64) {
   return h('div', { class: 'ring-box', role: 'img', 'aria-label': `已完成 ${done} / ${total}` }, svg, h('span', { class: 'ring-num' }, total ? `${Math.round(f * 100)}%` : '—'));
 }
 function taskRow(t, { redraw, extra, meta } = {}) {
+  if (!meta && t.src) meta = h('a', { href: `#/v/${t.src.vol}/${t.src.num}` }, `来自 ${t.src.xid || `p. ${t.src.num}`}`);
   return h('li', { class: `task${t.done ? ' done' : ''}` },
     h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!t.done), 'aria-label': t.done ? '标为未完成' : '标为完成', onclick: () => toggleTask(t.id, redraw) }),
     h('span', { class: 'task-main' }, editable(t.text, (v) => editTask(t.id, v, redraw)), meta ? h('span', { class: 'task-meta' }, meta) : null),
@@ -2056,12 +2126,14 @@ function openExport(vol) {
 async function summaryRows(pages) {
   const rows = [];
   for (const p of pages) {
-    const t = readSamples(parseFrontMatter(await lib.readPage(p.vol, p.num)).body);
-    rows.push([p.date, p.xid || '', p.title + (p.void ? '（已作废）' : ''), lib.volume(p.vol)?.title || p.vol, p.protocol || '', t ? String(t.rows.length) : '', p.signed ? '已签名' : '未签名']);
+    const { body } = parseFrontMatter(await lib.readPage(p.vol, p.num));
+    const t = readSamples(body);
+    const concl = (sectionOf(body, '结论') || '').split('\n').map((x) => x.replace(/^[-*>\s]+/, '').trim()).find(Boolean) || '';
+    rows.push([p.date, p.xid || '', p.title + (p.void ? '（已作废）' : ''), lib.volume(p.vol)?.title || p.vol, p.protocol || '', t ? String(t.rows.length) : '', concl, p.signed ? '已签名' : '未签名']);
   }
   return rows;
 }
-const SUMMARY_HEAD = ['日期', '实验编号', '标题', '卷', 'SOP', '样品数', '签名'];
+const SUMMARY_HEAD = ['日期', '实验编号', '标题', '卷', 'SOP', '样品数', '结论', '签名'];
 const exportName = (a, b) => `实验记录_${a.replace(/-/g, '')}-${b.replace(/-/g, '')}`;
 
 async function exportPdf(pages, a, b, { cover = true, title: heading = '实验记录汇总' } = {}) {
@@ -2291,7 +2363,7 @@ async function setSeries(vol, num, fm) {
   const v = window.prompt(`所属系列名称（留空表示不属于任何系列）${names.length ? `\n已有：${names.join('、')}` : ''}`, fm.series || '');
   if (v == null) return;
   try {
-    await updatePage(vol, num, ({ fm: f, body }) => { if (v.trim()) f.series = v.trim(); else delete f.series; return { fm: f, body }; }, `Series of p. ${num}`);
+    await updatePage(vol, num, ({ fm: f, body }) => { if (v.trim()) f.series = v.trim(); else delete f.series; return { fm: f, body }; }, `Series of p. ${num}`, v.trim() ? `归入系列“${v.trim()}”` : '移出系列');
     toast(v.trim() ? `已归入“${v.trim()}”。` : '已移出系列。');
   } catch (e) { toast(saveError(e)); }
 }
@@ -2332,7 +2404,7 @@ async function setVoid(vol, num, fm) {
     await updatePage(vol, num, ({ fm: f, body }) => {
       if (fm) f.void = `${todayISO()} ${reason.trim()}`; else delete f.void;
       return { fm: f, body };
-    }, fm ? `Void p. ${num}` : `Restore p. ${num}`);
+    }, fm ? `Void p. ${num}` : `Restore p. ${num}`, fm ? `作废：${reason.trim()}` : '取消作废');
     toast(fm ? '已作废。页面保留，搜索和导出时默认隐藏。' : '已取消作废。');
   } catch (e) { toast(saveError(e)); }
 }
@@ -2458,6 +2530,8 @@ async function openNewExperiment(volId, { series: presetSeries = '' } = {}) {
       })(),
       '## 与 SOP 的偏离', '', '- ', '',
       '## 现象与讨论', '', '',
+      '## 结论', '', '',
+      '## 下一步', '', '- ', '',
       '## 照片', '',
     ].join('\n');
     try {
@@ -2508,6 +2582,103 @@ async function viewReagents() {
         h('button', { class: 'btn', type: 'button', onclick: () => downloadText('reagents.csv', `\uFEFF${reagentsCSV(list, fields)}`, 'text/csv') }, '导出 CSV'), importIn),
       h('div', { class: 'table-wrap tall' }, h('table', { class: 'data lib-table' }, thead([...fields.map(([, l]) => l), '使用']), body)),
       h('p', { class: 'muted' }, '点一行可修改。批号换了就新建一条（新编号），旧实验仍指向旧批号，保证可溯源。')));
+}
+
+// ----- lab-made solutions (S-0001): what went in, when, by whom, until when -----
+async function viewSolutions() {
+  const list = await loadSolutions(lib);
+  const reagents = await loadReagents(lib).catch(() => []);
+  const nameOf = (id) => reagents.find((r) => r.id === id)?.name || list.find((r) => r.id === id)?.name || '';
+  const filter = h('input', { type: 'search', placeholder: '按编号、名称、组成、日期筛选', 'aria-label': '筛选' });
+  const showAll = h('input', { type: 'checkbox', id: 'sl-all' });
+  const body = h('tbody');
+  const today = todayISO();
+  const usedIn = (id) => search(lib.allPages(), id).length;
+  const draw = () => {
+    const q = filter.value.trim().toLowerCase();
+    body.replaceChildren(...list.filter((r) => (showAll.checked || !['用完', '废弃'].includes(r.status)) && (!q || Object.values(r).join(' ').toLowerCase().includes(q)))
+      .sort((a, b) => String(b.id).localeCompare(String(a.id))).map((r) => {
+        const n = usedIn(r.id);
+        return h('tr', { class: ['用完', '废弃'].includes(r.status) ? 'retired' : null, onclick: () => editSolution(list, r) },
+          h('td', { class: 'mono' }, r.id), h('td', null, h('b', null, r.name)),
+          h('td', null, parseRecipe(r.recipe).map((c) => h('div', { class: 'recipe-line' }, h('span', { class: 'rg-id', 'data-rid': c.id }, c.id), ` ${nameOf(c.id)} `, h('span', { class: 'qty' }, c.amount)))),
+          h('td', null, r.conc || ''), h('td', null, r.volume || ''), h('td', { class: 'mono' }, r.prepared || ''),
+          h('td', { class: `mono${r.expires && r.expires < today ? ' warn' : ''}` }, r.expires || ''),
+          h('td', null, r.page ? h('a', { href: `#/search?q=${encodeURIComponent(r.page)}`, onclick: (e) => e.stopPropagation() }, r.page) : ''),
+          h('td', null, r.status || '在用'),
+          h('td', null, n ? h('a', { href: `#/search?q=${encodeURIComponent(r.id)}`, onclick: (e) => e.stopPropagation() }, `${n} 次`) : ''));
+      }));
+  };
+  filter.addEventListener('input', draw); showAll.addEventListener('change', draw); draw();
+  return h('div', { class: 'view library' },
+    topbar({ back: '#/', backLabel: '首页', title: '溶液库', sub: `${list.length} 批`, actions: [
+      h('button', { class: 'btn primary', type: 'button', onclick: () => editSolution(list, null) }, icon('plus', 18), h('span', null, '登记新溶液'))] }),
+    demoBanner(),
+    h('article', { class: 'sheet plain' },
+      h('div', { class: 'search-row' }, filter, h('label', { class: 'check', for: 'sl-all' }, showAll, ' 显示已用完/废弃'),
+        h('button', { class: 'btn', type: 'button', onclick: () => downloadText('solutions.csv', `\uFEFF${reagentsCSV(list, SOLUTION_FIELDS)}`, 'text/csv') }, '导出 CSV')),
+      h('div', { class: 'table-wrap tall' }, h('table', { class: 'data lib-table sol-table' }, thead(['编号', '名称', '组成', '浓度/配比', '总量', '配制', '有效期至', '配制记录', '状态', '使用']), body)),
+      h('p', { class: 'muted' }, '每配一批就登记一条（新编号），瓶签写 S-编号。步骤里选这个编号，就能从实验追到这批溶液、再追到每瓶试剂的批号。')));
+}
+
+function editSolution(list, s, preset = {}) {
+  const isNew = !s;
+  const r = s ? { ...s } : { id: nextSolutionId(list), prepared: preset.prepared || todayISO(), by: signerName(), page: preset.page || '', status: '在用' };
+  const reagents = [];
+  const lists = h('datalist', { id: 'sol-ids' });
+  loadReagents(lib).then((rs) => { reagents.push(...rs); lists.replaceChildren(...rs.map((x) => h('option', { value: x.id }, `${x.name}${x.lot ? ` · 批号 ${x.lot}` : ''}`)), ...list.filter((x) => x.id !== r.id).map((x) => h('option', { value: x.id }, `${x.name}（自配，${x.prepared || ''}）`))); drawRows(); }).catch(() => {});
+  // Components: from the record, or from the page's steps (substances with an R-/S- number and their amounts).
+  let rows = parseRecipe(r.recipe);
+  if (!rows.length && preset.steps?.length) rows = preset.steps.map((st) => ({ id: (st.what.match(/[RS]-\d{4}/) || [''])[0], amount: st.amount })).filter((x) => x.id);
+  if (!rows.length) rows = [{ id: '', amount: '' }];
+  const rowsBox = h('div', { class: 'recipe-rows' });
+  const nameFor = (id) => reagents.find((x) => x.id === id)?.name || list.find((x) => x.id === id)?.name || '';
+  function drawRows() {
+    rowsBox.replaceChildren(...rows.map((c, i) => h('div', { class: 'recipe-row' },
+      h('input', { value: c.id, list: 'sol-ids', placeholder: 'R-0001 / S-0002', 'aria-label': '试剂或溶液编号', oninput: (e) => { c.id = e.target.value.trim().toUpperCase(); e.target.nextElementSibling.textContent = nameFor(c.id); } }),
+      h('span', { class: 'recipe-name' }, nameFor(c.id)),
+      h('input', { value: c.amount, placeholder: '1 mL / 10 µL / 50 mg', 'aria-label': '用量', oninput: (e) => { c.amount = e.target.value; } }),
+      h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '删除', onclick: () => { rows.splice(i, 1); drawRows(); } }, icon('close', 14)))),
+    h('button', { class: 'btn small', type: 'button', onclick: () => { rows.push({ id: '', amount: '' }); drawRows(); } }, icon('plus', 14), '加一种成分'));
+  }
+  drawRows();
+  const inputs = {};
+  const field = (k, label, attrs = {}) => { inputs[k] = h('input', { id: `sol-${k}`, value: r[k] || '', ...attrs }); return [h('label', { for: `sol-${k}` }, label), inputs[k]]; };
+  const status = h('select', { id: 'sol-status' }, SOLUTION_STATUS.map((x) => h('option', { selected: (r.status || '在用') === x }, x)));
+  modal({
+    title: isNew ? `登记溶液 ${r.id}` : `溶液 ${r.id}`, wide: true,
+    body: h('div', { class: 'form two' },
+      h('div', null,
+        ...field('name', '名称', { placeholder: '例如：PEDOT:PSS 墨水（1 wt% GOPS）' }),
+        h('span', { class: 'label' }, '组成（从试剂库/溶液库选编号，写用量）'), lists, rowsBox,
+        ...field('conc', '浓度/配比', { placeholder: '例如：1 wt% GOPS / 10 mM' })),
+      h('div', null,
+        ...field('volume', '总量', { placeholder: '例如：5 mL' }),
+        ...field('prepared', '配制日期', { type: 'date' }),
+        ...field('by', '配制人'),
+        ...field('expires', '有效期至', { type: 'date' }),
+        ...field('location', '存放位置', { placeholder: '例如：4 °C 冰箱 第 2 层' }),
+        ...field('page', '配制记录（实验编号）', { placeholder: '20261102-OECT-01' }),
+        h('label', { for: 'sol-status' }, '状态'), status,
+        ...field('notes', '备注'))),
+    buttons: [{ label: '取消' }, {
+      label: '保存', primary: true,
+      run: async () => {
+        for (const k of Object.keys(inputs)) r[k] = inputs[k].value.trim();
+        r.recipe = recipeText(rows); r.status = status.value;
+        if (!r.name) { toast('写一个名称。'); return false; }
+        try {
+          await lib.commit(`${isNew ? 'Add' : 'Update'} solution ${r.id}`, async (l) => {
+            const cur = l.tree.has(SOLUTIONS_PATH) ? await loadSolutions(l) : [];
+            const next = [...cur.filter((x) => x.id !== r.id), r].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+            return { changes: [{ path: SOLUTIONS_PATH, data: `\uFEFF${reagentsCSV(next, SOLUTION_FIELDS)}` }] };
+          });
+          toast(`${r.id} 已保存。瓶签请写 ${r.id}。`);
+          if (view.kind === 'library') route({ quiet: true });
+        } catch (e) { toast(saveError(e)); return false; }
+      },
+    }],
+  });
 }
 
 async function saveReagents(list, message) {
