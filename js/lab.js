@@ -323,3 +323,16 @@ export function nextEvidenceId(hyp) {
   const max = Math.max(0, ...(hyp.evidence || []).map((e) => parseInt(String(e.id).replace(/\D/g, ''), 10) || 0));
   return `E${max + 1}`;
 }
+
+// ---------- potential research topics (thinking/topics.json) ----------
+// { id: 'T-001', title, why, links, priority, status, pinned, every (days, 0 = no review), next (ISO date), reviews: [{ at, note }], created, updated }
+export const TOPICS_PATH = 'thinking/topics.json';
+export const TOPIC_STATUS = ['想法', '调研中', '准备开展', '进行中', '已转为课题', '放弃'];
+export const TOPIC_PRIORITY = ['高', '中', '低'];
+export const TOPIC_EVERY = [[7, '每周'], [14, '每两周'], [30, '每月'], [90, '每季度'], [0, '不提醒']];
+export async function loadTopics(lib) { return (await cached(lib, TOPICS_PATH, (t) => JSON.parse(t).topics || [])) || []; }
+export const activeTopic = (t) => !['已转为课题', '放弃'].includes(t.status);
+export function topicAlerts(list, within = 0, today = todayISO()) {
+  return list.filter((t) => activeTopic(t) && t.every && /^\d{4}-\d{2}-\d{2}$/.test(t.next || '') && daysFrom(t.next, today) <= within)
+    .map((t) => ({ date: t.next, text: `回顾课题：${t.title}`, topic: t.id }));
+}

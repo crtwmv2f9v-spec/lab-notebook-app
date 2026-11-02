@@ -1,7 +1,7 @@
 // Storage: GitHub (or in-memory demo) backend, local cache, offline outbox.
 import {
   PAGE_RE, VOL_INDEX_RE, pagePath, attPath, attDir, volIndexPath, makeEntry,
-  serializePage, slugify, todayISO,
+  serializePage, slugify, todayISO, parseFrontMatter,
 } from './model.js';
 
 export const te = new TextEncoder();
@@ -584,6 +584,75 @@ export class Library {
       for (const p of Object.values(rest)) if (p.vol === vol) pages[p.num] = p;
       changes.push({ path: volIndexPath(vol), data: JSON.stringify({ version: 1, volume: vol, pages }) });
       return { changes, after: () => { delete lib.pagesByKey[key]; } };
+    });
+  }
+  // Delete pages for good (with their attachments) and close the gap: the pages after them
+  // move up so the volume is numbered 1, 2, 3 … again. Every page link, "continued from",
+  // quote, hypothesis evidence and planner task that pointed at a moved page is rewritten
+  // in the same commit. Experiment numbers (20261101-OECT-01) never change.
+  async deletePages(vol, nums) {
+    if (this.outbox.some((o) => o.vol === vol)) throw new Error('这个卷还有没同步的页面，请先联网同步再删除。');
+    const gone = new Set(nums.map(Number));
+    return this.commit(`Delete ${[...gone].sort((a, b) => a - b).map((n) => `p. ${n}`).join(', ')} of ${vol} and renumber`, async (lib) => {
+      const kept = Object.values(lib.pagesByKey).filter((p) => p.vol === vol && !gone.has(p.num)).sort((a, b) => a.num - b.num);
+      const map = new Map(kept.map((p, i) => [p.num, i + 1]).filter(([a, b]) => a !== b)); // old -> new
+      const changes = [];
+      const del = (path) => changes.push({ path, delete: true });
+      for (const n of gone) { if (lib.tree.has(pagePath(vol, n))) del(pagePath(vol, n)); for (const path of lib.tree.keys()) if (path.startsWith(attDir(vol, n))) del(path); }
+      const ref = (v, n) => (v === vol && map.has(n) ? map.get(n) : null);
+      const fixBody = (text, ownVol) => text
+        .replace(/(!?)\[\[(?:([a-z0-9][a-z0-9-]*)\/)?(\d{1,5})(\|[^\]\n]*)?\]\]/gi, (m, bang, v, n, label) => {
+          if (bang) return m;
+          const nn = ref(v ? v.toLowerCase() : ownVol, +n); return nn ? `[[${v ? `${v}/` : ''}${nn}${label || ''}]]` : m;
+        })
+        .replace(/(```quote[^\n]*\n)(?:([a-z0-9][a-z0-9-]*)\/)?(\d{1,5})(?=[\s#]|$)/gi, (m, head, v, n) => {
+          const nn = ref(v ? v.toLowerCase() : ownVol, +n); return nn ? `${head}${v ? `${v}/` : ''}${nn}` : m;
+        });
+      const next = {};
+      const touchedVols = new Set([vol]);
+      for (const p of Object.values(lib.pagesByKey)) {
+        if (p.vol === vol && gone.has(p.num)) continue;
+        const md = await lib.readText(pagePath(p.vol, p.num));
+        const { fm, body } = parseFrontMatter(md);
+        let changed = false;
+        const nb = fixBody(body, p.vol);
+        if (nb !== body) changed = true;
+        if (fm.continues) {
+          const m = String(fm.continues).match(/^(?:([a-z0-9][a-z0-9-]*)\/)?(\d{1,5})$/i);
+          const nn = m && ref(m[1] ? m[1].toLowerCase() : p.vol, +m[2]);
+          if (nn) { fm.continues = m[1] ? `${m[1]}/${nn}` : String(nn); changed = true; }
+        }
+        const num = p.vol === vol && map.has(p.num) ? map.get(p.num) : p.num;
+        const out = changed ? serializePage(fm, nb) : md;
+        if (num !== p.num) {
+          del(pagePath(p.vol, p.num));
+          for (const path of [...lib.tree.keys()].filter((x) => x.startsWith(attDir(p.vol, p.num)))) {
+            changes.push({ path: attDir(p.vol, num) + path.slice(attDir(p.vol, p.num).length), data: await (await lib.readBlob(path)).arrayBuffer() });
+            if (!changes.some((c) => c.path === path)) del(path);
+          }
+        }
+        if (num !== p.num || changed) changes.push({ path: pagePath(p.vol, num), data: out });
+        next[`${p.vol}/${num}`] = num !== p.num || changed ? makeEntry(p.vol, num, out, await gitSha(te.encode(out))) : p;
+        if (changed) touchedVols.add(p.vol);
+      }
+      // A moved page's new path may be the path of a page that was deleted or moved too: keep the write, drop the delete.
+      const writes = new Set(changes.filter((c) => !c.delete).map((c) => c.path));
+      const final = changes.filter((c) => !(c.delete && writes.has(c.path)));
+      // Hypothesis evidence and planner tasks that point at moved pages.
+      for (const path of [...lib.tree.keys()].filter((x) => /^thinking\/H-\d{4}\.json$/.test(x) || x === 'planner/tasks.json')) {
+        const doc = JSON.parse(await lib.readText(path));
+        let hit = false;
+        const fix = (src) => { const nn = src && ref(src.vol, src.num); if (nn) { src.num = nn; hit = true; } };
+        for (const e of doc.evidence || []) fix(e.src);
+        for (const t of doc.tasks || []) fix(t.src);
+        if (hit) final.push({ path, data: `${JSON.stringify(doc, null, 1)}\n` });
+      }
+      for (const v of touchedVols) {
+        const pages = {};
+        for (const e of Object.values(next)) if (e.vol === v) pages[e.num] = e;
+        final.push({ path: volIndexPath(v), data: JSON.stringify({ version: 1, volume: v, pages }) });
+      }
+      return { changes: final, result: map, after: () => { lib.pagesByKey = next; } };
     });
   }
   async updateNotebook(mutate, message = 'Update notebook settings') {

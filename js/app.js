@@ -13,6 +13,7 @@ import {
   STEP_FIELDS, STEP_OPS, STEP_CONTAINERS, readSteps, writeSteps, stepsText, headings, replaceSection, quoteBlock, sectionOf,
   SOLUTIONS_PATH, SOLUTION_FIELDS, SOLUTION_STATUS, nextSolutionId, parseRecipe, recipeText, loadSolutions, solutionAlerts,
   HYP_STATUS, HYP_CONF, EV_KIND, hypPath, hypIds, loadHypothesis, loadHypotheses, nextHypId, evidenceCounts, nextEvidenceId,
+  TOPICS_PATH, TOPIC_STATUS, TOPIC_PRIORITY, TOPIC_EVERY, loadTopics, activeTopic, topicAlerts,
 } from './lab.js';
 import { search } from './search.js';
 import { h, icon, debounce, fmtBytes, loadScript } from './util.js';
@@ -191,6 +192,7 @@ async function route(opts = {}) {
   if (a === 'series' && b) return show('library', () => viewSeries(b));
   if (a === 'plan') return show('plan', () => viewPlan(b));
   if (a === 'think' && !b) return show('think', viewThinking);
+  if (a === 'think' && b === 'topics') return show('think', viewTopics);
   if (a === 'think' && b) return show('think', () => viewHypothesis(b));
   if (a === 'new-exp') { await show('home', viewHome, opts); openNewExperiment(params.get('vol') || ''); return; }
   if (a === 'search') { await show('home', viewHome, opts); openSearch(params.get('q') || ''); return; }
@@ -485,7 +487,7 @@ function viewHome() {
     return root;
   }
 
-  root.append(hero(), dashboard());
+  root.append(hero(), dashboard(), topicsStrip());
   root.append(h('h2', { class: 'section-title' }, '记录本', h('span', null, `${vols.length} 卷 · ${lib.allPages().length} 页`)));
   const shelf = h('section', { class: 'shelf', 'aria-label': '卷' });
   for (const v of vols) shelf.append(cover(v));
@@ -575,6 +577,7 @@ function viewVolume(id) {
     { icon: 'search', label: '在本卷中搜索', run: () => openSearch('', id) },
     { icon: 'download', label: '导出（按日期，PDF / Word）', run: () => openExport(id) },
     pages.length ? { icon: 'list', label: '把已有的页归入系列…', run: () => openBulkSeries(id) } : null,
+    pages.length ? { icon: 'trash', label: '批量永久删除页面…', run: () => openBulkDelete(id) } : null,
     { icon: 'trash', label: '删除这个卷…', run: () => openDeleteVolume(v) },
   ]) }, icon('more'));
   const root = h('div', { class: 'view volume' },
@@ -807,7 +810,7 @@ async function viewPage(vol, num, params) {
     { icon: 'book', label: '引用假设（本实验要检验的）…', run: () => openCiteHypothesis(vol, num, null) },
     { icon: 'plus', label: '登记本页配制的溶液（S-编号）…', run: async () => editSolution(await loadSolutions(lib), null, { page: fm.id || `${vol}/${num}`, prepared: fm.date, steps: readSteps(raw) || [] }) },
     fm.void ? { icon: 'history', label: '取消作废', run: () => setVoid(vol, num, null) } : { icon: 'close', label: '作废这一页…', run: () => setVoid(vol, num, fm) },
-    fm.signed ? null : { icon: 'trash', label: '删除这一页…', run: () => openDeletePage(vol, num, fm) },
+    { icon: 'trash', label: '永久删除这一页…', run: () => openDeletePage(vol, num, fm) },
     (fm.followups || []).length ? { icon: 'download', label: '提醒导出到手机日历', run: () => exportIcs((fm.followups || []).map(parseFollowup).filter((f) => f && !f.done).map((f) => ({ ...f, xid: fm.id, page: { vol, num } }))) } : null,
   ]) }, icon('more'));
   const photo = h('button', { class: 'btn', type: 'button', onclick: () => openPhotoCapture(vol, num) }, icon('attach', 18), h('span', { class: 'wide-only' }, '拍照/加图'));
@@ -1726,8 +1729,11 @@ async function viewThinking() {
     h('div', { class: 'think-wrap' },
       h('header', { class: 'hero think-hero' }, h('p', { class: 'hero-eyebrow' }, 'HYPOTHESES & EVIDENCE'), h('h1', { class: 'hero-title' }, '思维笔记本'),
         h('p', { class: 'think-lead' }, '每条假设一张卡：写下假设和“如果成立应看到什么”，再把每一次实验、观察、照片、文献作为证据挂上去，标明支持还是反对。实验页的“目的”可以引用假设，“结论”可以一键作为证据回到这里。')),
-      chips, grid));
+      thinkTabs('hyp'), chips, grid));
 }
+const thinkTabs = (on) => h('nav', { class: 'think-tabs' },
+  h('a', { href: '#/think', class: on === 'hyp' ? 'on' : null }, '假设与证据链'),
+  h('a', { href: '#/think/topics', class: on === 'topics' ? 'on' : null }, '潜在研究课题'));
 
 function editHypothesis(hyp) {
   const isNew = !hyp;
@@ -1877,6 +1883,123 @@ async function viewHypothesis(id) {
           h('section', { class: 'tile' }, h('h2', null, '思路变化'),
             h('ol', { class: 'hist-list' }, [...(hyp.history || [])].reverse().map((x) => h('li', null,
               h('span', { class: 'ev-date' }, `${fmtDate(x.at)} ${String(x.at).slice(11, 16)}`), h('span', { class: `hyp-status st-${x.status}` }, x.status), h('span', { class: 'muted' }, ` 可信度 ${x.confidence}`), h('div', null, x.why)))))))));
+}
+
+// ----- potential research topics: ideas not to forget, with a review rhythm -----
+async function changeTopics(mutate, message) {
+  return lib.commit(message, async (l) => {
+    const list = l.tree.has(TOPICS_PATH) ? structuredClone(await loadTopics(l)) : [];
+    mutate(list);
+    return { changes: [{ path: TOPICS_PATH, data: `${JSON.stringify({ topics: list }, null, 1)}\n` }] };
+  });
+}
+const nextTopicId = (list) => `T-${String(Math.max(0, ...list.map((t) => parseInt(String(t.id).replace(/\D/g, ''), 10) || 0)) + 1).padStart(3, '0')}`;
+const reviewLabel = (t) => {
+  if (!t.every || !t.next) return '不定期';
+  const d = daysFrom(t.next);
+  return d < 0 ? `该回顾了（逾期 ${-d} 天）` : d === 0 ? '今天回顾' : `${d} 天后回顾`;
+};
+
+function topicsStrip() {
+  const box = h('section', { class: 'topics-strip' });
+  loadTopics(lib).catch(() => []).then((all) => {
+    const list = all.filter(activeTopic).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || TOPIC_PRIORITY.indexOf(a.priority) - TOPIC_PRIORITY.indexOf(b.priority) || String(a.next || '9').localeCompare(String(b.next || '9')));
+    const add = addBox('记下一个潜在课题，回车保存', (text) => changeTopics((l) => l.push({ id: nextTopicId(l), title: text, priority: '中', status: '想法', pinned: false, every: 14, next: addDays(todayISO(), 14), reviews: [], created: nowISO() }), 'Topic: add').then(() => route({ quiet: true })).catch((e) => toast(saveError(e))));
+    box.replaceChildren(h('div', { class: 'tile topics-tile' },
+      h('div', { class: 'tile-head' }, h('div', null, h('h2', null, '潜在研究课题'), h('p', { class: 'card-sub' }, list.length ? `${list.length} 个在关注 · 别忘了它们` : '值得以后做的方向，先记下来，定期回顾')),
+        h('a', { class: 'more-link', href: '#/think/topics' }, '全部 ›')),
+      add,
+      list.length ? h('div', { class: 'topic-row' }, list.slice(0, 8).map((t) => {
+        const due = t.every && t.next && daysFrom(t.next) <= 0;
+        return h('a', { class: `topic-chip p-${t.priority}${due ? ' due' : ''}`, href: '#/think/topics' },
+          h('span', { class: 'tc-title' }, t.pinned ? h('span', { class: 'tc-pin', html: PIN_SVG }) : null, t.title),
+          h('span', { class: 'tc-meta' }, `${t.priority}优先 · ${t.status} · ${reviewLabel(t)}`));
+      })) : null));
+  });
+  return box;
+}
+
+function editTopic(t) {
+  const isNew = !t;
+  const x = t ? { ...t } : { priority: '中', status: '想法', every: 14, pinned: false };
+  const title = h('input', { id: 'tp-title', value: x.title || '', placeholder: '例如：唾液中 MMP-8 的 OECT 检测' });
+  const why = h('textarea', { id: 'tp-why', rows: 4, placeholder: '为什么值得做：临床意义、和现有工作的关系、需要的条件…' }, x.why || '');
+  const links = h('input', { id: 'tp-links', value: x.links || '', placeholder: '相关假设 / 实验 / 文献：H-0001, 20261101-OECT-01, 10.1021/…' });
+  const pr = h('select', { id: 'tp-pr' }, TOPIC_PRIORITY.map((v) => h('option', { selected: x.priority === v }, v)));
+  const st = h('select', { id: 'tp-st' }, TOPIC_STATUS.map((v) => h('option', { selected: x.status === v }, v)));
+  const every = h('select', { id: 'tp-every' }, TOPIC_EVERY.map(([d, l]) => h('option', { value: d, selected: Number(x.every || 0) === d }, l)));
+  const next = h('input', { id: 'tp-next', type: 'date', value: x.next || addDays(todayISO(), Number(x.every) || 14) });
+  every.addEventListener('change', () => { if (+every.value) next.value = addDays(todayISO(), +every.value); });
+  const pin = h('input', { type: 'checkbox', id: 'tp-pin', checked: !!x.pinned });
+  modal({
+    title: isNew ? '新的潜在课题' : `课题 ${x.id}`, wide: true,
+    body: h('div', { class: 'form' },
+      h('label', { for: 'tp-title' }, '课题'), title,
+      h('label', { for: 'tp-why' }, '为什么值得做'), why,
+      h('label', { for: 'tp-links' }, '相关'), links,
+      h('div', { class: 'pair' }, h('div', null, h('label', { for: 'tp-pr' }, '优先级'), pr), h('div', null, h('label', { for: 'tp-st' }, '状态'), st)),
+      h('div', { class: 'pair' }, h('div', null, h('label', { for: 'tp-every' }, '定期回顾'), every), h('div', null, h('label', { for: 'tp-next' }, '下次回顾'), next)),
+      h('label', { class: 'check', for: 'tp-pin' }, pin, ' 置顶（首页一直显示在最前）')),
+    buttons: [
+      isNew ? null : { label: '删除', danger: true, run: async () => { if ((await choose('删除这个课题？', 'GitHub 历史里仍可找回。', [['yes', '删除'], ['no', '取消']])) !== 'yes') return false; await changeTopics((l) => l.splice(l.findIndex((y) => y.id === x.id), 1), `Topic: remove ${x.id}`); route({ quiet: true }); } },
+      { label: '取消' },
+      { label: '保存', primary: true, run: async () => {
+        if (!title.value.trim()) { toast('写一下课题。'); return false; }
+        const data = { title: title.value.trim(), why: why.value.trim(), links: links.value.trim(), priority: pr.value, status: st.value, every: +every.value, next: +every.value ? next.value : '', pinned: pin.checked, updated: nowISO() };
+        try {
+          await changeTopics((l) => { if (isNew) l.push({ id: nextTopicId(l), ...data, reviews: [], created: nowISO() }); else Object.assign(l.find((y) => y.id === x.id), data); }, `Topic: ${isNew ? 'add' : 'edit'} ${data.title}`);
+          route({ quiet: true });
+        } catch (e) { toast(saveError(e)); return false; }
+      } },
+    ].filter(Boolean),
+  });
+}
+
+// Mark a topic as reviewed: one line of current thinking, then it is scheduled again.
+async function reviewTopic(id) {
+  const t = (await loadTopics(lib)).find((x) => x.id === id);
+  if (!t) return;
+  const note = h('textarea', { id: 'rv-note', rows: 3, placeholder: '这次想到了什么、有什么新进展或新文献（可不填）' });
+  modal({
+    title: `回顾：${t.title}`,
+    body: h('div', { class: 'form' }, t.why ? h('p', { class: 'muted' }, t.why) : null, h('label', { for: 'rv-note' }, '这次的想法'), note,
+      h('p', { class: 'muted' }, t.every ? `保存后下次回顾：${addDays(todayISO(), t.every)}` : '')),
+    buttons: [{ label: '取消' }, { label: '已回顾', primary: true, run: async () => {
+      try {
+        await changeTopics((l) => { const y = l.find((z) => z.id === id); y.reviews = [...(y.reviews || []), { at: nowISO(), note: note.value.trim() }]; if (y.every) y.next = addDays(todayISO(), y.every); y.updated = nowISO(); }, `Topic: review ${id}`);
+        toast('已回顾，已排到下一次。'); route({ quiet: true });
+      } catch (e) { toast(saveError(e)); return false; }
+    } }],
+  });
+}
+
+async function viewTopics() {
+  const all = await loadTopics(lib).catch(() => []);
+  const order = (a, b) => Number(!!b.pinned) - Number(!!a.pinned) || TOPIC_PRIORITY.indexOf(a.priority) - TOPIC_PRIORITY.indexOf(b.priority);
+  const card = (t) => h('div', { class: `tile topic-card p-${t.priority}${activeTopic(t) ? '' : ' closed'}` },
+    h('div', { class: 'hc-top' }, h('span', { class: 'hc-id' }, t.id), h('span', { class: 'hyp-badges' }, h('span', { class: `prio p-${t.priority}` }, `${t.priority}优先`), h('span', { class: 'hyp-status' }, t.status))),
+    h('h3', null, t.pinned ? h('span', { class: 'tc-pin', html: PIN_SVG }) : null, t.title),
+    t.why ? h('p', { class: 'hc-desc' }, t.why) : null,
+    t.links ? h('p', { class: 'tc-links' }, '相关：', t.links) : null,
+    (t.reviews || []).length ? h('details', { class: 'soon' }, h('summary', null, `回顾记录（${t.reviews.length}）`),
+      h('ol', { class: 'hist-list' }, [...t.reviews].reverse().map((r) => h('li', null, h('span', { class: 'ev-date' }, fmtDate(r.at)), h('div', null, r.note || '（已回顾）'))))) : null,
+    h('div', { class: 'topic-foot' }, h('span', { class: `rv${t.every && t.next && daysFrom(t.next) <= 0 ? ' due' : ''}` }, reviewLabel(t)),
+      h('span', null,
+        activeTopic(t) && t.every ? h('button', { class: 'btn small', type: 'button', onclick: () => reviewTopic(t.id) }, '已回顾') : null,
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => editTopic(t) }, '编辑'))));
+  const act = all.filter(activeTopic).sort(order);
+  const closed = all.filter((t) => !activeTopic(t));
+  return h('div', { class: 'view think' },
+    topbar({ back: '#/think', backLabel: '思维笔记本', title: '潜在研究课题', sub: '思维笔记本', actions: [
+      h('button', { class: 'btn primary', type: 'button', onclick: () => editTopic(null) }, icon('plus', 18), h('span', null, '新课题'))] }),
+    demoBanner(),
+    h('div', { class: 'think-wrap' },
+      h('header', { class: 'hero think-hero' }, h('p', { class: 'hero-eyebrow' }, 'FUTURE DIRECTIONS'), h('h1', { class: 'hero-title' }, '潜在研究课题'),
+        h('p', { class: 'think-lead' }, '值得以后做的方向。每个课题设一个回顾节奏，到期会出现在首页“今日待办”和顶部提示条里；回顾时记一句当下的想法，自动排到下一次。')),
+      thinkTabs('topics'),
+      h('div', { class: 'hyp-grid' }, act.length ? act.map(card) : [h('div', { class: 'tile empty-tile' }, h('p', null, '还没有课题。点右上角“新课题”，或在首页卡片里直接记下。'))]),
+      closed.length ? h('h2', { class: 'section-title think-sub' }, '已转为课题 / 放弃') : null,
+      closed.length ? h('div', { class: 'hyp-grid' }, closed.map(card)) : null));
 }
 
 // Experiment page: put a hypothesis box at the top of 目的 and record the link in front matter.
@@ -2100,6 +2223,7 @@ async function allFollowups() {
   const reagents = await loadReagents(lib).catch(() => []);
   for (const a of reagentAlerts(reagents)) items.push({ ...a, done: false });
   for (const a of solutionAlerts(await loadSolutions(lib).catch(() => []))) items.push({ ...a, done: false });
+  for (const a of topicAlerts(await loadTopics(lib).catch(() => []), 7)) items.push({ ...a, done: false });
   return items.sort((a, b) => a.date.localeCompare(b.date));
 }
 
@@ -2180,10 +2304,11 @@ function taskRow(t, { redraw, extra, meta } = {}) {
 function reminderRow(x, redraw) {
   const d = daysFrom(x.date);
   return h('li', { class: `task reminder${x.done ? ' done' : ''}${d < 0 && !x.done ? ' late' : ''}` },
-    x.page ? h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!x.done), 'aria-label': '完成', onclick: async () => { await toggleFollowup(x.page.vol, x.page.num, x.index); redraw(); } }) : h('span', { class: 'tick static' }),
-    h(x.page ? 'a' : 'span', { class: 'task-text', href: x.page ? `#/v/${x.page.vol}/${x.page.num}` : null }, x.text,
+    x.page ? h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!x.done), 'aria-label': '完成', onclick: async () => { await toggleFollowup(x.page.vol, x.page.num, x.index); redraw(); } })
+      : x.topic ? h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': 'false', 'aria-label': '已回顾', title: '已回顾（记一句想法，自动排到下一次）', onclick: () => reviewTopic(x.topic) }) : h('span', { class: 'tick static' }),
+    h(x.page || x.topic ? 'a' : 'span', { class: 'task-text', href: x.page ? `#/v/${x.page.vol}/${x.page.num}` : x.topic ? '#/think/topics' : null }, x.text,
       h('span', { class: 'task-meta' }, [d < 0 ? `逾期 ${-d} 天` : d === 0 ? '今天' : `${d} 天后`, x.xid || (x.reagent ? '试剂库' : '')].filter(Boolean).join(' · '))),
-    h('span', { class: 'chip' }, x.reagent ? '试剂' : '复测'));
+    h('span', { class: 'chip' }, x.reagent ? '试剂' : x.solution ? '溶液' : x.topic ? '课题' : '复测'));
 }
 function addBox(placeholder, onAdd) {
   const input = h('input', { class: 'add-input', placeholder, enterkeyhint: 'done', 'aria-label': placeholder });
@@ -2651,11 +2776,44 @@ async function openDeleteVolume(v) {
   if (!ok) return;
   try { await lib.deleteVolume(v.id); toast(`已删除“${v.title}”。`); location.hash = '#/'; } catch (e) { toast(saveError(e)); }
 }
+const DELETE_NOTE = '页面和它的照片、附件从记录本中删除，后面的页码自动前移（第 1 页起连续编号），所有指向被移动页面的链接、引用、证据和待办会一起更新。实验编号（如 20261101-OECT-01）不变。旧版本只留在 GitHub 历史和硬盘上的每周备份里。';
 async function openDeletePage(vol, num, fm) {
   const word = fm.id || `${num}`;
-  const ok = await confirmTyped('删除这一页', `“${fm.title || '未命名'}”及其照片附件会被删除（GitHub 历史中仍可找回）。已签名的记录不能删除，只能作废。`, word, '删除');
+  const ok = await confirmTyped('永久删除这一页', `“${fm.title || '未命名'}”${fm.signed ? '（已签名的正式记录）' : ''}将被删除。${DELETE_NOTE}`, word, '永久删除');
   if (!ok) return;
-  try { await lib.deletePage(vol, num); toast('已删除。'); location.hash = `#/v/${vol}`; } catch (e) { toast(saveError(e)); }
+  await runDelete(vol, [num]);
+}
+async function runDelete(vol, nums) {
+  toast('正在删除并重新编页…');
+  try {
+    const map = await lib.deletePages(vol, nums);
+    toast(`已删除 ${nums.length} 页${map?.size ? `，${map.size} 页页码已前移` : ''}。`);
+    location.hash = `#/v/${vol}`; route({ quiet: true });
+  } catch (e) { toast(saveError(e)); }
+}
+// Tick several pages (e.g. font-test drafts) and delete them in one go.
+function openBulkDelete(volId) {
+  const pages = lib.pages(volId);
+  const checks = pages.map((p) => ({ p, box: h('input', { type: 'checkbox' }) }));
+  const word = h('input', { id: 'bd-word', autocomplete: 'off', placeholder: '删除' });
+  modal({
+    title: '批量永久删除', wide: true,
+    body: h('div', { class: 'form' },
+      h('span', { class: 'label' }, '勾选要删除的页'),
+      h('div', { class: 'pick-list' }, checks.map(({ p, box }) => h('label', { class: 'check' }, box, ' ', h('span', { class: 'c-date' }, `p. ${p.num}`), ' ',
+        h('span', { class: 'c-date' }, fmtDate(p.date)), ' ', p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, ' ', p.title, p.signed ? h('span', { class: 'toc-tags' }, '（已签名）') : null))),
+      h('p', { class: 'muted' }, DELETE_NOTE),
+      h('label', { for: 'bd-word' }, '请输入“删除”确认'), word),
+    buttons: [{ label: '取消' }, {
+      label: '永久删除', danger: true,
+      run: async () => {
+        const nums = checks.filter((c) => c.box.checked).map((c) => c.p.num);
+        if (!nums.length) { toast('至少勾选一页。'); return false; }
+        if (word.value.trim() !== '删除') { toast('请输入“删除”确认。'); return false; }
+        setTimeout(() => runDelete(volId, nums), 50);
+      },
+    }],
+  });
 }
 async function setVoid(vol, num, fm) {
   let reason = '';
