@@ -53,6 +53,34 @@ function applyTheme() {
     if (!document.querySelector(`link[href="${href}"]`)) document.head.append(h('link', { rel: 'stylesheet', href }));
   }
 }
+// Signature lettering, kept in notebook.json (sigFont, sigText) so every device signs the same way.
+const FS = (pkg, v = '5.2.8') => `https://cdn.jsdelivr.net/npm/@fontsource/${pkg}@${v}/400.css`;
+export const SIG_FONTS = [
+  ['homemade-apple', 'Homemade Apple', '随手英文', FS('homemade-apple')],
+  ['mrs-saint-delafield', 'Mrs Saint Delafield', '签字笔连写', FS('mrs-saint-delafield', '5.2.7')],
+  ['great-vibes', 'Great Vibes', '花体连笔', FS('great-vibes')],
+  ['allura', 'Allura', '优雅连笔', FS('allura')],
+  ['pinyon-script', 'Pinyon Script', '古典铜版体', FS('pinyon-script')],
+  ['dancing-script', 'Dancing Script', '轻快手写', FS('dancing-script')],
+  ['caveat', 'Caveat', '日常钢笔', FS('caveat')],
+  ['long-cang', 'Long Cang', '行书手写（中文）', FS('long-cang')],
+  ['zhi-mang-xing', 'Zhi Mang Xing', '行草毛笔（中文）', FS('zhi-mang-xing')],
+  ['liu-jian-mao-cao', 'Liu Jian Mao Cao', '草书（中文）', FS('liu-jian-mao-cao')],
+  ['ma-shan-zheng', 'Ma Shan Zheng', '毛笔楷书（中文）', FS('ma-shan-zheng', '5.3.0')],
+  ['xiaolai', 'Xiaolai SC', '小赖手写（中文）', 'https://cdn.jsdelivr.net/npm/cn-fontsource-xiaolai-sc-regular@1.0.2/font.css'],
+];
+const sigFontOf = (id) => SIG_FONTS.find((f) => f[0] === id) || SIG_FONTS[0];
+function useFontCss(href) { if (href && !document.querySelector(`link[href="${href}"]`)) document.head.append(h('link', { rel: 'stylesheet', href })); }
+function applySignature() {
+  const f = sigFontOf(lib?.notebook?.sigFont);
+  useFontCss(f[3]);
+  document.documentElement.style.setProperty('--font-hand', `'${f[1]}', 'Bradley Hand', cursive`);
+}
+// What a signature shows: the chosen lettering for the notebook owner, the stored name for anyone else.
+function sigText(name) {
+  const nb = lib?.notebook || {};
+  return nb.sigText && (!name || name === nb.owner) ? nb.sigText : (name || nb.owner || '');
+}
 const FONT_CSS = {
   noto: ['https://cdn.jsdelivr.net/npm/@fontsource/noto-sans-sc@5.2.6/400.css', 'https://cdn.jsdelivr.net/npm/@fontsource/noto-sans-sc@5.2.6/700.css'],
   xiaolai: ['https://cdn.jsdelivr.net/npm/cn-fontsource-xiaolai-sc-regular@1.0.2/font.css'],
@@ -77,6 +105,7 @@ async function startLibrary() {
   }
   lib.on(onLibraryEvent);
   await lib.open();
+  applySignature();
 }
 
 // Web fonts load in the background: where Google Fonts is blocked the page
@@ -117,6 +146,7 @@ async function boot() {
 let rerenderTimer = null;
 function onLibraryEvent(kind) {
   if (kind === 'status') { updateSync(); return; }
+  if (kind === 'data') applySignature();
   // Don't redraw under someone typing a task.
   if (kind === 'data' && document.activeElement?.closest?.('.dash') && document.activeElement.value) { updateSync(); return; }
   if (kind === 'data' && ['home', 'volume', 'page', 'plan'].includes(view.kind) && !document.querySelector('.modal-root')) {
@@ -176,7 +206,12 @@ async function show(kind, render, { quiet = false } = {}) {
   let el;
   try { el = await render(); } catch (e) { console.error(e); el = viewMissing(`显示出错：${e.message}`); }
   if (token !== view.token) return;
-  if (el) app.replaceChildren(el);
+  if (el) {
+    const tb = el.querySelector?.(':scope > .topbar');
+    if (tb && lib && !['setup'].includes(kind)) tb.after(h('div', { id: 'due-bar', class: 'due-bar', hidden: true, role: 'status' }));
+    app.replaceChildren(el);
+    refreshDueBar();
+  }
   setTimeout(() => oldUrls.forEach((u) => URL.revokeObjectURL(u)), 1000);
   if (quiet) window.scrollTo(0, scroll);
   else if (prevKind !== kind || kind !== 'page') window.scrollTo(0, 0);
@@ -634,7 +669,7 @@ async function buildPageSheet(vol, num, { forPrint = false } = {}) {
   const backs = lib.backlinks(vol, num);
   const tags = entry?.tags || [];
   const sig = fm.signed
-    ? h('span', { class: 'sig' }, fm.signer || signerName())
+    ? h('span', { class: 'sig' }, sigText(fm.signer || signerName()))
     : h('span', { class: 'unsigned' }, '未签名');
   const sheet = h('article', { class: 'sheet page', 'data-vol': vol, 'data-num': num },
     h('header', { class: 'sheet-head' },
@@ -1225,6 +1260,30 @@ async function printVolume(id) {
 }
 
 // ---------- settings ----------
+function sigPicker() {
+  const nb = lib.notebook;
+  let pick = sigFontOf(nb.sigFont)[0];
+  const text = h('input', { id: 's-sigtext', value: nb.sigText || '', placeholder: `留空则用“${nb.owner || '签名用的名字'}”，可写 王千语 / Q. Wang` });
+  const grid = h('div', { class: 'sig-grid', role: 'radiogroup', 'aria-label': '签名字体' });
+  const draw = () => {
+    const word = text.value.trim() || nb.owner || '签名';
+    grid.replaceChildren(...SIG_FONTS.map(([id, fam, label, css]) => {
+      useFontCss(css);
+      return h('button', { type: 'button', role: 'radio', 'aria-checked': String(id === pick), class: `sig-opt${id === pick ? ' on' : ''}`, onclick: () => { pick = id; draw(); } },
+        h('span', { class: 'sig-sample', style: { fontFamily: `'${fam}', cursive` } }, word),
+        h('span', { class: 'sig-name' }, label));
+    }));
+  };
+  text.addEventListener('input', draw); draw();
+  return h('div', { class: 'sig-pick' },
+    h('label', { for: 's-sigtext' }, '签名显示为'), text,
+    h('span', { class: 'label' }, '签名字体（中文名请选标“中文”的字体）'), grid,
+    h('button', { class: 'btn', type: 'button', onclick: async (e) => {
+      e.target.disabled = true;
+      try { await lib.updateNotebook((n) => { n.sigFont = pick; n.sigText = text.value.trim(); }, 'Signature style'); applySignature(); toast('签名样式已保存。'); } catch (err) { toast(err instanceof NetworkError ? '离线中，联网后再试。' : err.message); } finally { e.target.disabled = false; }
+    } }, '保存签名样式'));
+}
+
 function viewSettings() {
   const isLib = !!lib;
   const back = isLib ? '#/' : null;
@@ -1255,6 +1314,7 @@ function viewSettings() {
         h('div', { class: 'form' },
           h('label', { for: 's-title' }, '笔记本名称'), nbTitle,
           h('label', { for: 's-owner' }, '签名用的名字'), owner,
+          sigPicker(),
           h('button', { class: 'btn primary', type: 'button', onclick: async (e) => {
             e.target.disabled = true;
             try { await lib.updateNotebook((nb) => { nb.title = nbTitle.value.trim() || '实验记录本'; nb.owner = owner.value.trim(); }); toast('已保存。'); } catch (err) { toast(err instanceof NetworkError ? '离线中，联网后再试。' : err.message); } finally { e.target.disabled = false; }
@@ -1715,31 +1775,57 @@ async function allFollowups() {
 const TASKS_PATH = 'planner/tasks.json';
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
 const weekStart = (iso) => addDays(iso, -((new Date(`${iso}T12:00:00`).getDay() + 6) % 7));
-let tasksLocal = null; // { sha, list } — shown at once; commits follow in order
-let taskQueue = Promise.resolve();
-async function loadTasks() {
+let planLocal = null; // { sha, doc: { tasks, memos }, dirty } — shown at once; commits follow in order
+let planQueue = Promise.resolve();
+const planDoc = (d) => ({ tasks: Array.isArray(d?.tasks) ? d.tasks : [], memos: Array.isArray(d?.memos) ? d.memos : [] });
+async function loadPlanner() {
   const sha = lib.tree.get(TASKS_PATH) || null;
-  if (tasksLocal && (tasksLocal.sha === sha || tasksLocal.dirty)) return tasksLocal.list;
-  const d = await lib.readJSON(TASKS_PATH, { tasks: [] });
-  tasksLocal = { sha, list: Array.isArray(d.tasks) ? d.tasks : [] };
-  return tasksLocal.list;
+  if (planLocal && (planLocal.sha === sha || planLocal.dirty)) return planLocal.doc;
+  planLocal = { sha, doc: planDoc(await lib.readJSON(TASKS_PATH, {})), dirty: 0 };
+  return planLocal.doc;
 }
-function changeTasks(mutate, message, redraw) {
-  mutate(tasksLocal.list); tasksLocal.dirty = (tasksLocal.dirty || 0) + 1;
-  redraw?.();
-  taskQueue = taskQueue.then(() => lib.commit(message, async (l) => {
-    const d = await l.readJSON(TASKS_PATH, { tasks: [] });
-    const list = Array.isArray(d.tasks) ? d.tasks : [];
-    mutate(list);
-    return { changes: [{ path: TASKS_PATH, data: `${JSON.stringify({ tasks: list }, null, 1)}\n` }], after: () => { tasksLocal.dirty -= 1; if (!tasksLocal.dirty) tasksLocal.list = list; } };
-  })).then(() => { if (!tasksLocal.dirty) tasksLocal.sha = lib.tree.get(TASKS_PATH); })
-    .catch((e) => { toast(e instanceof NetworkError ? '离线中：待办没有同步，联网后请再操作一次。' : `待办没有保存：${e.message}`); tasksLocal = null; redraw?.(); });
-  return taskQueue;
+const loadTasks = async () => (await loadPlanner()).tasks;
+function changePlanner(mutate, message, redraw) {
+  mutate(planLocal.doc); planLocal.dirty += 1;
+  redraw?.(); refreshDueBar();
+  planQueue = planQueue.then(() => lib.commit(message, async (l) => {
+    const doc = planDoc(await l.readJSON(TASKS_PATH, {}));
+    mutate(doc);
+    return { changes: [{ path: TASKS_PATH, data: `${JSON.stringify(doc, null, 1)}\n` }], after: () => { planLocal.dirty -= 1; if (!planLocal.dirty) planLocal.doc = doc; } };
+  })).then(() => { if (!planLocal.dirty) planLocal.sha = lib.tree.get(TASKS_PATH); })
+    .catch((e) => { toast(e instanceof NetworkError ? '离线中：没有同步，联网后请再操作一次。' : `没有保存：${e.message}`); planLocal = null; redraw?.(); refreshDueBar(); });
+  return planQueue;
 }
+const changeTasks = (mutate, message, redraw) => changePlanner((d) => mutate(d.tasks), message, redraw);
 const newTask = (text, week, date) => ({ id: `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, text, week, ...(date ? { date } : {}), done: false, created: nowISO() });
 const toggleTask = (id, redraw) => changeTasks((list) => { const t = list.find((x) => x.id === id); if (t) { t.done = !t.done; if (t.done) t.doneAt = nowISO(); else delete t.doneAt; } }, 'Planner: tick', redraw);
 const removeTask = (id, redraw) => changeTasks((list) => { const k = list.findIndex((x) => x.id === id); if (k >= 0) list.splice(k, 1); }, 'Planner: remove', redraw);
-const moveTask = (id, date, redraw) => changeTasks((list) => { const t = list.find((x) => x.id === id); if (t) { t.date = date; t.week = weekStart(date); } }, 'Planner: move', redraw);
+const editTask = (id, text, redraw) => changeTasks((list) => { const t = list.find((x) => x.id === id); if (t) t.text = text; }, 'Planner: edit', redraw);
+const moveTask = (id, date, redraw) => changeTasks((list) => { const t = list.find((x) => x.id === id); if (!t) return; if (date) { t.date = date; t.week = weekStart(date); } else delete t.date; }, 'Planner: move', redraw);
+
+// Click the text to edit it in place; Enter or leaving the field saves, Esc cancels.
+function editable(text, onSave, cls = 'task-text') {
+  const span = h('span', { class: `${cls} editable`, tabindex: '0', title: '点击修改' }, text);
+  const start = () => {
+    const input = h('input', { class: `${cls} edit-input`, value: text, 'aria-label': '修改' });
+    let done = false;
+    const finish = (save) => { if (done) return; done = true; const v = input.value.trim(); input.replaceWith(span); if (save && v && v !== text) { span.textContent = v; onSave(v); } };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
+    input.addEventListener('blur', () => finish(true));
+    span.replaceWith(input); input.focus(); input.select();
+  };
+  span.addEventListener('click', start);
+  span.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); start(); } });
+  return span;
+}
+const dayLabel = (iso) => { const d = daysFrom(iso); return d === 0 ? '今天' : d === 1 ? '明天' : d === -1 ? '昨天' : iso.slice(5); };
+// Date chip: shows 今天 / 明天 / 11-05 and opens the date picker; a weekly goal shows 本周.
+function dateChip(t, redraw) {
+  const input = h('input', { type: 'date', class: 'date-input', value: t.date || '', 'aria-label': '改日期' });
+  input.addEventListener('change', () => moveTask(t.id, input.value || null, redraw));
+  const late = t.date && !t.done && t.date < todayISO();
+  return h('label', { class: `date-chip${late ? ' late' : ''}`, title: t.date ? '改日期（清空则变为本周计划）' : '指定到某一天' }, t.date ? dayLabel(t.date) : '本周', input);
+}
 
 function ring(done, total, size = 64) {
   const r = (size - 8) / 2; const c = 2 * Math.PI * r; const f = total ? done / total : 0;
@@ -1752,8 +1838,9 @@ function ring(done, total, size = 64) {
 function taskRow(t, { redraw, extra, meta } = {}) {
   return h('li', { class: `task${t.done ? ' done' : ''}` },
     h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!t.done), 'aria-label': t.done ? '标为未完成' : '标为完成', onclick: () => toggleTask(t.id, redraw) }),
-    h('span', { class: 'task-text' }, t.text, meta ? h('span', { class: 'task-meta' }, meta) : null),
+    h('span', { class: 'task-main' }, editable(t.text, (v) => editTask(t.id, v, redraw)), meta ? h('span', { class: 'task-meta' }, meta) : null),
     extra || null,
+    dateChip(t, redraw),
     h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => removeTask(t.id, redraw) }, icon('close', 14)));
 }
 function reminderRow(x, redraw) {
@@ -1769,6 +1856,51 @@ function addBox(placeholder, onAdd) {
   const go = () => { const v = input.value.trim(); if (!v) return; input.value = ''; onAdd(v); input.focus(); };
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } });
   return h('div', { class: 'add-row' }, h('span', { class: 'add-plus' }, icon('plus', 16)), input, h('button', { class: 'btn small add-btn', type: 'button', onclick: go }, '添加'));
+}
+
+// Sticky notes: anything to remember that isn't a task for a given day.
+const PIN_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M9 3h6l-1 6 4 3v2h-5v7l-1 1-1-1v-7H6v-2l4-3z" fill="currentColor"/></svg>';
+function memoCard(doc, draw) {
+  const memos = [...doc.memos].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || String(b.updated || b.created).localeCompare(String(a.updated || a.created)));
+  const pinned = memos.filter((m) => m.pinned).length;
+  const upd = (id, f, msg) => changePlanner((d) => { const m = d.memos.find((x) => x.id === id); if (m) f(m, d); }, msg, draw);
+  const add = addBox('记一条备忘，回车保存', (text) => changePlanner((d) => d.memos.push({ id: `m${Date.now().toString(36)}`, text, pinned: false, created: nowISO() }), 'Memo: add', draw));
+  add.querySelector('input').dataset.k = 'memo';
+  return h('div', { class: 'tile memo-card' },
+    h('div', { class: 'tile-head' }, h('div', null, h('h2', null, '备忘录'),
+      h('p', { class: 'card-sub' }, memos.length ? `${memos.length} 条${pinned ? ` · 置顶 ${pinned}` : ''}` : '要买的耗材、要问导师的问题、灵感…'))),
+    add,
+    h('ul', { class: 'memos' }, memos.map((m) => h('li', { class: `memo${m.pinned ? ' pinned' : ''}` },
+      h('div', { class: 'memo-main' },
+        editable(m.text, (v) => upd(m.id, (x) => { x.text = v; x.updated = nowISO(); }, 'Memo: edit'), 'memo-text'),
+        h('span', { class: 'memo-date' }, fmtDate(m.updated || m.created))),
+      h('button', { class: 'memo-pin', type: 'button', 'aria-pressed': String(!!m.pinned), 'aria-label': m.pinned ? '取消置顶' : '置顶', title: m.pinned ? '取消置顶' : '置顶', html: PIN_SVG, onclick: () => upd(m.id, (x) => { x.pinned = !x.pinned; }, 'Memo: pin') }),
+      h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Memo: remove', draw) }, icon('close', 14))))));
+}
+
+// Reminder strip under the top bar on every page while today's or earlier to-dos are open.
+async function refreshDueBar() {
+  const bar = document.getElementById('due-bar');
+  if (!bar || !lib?.head) return;
+  try {
+    const t = todayISO();
+    const [tasks, fus] = await Promise.all([loadTasks(), allFollowups()]);
+    const open = [...tasks.filter((x) => x.date && x.date <= t && !x.done), ...fus.filter((x) => !x.done && x.date <= t)];
+    const late = open.filter((x) => x.date < t).sort((a, b) => a.date.localeCompare(b.date));
+    const key = `${t}:${open.length}`;
+    document.title = `${open.length ? `(${open.length}) ` : ''}${lib.notebook.title || '实验记录本'}`;
+    let hidden = false; try { hidden = sessionStorage.getItem('due-hide') === key; } catch { /* ignore */ }
+    if (!open.length || hidden) { bar.hidden = true; return; }
+    const d = new Date(`${t}T12:00:00`);
+    bar.hidden = false;
+    bar.replaceChildren(h('a', { class: 'due-link', href: '#/' },
+      h('span', { class: 'due-dot' }),
+      h('span', null, h('b', null, `还有 ${open.length} 项待办未完成`),
+        late.length ? h('span', { class: 'due-late' }, `　其中 ${late.length} 项已逾期，最早 ${late[0].date.slice(5)}`) : null,
+        h('span', { class: 'due-date' }, `　· 今天 ${d.getMonth() + 1} 月 ${d.getDate()} 日 星期${WEEKDAYS[(d.getDay() + 6) % 7]}`)),
+      h('span', { class: 'due-go' }, '查看 ›')),
+    h('button', { class: 'due-x', type: 'button', 'aria-label': '今天先不提示', title: '先隐藏（数量变化或明天会再提示）', onclick: () => { try { sessionStorage.setItem('due-hide', key); } catch { /* ignore */ } bar.hidden = true; } }, icon('close', 14)));
+  } catch (e) { console.warn('due bar', e); bar.hidden = true; }
 }
 
 function hero() {
@@ -1787,7 +1919,8 @@ function dashboard() {
   const box = h('section', { class: 'dash' }, h('div', { class: 'tile' }, h('p', { class: 'muted' }, '读取中…')));
   const draw = async () => {
     let tasks; let fus;
-    try { [tasks, fus] = await Promise.all([loadTasks(), allFollowups()]); } catch (e) { box.replaceChildren(h('div', { class: 'tile' }, h('p', { class: 'warn' }, e.message))); return; }
+    let doc;
+    try { [doc, fus] = await Promise.all([loadPlanner(), allFollowups()]); tasks = doc.tasks; } catch (e) { box.replaceChildren(h('div', { class: 'tile' }, h('p', { class: 'warn' }, e.message))); return; }
     const focused = box.querySelector('input:focus')?.dataset.k;
     const mine = tasks.filter((x) => x.date === t);
     const carried = tasks.filter((x) => x.date && x.date < t && !x.done);
@@ -1803,7 +1936,7 @@ function dashboard() {
         ring(doneN, all.length)),
       todayAdd,
       h('ul', { class: 'tasks' },
-        carried.map((x) => taskRow(x, { redraw: draw, meta: `原定 ${x.date.slice(5)}`, extra: h('button', { class: 'btn small ghost', type: 'button', onclick: () => moveTask(x.id, t, draw) }, '移到今天') })),
+        carried.map((x) => taskRow(x, { redraw: draw, extra: h('button', { class: 'btn small ghost', type: 'button', onclick: () => moveTask(x.id, t, draw) }, '移到今天') })),
         mine.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: draw })),
         due.map((x) => reminderRow(x, draw))),
       soon.length ? h('details', { class: 'soon' }, h('summary', null, `接下来 7 天的实验提醒（${soon.length}）`),
@@ -1830,7 +1963,7 @@ function dashboard() {
       h('ul', { class: 'tasks' }, goals.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: draw }))),
       h('div', { class: 'week-days', 'aria-label': '本周每天的待办完成情况' }, days),
       h('a', { class: 'more-link', href: `#/plan/${wk}` }, '查看周计划与历史 ›'));
-    box.replaceChildren(todayCard, weekCard);
+    box.replaceChildren(todayCard, weekCard, memoCard(doc, draw));
     if (focused) box.querySelector(`input[data-k="${focused}"]`)?.focus();
   };
   draw();
