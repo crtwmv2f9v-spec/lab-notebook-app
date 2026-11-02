@@ -2347,7 +2347,6 @@ async function refreshDueBar() {
     const open = [...tasks.filter((x) => x.date && x.date <= t && !x.done), ...fus.filter((x) => !x.done && x.date <= t)];
     const late = open.filter((x) => x.date < t).sort((a, b) => a.date.localeCompare(b.date));
     const key = `${t}:${open.length}`;
-    document.title = `${open.length ? `(${open.length}) ` : ''}${lib.notebook.title || '实验记录本'}`;
     let hidden = false; try { hidden = sessionStorage.getItem('due-hide') === key; } catch { /* ignore */ }
     if (!open.length || hidden) { bar.hidden = true; return; }
     const d = new Date(`${t}T12:00:00`);
