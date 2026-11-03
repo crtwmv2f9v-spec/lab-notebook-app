@@ -1500,3 +1500,11 @@ ol.hyp-ev b { color: var(--ink); margin-right: 6px; font-weight: 600; }
 .topic-foot .rv.due { color: #d70015; font-weight: 600; }
 .topic-foot .btn { font-family: var(--font-ui); }
 .section-title.think-sub { padding: 0; margin-top: 40px; }
+
+/* delete-series dialog */
+.check.choice { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; font-size: 15px; line-height: 1.5; }
+.check.choice:has(input:checked) { border-color: var(--red-ink); background: color-mix(in srgb, var(--red-ink) 5%, transparent); }
+.form .check.choice input { margin-top: 4px; width: auto; flex: none; padding: 0; }
+.check.choice > span { flex: 1; text-align: left; }
+ol.pick-list.small { max-height: 28vh; padding-left: 28px; display: block; font-size: 14px; }
+ol.pick-list.small li { margin: 2px 0; }

@@ -336,3 +336,32 @@ export function topicAlerts(list, within = 0, today = todayISO()) {
   return list.filter((t) => activeTopic(t) && t.every && /^\d{4}-\d{2}-\d{2}$/.test(t.next || '') && daysFrom(t.next, today) <= within)
     .map((t) => ({ date: t.next, text: `回顾课题：${t.title}`, topic: t.id }));
 }
+
+// ---------- tables pasted from Excel / WPS / Origin / Numbers ----------
+// Spreadsheets put tab-separated text on the clipboard; cells holding tabs or line breaks are quoted.
+export function parseTSV(text) {
+  const rows = []; let row = []; let cell = ''; let q = false;
+  const s = String(text || '').replace(/\r\n?/g, '\n');
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) {
+      if (c === '"' && s[i + 1] === '"') { cell += '"'; i++; } else if (c === '"') q = false; else cell += c;
+    } else if (c === '"' && cell === '') q = true;
+    else if (c === '\t') { row.push(cell); cell = ''; } else if (c === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; } else cell += c;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  const width = Math.max(0, ...rows.map((r) => r.length));
+  return rows.map((r) => [...r.map((v) => v.trim()), ...Array(width - r.length).fill('')]).filter((r) => r.some(Boolean));
+}
+// Header names that read as measured results rather than set conditions.
+export const RESULT_HINT = /\b(gm|g_m|vth|v_th|on\/off|ss|mobility|ion|ioff|c\*|μc\*)(?!\w)|开关比|迁移率|跨导|阈值|电流|电容|响应|灵敏度|结果|产率|收率/i;
+const isNumberish = (v) => /^[-+]?[\d.,]+(e[-+]?\d+)?\s*%?$/i.test(String(v).trim());
+// A first row with no numbers, above rows that have some, is a header row.
+export const looksLikeHeader = (rows) => rows.length > 1 && rows[0].every((v) => !isNumberish(v)) && rows.slice(1).some((r) => r.some(isNumberish));
+// Markdown pipe table; the first row is the header.
+export function mdTable(rows) {
+  const esc = (v) => String(v ?? '').replace(/\|/g, '\\|').replace(/\n/g, '<br>');
+  const head = rows[0].map((v, i) => esc(v) || `列${i + 1}`);
+  return [`| ${head.join(' | ')} |`, `| ${head.map((_, i) => (rows.slice(1).every((r) => !r[i] || isNumberish(r[i])) ? '---:' : '---')).join(' | ')} |`,
+    ...rows.slice(1).map((r) => `| ${r.map(esc).join(' | ')} |`)].join('\n');
+}

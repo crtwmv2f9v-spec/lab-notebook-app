@@ -14,6 +14,7 @@ import {
   SOLUTIONS_PATH, SOLUTION_FIELDS, SOLUTION_STATUS, nextSolutionId, parseRecipe, recipeText, loadSolutions, solutionAlerts,
   HYP_STATUS, HYP_CONF, EV_KIND, hypPath, hypIds, loadHypothesis, loadHypotheses, nextHypId, evidenceCounts, nextEvidenceId,
   TOPICS_PATH, TOPIC_STATUS, TOPIC_PRIORITY, TOPIC_EVERY, loadTopics, activeTopic, topicAlerts,
+  parseTSV, RESULT_HINT, looksLikeHeader, mdTable,
 } from './lab.js';
 import { search } from './search.js';
 import { h, icon, debounce, fmtBytes, loadScript } from './util.js';
@@ -1073,6 +1074,9 @@ async function viewEditor(vol, num, params) {
   }
   fileIn.addEventListener('change', () => { attach([...fileIn.files]); fileIn.value = ''; });
   ta.addEventListener('paste', (e) => {
+    // Excel also puts a picture of the cells on the clipboard; the cells themselves win.
+    const rows = clipTable(e);
+    if (rows) { e.preventDefault(); insertBlock(mdTable(rows)); saveDraft(); renderPreview(); toast(`已粘贴为表格（${rows.length - 1} 行 × ${rows[0].length} 列，第一行是表头）。`); return; }
     const files = [...(e.clipboardData?.files || [])];
     if (files.length) { e.preventDefault(); attach(files); }
   });
@@ -1528,6 +1532,21 @@ async function toggleFollowup(vol, num, index) {
   } catch (e) { toast(saveError(e)); }
 }
 
+// Rows of a table on the clipboard (spreadsheet cells, or a table copied from Word / a web page), else null.
+function clipTable(e) {
+  const text = e.clipboardData?.getData('text/plain') || '';
+  if (/\t/.test(text)) { const rows = parseTSV(text); if (rows.length && (rows.length > 1 || rows[0].length > 1)) return rows; }
+  const html = e.clipboardData?.getData('text/html') || '';
+  if (/<table/i.test(html)) {
+    const table = new DOMParser().parseFromString(html, 'text/html').querySelector('table');
+    const rows = [...(table?.rows || [])].map((tr) => [...tr.cells].map((td) => td.innerText?.trim() ?? td.textContent.trim()));
+    const width = Math.max(0, ...rows.map((r) => r.length));
+    const out = rows.map((r) => [...r, ...Array(width - r.length).fill('')]).filter((r) => r.some(Boolean));
+    if (out.length && (out.length > 1 || out[0].length > 1)) return out;
+  }
+  return null;
+}
+
 // ----- sample table editor: copy results from the paper card into the page -----
 async function openSamplesEditor(vol, num) {
   const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
@@ -1546,6 +1565,34 @@ async function openSamplesEditor(vol, num) {
         h('td', null, h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '删除这一行', onclick: () => { t.rows.splice(i, 1); draw(); } }, icon('close', 16))))))));
   };
   draw();
+  // Paste a block of spreadsheet cells: it fills the grid from the cell you are in, like Excel,
+  // adding rows and columns as needed. A header row lands in the column names.
+  grid.addEventListener('paste', (e) => {
+    const input = e.target.closest('input'); if (!input) return;
+    let rows = clipTable(e); if (!rows) return;
+    e.preventDefault();
+    const inHead = !!input.closest('thead');
+    const j0 = [...input.closest('tr').children].indexOf(input.closest('th, td'));
+    const i0 = inHead ? 0 : [...grid.querySelectorAll('tbody tr')].indexOf(input.closest('tr'));
+    const head = inHead || looksLikeHeader(rows) ? rows.shift() : null;
+    const width = Math.max(head?.length || 0, ...rows.map((r) => r.length));
+    const nums = () => t.rows.map((r) => parseInt(String(r[0]).replace(/\D/g, ''), 10) || 0);
+    // Columns past the right edge go before 备注, as conditions or results by their names.
+    for (let k = 0; k < width; k++) {
+      const j = j0 + k;
+      if (j < t.cols.length && !(t.cols[j] === '备注' && head && head[k] && head[k] !== '备注')) continue;
+      const name = head?.[k] || `列${j + 1}`;
+      t.cols.splice(j, 0, RESULT_HINT.test(name) ? `结果: ${name}` : name);
+      for (const r of t.rows) r.splice(j, 0, '');
+    }
+    if (head) head.forEach((v, k) => { if (v && j0 + k > 0) t.cols[j0 + k] = isResultCol(t.cols[j0 + k]) || RESULT_HINT.test(v) ? `结果: ${v}` : v; });
+    rows.forEach((r, k) => {
+      while (t.rows.length <= i0 + k) t.rows.push(t.cols.map((_, j) => (j === 0 ? sampleNo(Math.max(0, ...nums()) + 1) : '')));
+      r.forEach((v, m) => { t.rows[i0 + k][j0 + m] = j0 + m === 0 ? sampleNo(v) : v; });
+    });
+    draw();
+    toast(`已粘贴 ${rows.length} 行 × ${width} 列${head ? '，第一行作为列名' : ''}。`);
+  });
   const addRow = () => {
     const nums = t.rows.map((r) => parseInt(String(r[0]).replace(/\D/g, ''), 10) || 0);
     t.rows.push(t.cols.map((_, j) => (j === 0 ? sampleNo(Math.max(0, ...nums) + 1) : ''))); draw();
@@ -1562,7 +1609,7 @@ async function openSamplesEditor(vol, num) {
   modal({
     title: `录入条件与结果 · ${fm.id || `p. ${num}`}`, wide: true,
     body: h('div', null,
-      h('p', { class: 'muted' }, '按纸质记录卡逐行录入。Enter 跳到下一行同一列。绿色列是结果，Keithley 数据同步时会自动填入空着的结果格。'),
+      h('p', { class: 'muted' }, '按纸质记录卡逐行录入，或在 Excel / WPS 里选中一块单元格 ⌘C，点一个格子 ⌘V 整块粘贴（带表头会自动成为列名）。Enter 跳到下一行同一列。绿色列是结果，Keithley 数据同步时会自动填入空着的结果格。'),
       grid, why.el,
       h('div', { class: 'row-actions' },
         h('button', { class: 'btn small', type: 'button', onclick: addRow }, icon('plus', 16), '加一行'),
@@ -2715,6 +2762,7 @@ async function viewSeries(raw) {
   const nSamples = rows.filter((r) => r.no).length;
   return h('div', { class: 'view library series' },
     topbar({ back: `#/v/${lastP.vol}`, backLabel: '目录', title: name, sub: `系列 · ${ps.length} 次实验 · ${nSamples} 个样品`, actions: [
+      h('button', { class: 'btn danger', type: 'button', title: '解散或删除这个系列', onclick: () => openDeleteSeries(name, ps) }, icon('trash', 18), h('span', { class: 'wide-only' }, '删除系列')),
       h('button', { class: 'btn', type: 'button', onclick: () => exportSeries(name, ps) }, icon('download', 18), h('span', { class: 'wide-only' }, '导出')),
       h('button', { class: 'btn primary', type: 'button', onclick: () => openNewExperiment(lastP.vol, { series: name }) }, icon('plus', 18), h('span', null, '在此系列中新建'))] }),
     demoBanner(),
@@ -2744,6 +2792,51 @@ function exportSeries(name, ps) {
       { label: '导出 Word', run: () => exportWord(live, a, b, { title: name }) },
       { label: '导出 PDF', primary: true, run: () => exportPdf(live, a, b, { title: name }) }],
   });
+}
+
+// Two ways out of a series: drop the label (pages stay) or delete every page in it.
+function openDeleteSeries(name, ps) {
+  const signed = ps.filter((p) => p.signed).length;
+  const radio = (v, title, note, checked) => h('label', { class: 'check choice' }, h('input', { type: 'radio', name: 'ds-mode', value: v, checked }), ' ',
+    h('span', null, h('b', null, title), h('br'), h('span', { class: 'muted' }, note)));
+  const word = h('input', { id: 'ds-word', autocomplete: 'off', placeholder: name });
+  const wordRow = h('div', { class: 'form', hidden: true }, h('label', { for: 'ds-word' }, `请输入系列名称“${name}”确认`), word);
+  const body = h('div', { class: 'form' },
+    h('p', null, `系列“${name}”共 ${ps.length} 页${signed ? `（其中 ${signed} 页已签名）` : ''}：`),
+    h('ol', { class: 'pick-list small' }, ps.map((p) => h('li', null, h('span', { class: 'c-date' }, `p. ${p.num}　${p.date}`), ' ', p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, ' ', p.title))),
+    radio('dissolve', '解散系列（保留全部实验页）', `只去掉这些页上的“系列”标签，内容不动。${signed ? '已签名的页会在修订记录里写明“解散系列”。' : ''}`, true),
+    radio('delete', `永久删除系列及其全部 ${ps.length} 页`, DELETE_NOTE, false),
+    wordRow);
+  body.addEventListener('change', () => { wordRow.hidden = body.querySelector('input[name=ds-mode]:checked').value !== 'delete'; });
+  modal({
+    title: `删除系列“${name}”`, wide: true, body,
+    buttons: [{ label: '取消' }, {
+      label: '确定', danger: true,
+      run: () => {
+        const mode = body.querySelector('input[name=ds-mode]:checked').value;
+        if (mode === 'delete' && word.value.trim() !== name) { toast('输入的系列名称不一致。'); return false; }
+        setTimeout(() => (mode === 'delete' ? deleteSeriesPages(ps) : dissolveSeries(name, ps)), 50);
+      },
+    }],
+  });
+}
+async function dissolveSeries(name, ps) {
+  toast('正在解散系列…');
+  try {
+    for (const p of ps) await updatePage(p.vol, p.num, ({ fm: f, body }) => { delete f.series; return { fm: f, body }; }, `Remove p. ${p.num} from series`, `解散系列“${name}”`);
+    toast(`已解散“${name}”，${ps.length} 页保留。`);
+    location.hash = `#/v/${ps[0].vol}`;
+  } catch (e) { toast(saveError(e)); }
+}
+async function deleteSeriesPages(ps) {
+  const byVol = new Map();
+  for (const p of ps) byVol.set(p.vol, [...(byVol.get(p.vol) || []), p.num]);
+  toast('正在删除并重新编页…');
+  try {
+    for (const [vol, nums] of byVol) await lib.deletePages(vol, nums);
+    toast(`已删除系列的 ${ps.length} 页，页码已重新连续编号。`);
+    location.hash = `#/v/${ps[0].vol}`; route({ quiet: true });
+  } catch (e) { toast(saveError(e)); }
 }
 
 async function setSeries(vol, num, fm) {
