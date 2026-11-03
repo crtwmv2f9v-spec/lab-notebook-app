@@ -23,7 +23,7 @@ import { h, icon, debounce, fmtBytes, loadScript } from './util.js';
 const SKEY = 'labnote.settings';
 const DEFAULTS = {
   owner: '', repo: '', branch: 'main', token: '',
-  apiBase: 'https://api.github.com', theme: 'auto', downscale: true, font: 'sans', size: 'normal',
+  apiBase: 'https://api.github.com', theme: 'auto', downscale: true, font: 'sans', size: 'normal', ptable: 'booktabs',
 };
 function loadSettings() {
   try {
@@ -34,6 +34,7 @@ function loadSettings() {
 }
 function saveSettings() { try { localStorage.setItem(SKEY, JSON.stringify(S)); } catch { /* ignore */ } }
 const S = loadSettings();
+const PTABLE_STYLES = [['booktabs', '三线表（论文风格，默认）'], ['zebra', '隔行浅底（宽表易对行）'], ['grid', '细网格（每格有框线）']];
 const DEMO = new URLSearchParams(location.search).has('demo');
 
 const CLOTHS = [
@@ -52,6 +53,7 @@ function applyTheme() {
   else delete document.documentElement.dataset.theme;
   document.documentElement.dataset.font = S.font;
   document.documentElement.dataset.size = S.size;
+  document.documentElement.dataset.ptable = S.ptable || 'booktabs';
   // Web fonts are split by character range, so only the glyphs on screen download.
   for (const href of FONT_CSS[S.font] || []) {
     if (!document.querySelector(`link[href="${href}"]`)) document.head.append(h('link', { rel: 'stylesheet', href }));
@@ -1356,6 +1358,8 @@ function viewSettings() {
 
   const font = h('select', { id: 's-font' }, FONTS.map(([v, l]) => h('option', { value: v, selected: S.font === v }, l)));
   const size = h('select', { id: 's-size' }, [['normal', '标准'], ['large', '大'], ['xlarge', '特大']].map(([v, l]) => h('option', { value: v, selected: S.size === v }, l)));
+  const ptable = h('select', { id: 's-ptable' }, PTABLE_STYLES.map(([v, l]) => h('option', { value: v, selected: (S.ptable || 'booktabs') === v }, l)));
+  ptable.addEventListener('change', () => { S.ptable = ptable.value; saveSettings(); applyTheme(); });
   const fontDemo = h('div', { class: 'prose font-demo' });
   fontDemo.innerHTML = '将 <span class="qty">10 mL</span> DI 水加入 <span class="qty">20 mL</span> 玻璃瓶，<span class="qty">500 rpm</span> 搅拌 <span class="qty">30 min</span>。PEDOT:PSS 薄膜呈深蓝色。';
   theme.addEventListener('change', () => { S.theme = theme.value; saveSettings(); applyTheme(); });
@@ -1383,6 +1387,8 @@ function viewSettings() {
           h('label', { for: 's-font' }, '正文字体'), font,
           h('label', { for: 's-size' }, '字号'), size,
           fontDemo,
+          h('label', { for: 's-ptable' }, 'PDF 表格样式'), ptable,
+          h('p', { class: 'muted' }, '导出 PDF 时，表格自动铺满 A4 宽度；表头里的单位（如 μL）另起一行；列多的表自动缩小字号。'),
           h('label', { class: 'check', for: 's-down' }, down, ' 附加前把大照片缩小到 2400 px'))),
       DEMO ? null : section('连接',
         h('p', { class: 'muted' }, '记录保存在这个 GitHub 私有仓库里。令牌只存在这个浏览器中。'),

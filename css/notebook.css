@@ -1538,3 +1538,52 @@ ol.pick-list.small li { margin: 2px 0; }
 .conf-seg .seg-lbl { font: 500 12.5px/1 var(--font-ui); color: var(--card-ink-2, var(--ink-2)); padding: 0 8px 0 10px; }
 .conf-seg .seg-btn { border: 0; padding: 6px 14px; font-size: 13px; color: var(--card-ink-2, var(--ink-2)); }
 .conf-seg .seg-btn.on { background: #ff9f0a; color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+
+/* ---------- tables: header units on their own line; PDF tables fit A4 in one of three styles ---------- */
+.th-unit { font-weight: 400; opacity: .72; white-space: nowrap; }
+.prose table:not(.data) th { font-family: var(--font-body); }
+@media print {
+  html .sheet.record .prose table:not(.data), html .sheet.record table.samples, html .sheet.record table.data {
+    display: table !important; width: 100% !important; min-width: 0 !important; max-width: 100% !important; table-layout: auto;
+    font-family: var(--font-body) !important; font-size: 8.8pt !important; line-height: 1.4; color: var(--ink);
+    border-collapse: collapse; border: 0 !important; background: #fff !important; margin: calc(var(--cell) * .25) 0 var(--cell) !important;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; break-inside: auto;
+  }
+  html .sheet.record .prose table:not(.data) :is(th, td), html .sheet.record table.samples :is(th, td), html .sheet.record table.data :is(th, td) {
+    font-family: inherit !important; font-style: normal !important; font-size: inherit !important; white-space: normal !important; word-break: normal; overflow-wrap: anywhere;
+    padding: 3.5px 7px !important; vertical-align: top; line-height: 1.4 !important; color: var(--ink); background: #fff !important; border: 0 !important;
+  }
+  html .sheet.record :is(.prose table:not(.data), table.samples, table.data) thead th { vertical-align: bottom; font-weight: 650 !important; letter-spacing: 0.01em !important; text-align: left; }
+  html .sheet.record :is(.prose table:not(.data), table.samples, table.data) .th-unit { display: block; font-weight: 400; font-size: .92em; color: var(--ink-3); opacity: 1; }
+  html .sheet.record :is(.prose table:not(.data), table.samples, table.data) tr { break-inside: avoid; }
+  html .sheet.record :is(.prose table:not(.data), table.samples, table.data) thead { display: table-header-group; }
+  /* wide tables: smaller type and tighter cells so every column stays on the page */
+  html .sheet.record :is(.prose table, table.samples, table.data).t-wide { font-size: 8pt !important; }
+  html .sheet.record :is(.prose table, table.samples, table.data).t-xwide { font-size: 7.2pt !important; }
+  html .sheet.record :is(.prose table, table.samples, table.data):is(.t-wide, .t-xwide) :is(th, td) { padding: 3px 4.5px !important; }
+
+  /* 三线表 booktabs */
+  html[data-ptable="booktabs"] .sheet.record :is(.prose table:not(.data), table.samples, table.data) { border-top: 1.2pt solid var(--ink) !important; border-bottom: 1.2pt solid var(--ink) !important; }
+  html[data-ptable="booktabs"] .sheet.record :is(.prose table:not(.data), table.samples, table.data) thead tr:last-child th { border-bottom: .6pt solid var(--ink) !important; }
+  html[data-ptable="booktabs"] .sheet.record :is(.prose table:not(.data), table.samples, table.data) tbody :is(td, th) { border-bottom: .3pt solid #e4e8ef !important; }
+  html[data-ptable="booktabs"] .sheet.record :is(.prose table:not(.data), table.samples, table.data) tbody tr:last-child > * { border-bottom: 0 !important; }
+  html[data-ptable="booktabs"] .sheet.record table.samples thead tr.group th { border-bottom: .4pt solid #c9d0dc !important; }
+
+  /* 隔行浅底 zebra */
+  html[data-ptable="zebra"] .sheet.record :is(.prose table:not(.data), table.samples, table.data) { border-top: .8pt solid var(--form) !important; border-bottom: .8pt solid var(--form) !important; }
+  html[data-ptable="zebra"] .sheet.record :is(.prose table:not(.data), table.samples, table.data) thead th { background: #eef2f8 !important; color: var(--form) !important; }
+  html[data-ptable="zebra"] .sheet.record :is(.prose table:not(.data), table.samples, table.data) tbody tr:nth-child(even) > * { background: #f6f8fb !important; }
+
+  /* 细网格 grid */
+  html[data-ptable="grid"] .sheet.record :is(.prose table:not(.data), table.samples, table.data) :is(th, td) { border: .4pt solid #c3cbd8 !important; }
+  html[data-ptable="grid"] .sheet.record :is(.prose table:not(.data), table.samples, table.data) thead th { background: #f1f4f8 !important; }
+
+  html .sheet.record table.samples :is(td.res, th.res) { font-weight: 600; }
+  html .sheet.record table.samples th.no { font-family: inherit !important; color: var(--form); }
+}
+@media print { html .sheet.record table.samples thead tr.group th { text-align: center; vertical-align: middle; font-size: .9em !important; letter-spacing: .2em !important; color: var(--form); font-weight: 600 !important; } }
+@media print { html .sheet.record table.t-keep, html .sheet.record .samples-wrap:has(table.t-keep), html .sheet.record .table-wrap:has(table.t-keep) { break-inside: avoid !important; page-break-inside: avoid !important; } }
+@media print {
+  html .sheet.record :is(.prose table:not(.data), table.samples, table.data) :is(th, td) { word-break: keep-all !important; overflow-wrap: break-word !important; }
+  html[data-ptable="grid"] .sheet.record :is(.prose table:not(.data), table.samples, table.data) :is(th, td) { padding: 3px 4.5px !important; }
+}

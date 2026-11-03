@@ -176,6 +176,26 @@ export async function hydrate(root, ctx) {
   jobs.push(nameReagents(root, ctx));
   await Promise.allSettled(jobs);
   numberFigures(root);
+  tidyTables(root);
+}
+
+// Tables: a unit at the end of a header ("CF 氯仿 (μL)") gets its own line, and wide tables are
+// tagged so the PDF can set them smaller and still fit the A4 width.
+function tidyTables(root) {
+  for (const t of root.querySelectorAll('table')) {
+    if (t.closest('.grid-wrap, .modal')) continue;
+    const cols = Math.max(0, ...[...t.rows].map((r) => [...r.cells].reduce((n, c) => n + (c.colSpan || 1), 0)));
+    t.classList.toggle('t-wide', cols >= 7 && cols < 10);
+    t.classList.toggle('t-xwide', cols >= 10);
+    t.classList.toggle('t-keep', t.rows.length <= 30); // short enough to print on one page, so never split it
+    for (const th of t.querySelectorAll('th')) {
+      if (th.dataset.split || [...th.childNodes].some((n) => n.nodeType !== 3)) continue;
+      const m = th.textContent.trim().match(/^(.*?\S)\s*([(（][^()（）]{1,24}[)）])$/);
+      if (!m) continue;
+      th.dataset.split = '1';
+      th.replaceChildren(h('span', { class: 'th-name' }, m[1]), ' ', h('span', { class: 'th-unit' }, m[2]));
+    }
+  }
 }
 
 function numberFigures(root) {
