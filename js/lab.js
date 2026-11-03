@@ -365,3 +365,24 @@ export function mdTable(rows) {
   return [`| ${head.join(' | ')} |`, `| ${head.map((_, i) => (rows.slice(1).every((r) => !r[i] || isNumberish(r[i])) ? '---:' : '---')).join(' | ')} |`,
     ...rows.slice(1).map((r) => `| ${r.map(esc).join(' | ')} |`)].join('\n');
 }
+
+// ---------- key resources used on a page: ```materials  R-0001 | 分装瓶 #2 | 20 mg | 备注 ----------
+export const MATERIAL_FROM = ['原瓶', '母液', '分装瓶', '其他'];
+const MATERIALS_RE = /```materials\n([\s\S]*?)```/;
+export function parseMaterials(src) {
+  return String(src || '').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => {
+    const [id = '', from = '', amount = '', note = ''] = l.split('|').map((x) => x.trim());
+    return { id, from, amount, note };
+  }).filter((x) => x.id);
+}
+export const materialsText = (list) => list.map((m) => [m.id, m.from, m.amount, m.note].map((x) => String(x || '').replace(/\|/g, '/')).join(' | ').replace(/( \| )+$/, '')).join('\n');
+export function readMaterials(body) {
+  const m = String(body || '').match(MATERIALS_RE);
+  return m ? parseMaterials(m[1]) : null;
+}
+// Rewrite the block in place, or add it under its own heading at the very end of the page.
+export function writeMaterials(body, list) {
+  const block = `\`\`\`materials\n${materialsText(list)}\n\`\`\``;
+  if (MATERIALS_RE.test(body)) return body.replace(MATERIALS_RE, block);
+  return `${String(body || '').trimEnd()}\n\n## 试剂等关键资源\n\n${block}\n`;
+}

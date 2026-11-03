@@ -1,7 +1,7 @@
 // Markdown, math, page links, charts, data tables and Jupyter notebooks.
 import { esc, h, loadScript, icon } from './util.js';
 import { parseRef, parseFrontMatter } from './model.js';
-import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions, loadHypothesis, evidenceCounts } from './lab.js';
+import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions, loadHypothesis, evidenceCounts, parseMaterials } from './lab.js';
 
 const CDN = 'https://cdn.jsdelivr.net/npm/';
 export const LIBS = {
@@ -140,7 +140,7 @@ export async function hydrate(root, ctx) {
   for (const el of root.querySelectorAll('.math[data-tex]')) renderMath(el);
   for (const code of root.querySelectorAll('pre > code')) {
     const lang = (code.className.match(/language-([\w+-]+)/) || [])[1];
-    if (['chart', 'samples', 'steps', 'reaction', 'quote', 'hypothesis'].includes(lang)) continue;
+    if (['chart', 'samples', 'steps', 'reaction', 'quote', 'hypothesis', 'materials'].includes(lang)) continue;
     if (lang && window.hljs?.getLanguage(lang)) { try { window.hljs.highlightElement(code); } catch { /* ignore */ } }
   }
   if (!root.dataset.wired) {
@@ -172,6 +172,7 @@ export async function hydrate(root, ctx) {
   for (const code of root.querySelectorAll('pre > code.language-hypothesis')) jobs.push(renderHypothesis(code.parentElement, code.textContent, ctx));
   for (const code of root.querySelectorAll('pre > code.language-reaction')) renderReactions(code.parentElement, code.textContent);
   for (const code of root.querySelectorAll('pre > code.language-steps')) renderSteps(code.parentElement, code.textContent);
+  for (const code of root.querySelectorAll('pre > code.language-materials')) jobs.push(renderMaterials(code.parentElement, code.textContent, ctx, root));
   markQuantities(root);
   jobs.push(nameReagents(root, ctx));
   await Promise.allSettled(jobs);
@@ -503,6 +504,35 @@ async function renderHypothesis(pre, src, ctx) {
         ev.length ? h('ol', { class: 'hyp-ev' }, ev.map((e) => h('li', { class: `k-${e.kind}` },
           h('span', { class: 'ev-no' }, `E${e.id.slice(1)}`), h('span', { class: `ev-kind k-${e.kind}` }, e.kind),
           h('span', { class: 'ev-t' }, e.text, e.src?.xid ? h('span', { class: 'ev-src' }, ` · ${e.src.xid}`) : e.src?.url ? h('span', { class: 'ev-src' }, ` · ${e.src.url}`) : null)))) : null)));
+}
+
+// ---------- key resources: every reagent / solution used, traced back to its bottle ----------
+async function renderMaterials(pre, src, ctx, root) {
+  const list = parseMaterials(src);
+  const wrap = h('div', { class: 'materials-wrap' });
+  pre.replaceWith(wrap);
+  const [rs, ss] = ctx.lib?.tree ? await Promise.all([loadReagents(ctx.lib).catch(() => []), loadSolutions(ctx.lib).catch(() => [])]) : [[], []];
+  const by = new Map([...rs, ...ss.map((x) => ({ ...x, solution: true }))].map((r) => [r.id, r]));
+  // Amounts already written in the operation steps fill an empty 用量 cell.
+  const stepAmt = (id) => [...root.querySelectorAll('ol.steps > li')].filter((li) => li.querySelector('.st-what')?.textContent.includes(id))
+    .map((li) => li.querySelector('.st-amt')?.textContent.trim()).filter(Boolean).join(' + ');
+  const two = (a, b) => [a ? h('span', null, a) : null, b ? h('span', { class: 'mat-sub' }, b) : null];
+  wrap.append(h('table', { class: 'materials' },
+    h('thead', null, h('tr', null, ['编号', '名称', 'CAS', '规格 / 浓度', '厂商', '批号 / 到货', '来源', '本次用量'].map((c) => h('th', null, c)))),
+    h('tbody', null, list.map((m) => {
+      const r = by.get(m.id);
+      if (!r) return h('tr', { class: 'missing' }, h('td', { class: 'mono' }, m.id), h('td', { colspan: 5 }, '库里没有这个编号'), h('td', null, m.from), h('td', null, m.amount));
+      const amt = m.amount || stepAmt(m.id);
+      return h('tr', null,
+        h('td', { class: 'mono' }, m.id),
+        h('td', null, two(r.name, r.solution ? r.recipe : (r.name_en && r.name_en !== r.name ? r.name_en : ''))),
+        h('td', { class: 'mono' }, r.solution ? '—' : (r.cas || '')),
+        h('td', null, r.solution ? (r.conc || '') : [r.spec, r.purity].filter(Boolean).join(' · ')),
+        h('td', null, r.solution ? two('自配', r.by) : (r.vendor || '')),
+        h('td', { class: 'nw' }, r.solution ? (r.prepared ? h('span', null, `配于 ${r.prepared}`) : '') : two(r.lot ? `批号 ${r.lot}` : '', r.arrived ? `到货 ${r.arrived}` : '')),
+        h('td', null, two(m.from, m.note)),
+        h('td', { class: 'mat-amt' }, amt));
+    }))));
 }
 
 // ---------- chemical equations ----------

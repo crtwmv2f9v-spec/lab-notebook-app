@@ -14,7 +14,7 @@ import {
   SOLUTIONS_PATH, SOLUTION_FIELDS, SOLUTION_STATUS, nextSolutionId, parseRecipe, recipeText, loadSolutions, solutionAlerts,
   HYP_STATUS, HYP_CONF, EV_KIND, hypPath, hypIds, loadHypothesis, loadHypotheses, nextHypId, evidenceCounts, nextEvidenceId,
   TOPICS_PATH, TOPIC_STATUS, TOPIC_PRIORITY, TOPIC_EVERY, loadTopics, activeTopic, topicAlerts,
-  parseTSV, RESULT_HINT, looksLikeHeader, mdTable,
+  parseTSV, RESULT_HINT, looksLikeHeader, mdTable, MATERIAL_FROM, readMaterials, writeMaterials,
 } from './lab.js';
 import { search } from './search.js';
 import { h, icon, debounce, fmtBytes, loadScript } from './util.js';
@@ -708,7 +708,8 @@ async function buildPageSheet(vol, num, { forPrint = false } = {}) {
   const md = await lib.readPage(vol, num);
   const { fm, body } = parseFrontMatter(md);
   const content = h('div', { class: 'sheet-body prose' });
-  const ready = renderInto(content, body, pageCtx(vol, num, null, { xid: fm.id || '' }));
+  const shown = readMaterials(body) || !(fm.reagents || []).length ? body : writeMaterials(body, fm.reagents.map((id) => ({ id })));
+  const ready = renderInto(content, shown, pageCtx(vol, num, null, { xid: fm.id || '' }));
   const panel = await expPanel(fm, vol, num, { forPrint }).catch(() => null);
   if (forPrint) return { el: recordSheet(vol, num, fm, panel, content), ready, fm, body };
   const cont = entry?.continues ? parseRef(entry.continues) : null;
@@ -803,6 +804,7 @@ async function viewPage(vol, num, params) {
   const more = h('button', { class: 'btn icon ghost', 'aria-label': '更多', onclick: (e) => menu(e.currentTarget, [
     { icon: 'continue', label: '在新页续写', run: () => { location.hash = `#/v/${vol}/new?continues=${num}`; } },
     { icon: 'copy', label: '复制本页链接', run: () => copyRef(vol, num) },
+    { icon: 'flask', label: '导入试剂 / 溶液…', run: () => openMaterials(vol, num) },
     { icon: 'print', label: '打印 / 存为 PDF', run: () => exportPdf([lib.page(vol, num)], fm.date, fm.date, { cover: false }) },
     { icon: 'history', label: '历史版本', run: () => openHistory(vol, num) },
     { icon: 'print', label: '打印纸质记录卡', run: () => printCard(vol, num) },
@@ -818,6 +820,7 @@ async function viewPage(vol, num, params) {
   ]) }, icon('more'));
   const photo = h('button', { class: 'btn', type: 'button', onclick: () => openPhotoCapture(vol, num) }, icon('attach', 18), h('span', { class: 'wide-only' }, '拍照/加图'));
   const raw = await lib.readPage(vol, num);
+  const mats = h('button', { class: 'btn', type: 'button', title: '从试剂库 / 溶液库导入本次用到的试剂和溶液', onclick: () => openMaterials(vol, num) }, icon('flask', 18), h('span', { class: 'wide-only' }, '试剂'));
   const results = /```samples/.test(raw) ? h('button', { class: 'btn', type: 'button', onclick: () => openSamplesEditor(vol, num) }, icon('table', 18), h('span', { class: 'wide-only' }, '录入表格')) : null;
   const stepsBtn = /```steps/.test(raw) ? h('button', { class: 'btn', type: 'button', onclick: () => openStepsEditor(vol, num) }, icon('list', 18), h('span', { class: 'wide-only' }, '步骤')) : null;
   const edit = h('a', { class: 'btn', href: `#/v/${vol}/${num}/edit` }, icon('edit', 18), h('span', { class: 'wide-only' }, fm.signed ? '修订' : '编辑'));
@@ -831,7 +834,7 @@ async function viewPage(vol, num, params) {
   lastPageVisited = { vol, num };
   addSwipe(sheet, prev && `#/v/${vol}/${prev.num}`, next && `#/v/${vol}/${next.num}`);
   return h('div', { class: 'view page-view' },
-    topbar({ back: `#/v/${vol}`, backLabel: '目录', title: v.title, sub: `第 ${num} 页`, actions: [stepsBtn, results, photo, edit, more] }),
+    topbar({ back: `#/v/${vol}`, backLabel: '目录', title: v.title, sub: `第 ${num} 页`, actions: [stepsBtn, results, mats, photo, edit, more] }),
     demoBanner(), sheet, pager);
 }
 let lastPageVisited = null;
@@ -1482,9 +1485,7 @@ async function updatePage(vol, num, mutate, message, reason = '') {
 
 // Panel under the page header: SOP, reagents, data location, follow-ups.
 async function expPanel(fm, vol, num, { forPrint = false } = {}) {
-  const ids = fm.reagents || [];
-  if (!fm.id && !fm.protocol && !ids.length && !fm.data && !(fm.followups || []).length) return null;
-  const reagents = await loadReagents(lib).catch(() => []);
+  if (!fm.id && !fm.protocol && !fm.data && !(fm.followups || []).length) return null;
   const proto = fm.protocol ? await loadProtocol(lib, fm.protocol).catch(() => null) : null;
   const panel = h('section', { class: 'exp-panel' });
   if (fm.protocol) {
@@ -1500,18 +1501,7 @@ async function expPanel(fm, vol, num, { forPrint = false } = {}) {
     });
     panel.append(det);
   }
-  if (forPrint && !proto && !ids.length && !fm.data) return null;
-  if (ids.length) {
-    const rows = ids.map((id) => reagents.find((r) => r.id === id) || { id, name: '试剂库里没有这个编号', missing: true });
-    const today = todayISO();
-    panel.append(h('div', { class: 'lbl-line' }, h('span', { class: 'lbl' }, '试剂'), h('a', { class: 'small', href: '#/lib/reagents' }, '试剂库')),
-      h('div', { class: 'table-wrap' }, h('table', { class: 'data reagents' },
-        thead(['编号', '名称', '规格', '厂商', '货号', '批号', '有效期至']),
-        h('tbody', null, rows.map((r) => h('tr', { class: r.missing ? 'missing' : null },
-          h('td', null, r.id), h('td', null, r.name), h('td', null, r.spec || ''), h('td', null, r.vendor || ''),
-          h('td', null, r.catalog || ''), h('td', null, r.lot || ''),
-          h('td', { class: r.expires && r.expires < today ? 'warn' : null }, r.expires || '')))))));
-  }
+  if (forPrint && !proto && !fm.data) return null;
   if (fm.data && !forPrint) panel.append(h('div', { class: 'lbl-line' }, h('span', { class: 'lbl' }, '原始数据'), h('code', { class: 'path' }, fm.data)));
   const fus = forPrint ? [] : (fm.followups || []).map(parseFollowup).filter(Boolean);
   if (fus.length) {
@@ -1636,6 +1626,70 @@ async function openSamplesEditor(vol, num) {
 }
 
 // ----- operation steps: what, how much, into which container, under which conditions -----
+// ----- key resources: pick reagents / solutions from the libraries, say which bottle and how much -----
+async function openMaterials(vol, num) {
+  const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
+  const [rs, ss] = await Promise.all([loadReagents(lib).catch(() => []), loadSolutions(lib).catch(() => [])]);
+  const lib2 = { r: rs, s: ss };
+  const all = new Map([...rs, ...ss].map((x) => [x.id, x]));
+  const list = (readMaterials(body) || (fm.reagents || []).map((id) => ({ id }))).map((m) => {
+    const known = MATERIAL_FROM.find((f) => (m.from || '').startsWith(f));
+    return { ...m, kind: known || (m.from ? '其他' : (String(m.id).startsWith('S-') ? '母液' : '原瓶')), bottle: known ? (m.from || '').slice(known.length).trim() : (m.from || '') };
+  });
+  let tab = 'r';
+  const q = h('input', { type: 'search', id: 'mt-q', placeholder: '搜索：名称、英文名、CAS、编号、存放位置', autocomplete: 'off' });
+  const tabs = h('div', { class: 'seg mt-tabs' });
+  const hits = h('div', { class: 'mt-hits' });
+  const chosen = h('div', { class: 'mt-chosen' });
+  const label = (x) => [x.name, x.name_en && x.name_en !== x.name ? x.name_en : '', x.cas, x.spec || x.conc, x.vendor, x.location].filter(Boolean).join(' · ');
+  const drawTabs = () => tabs.replaceChildren(...[['r', `试剂库 ${rs.length}`], ['s', `溶液库 ${ss.length}`]].map(([k, l]) => h('button', { type: 'button', class: `seg-btn${tab === k ? ' on' : ''}`, onclick: () => { tab = k; drawTabs(); drawHits(); } }, l)));
+  const drawHits = () => {
+    const t = q.value.trim().toLowerCase();
+    const src = lib2[tab].filter((x) => !['用完', '废弃'].includes(x.status));
+    const found = (t ? src.filter((x) => `${x.id} ${label(x)} ${x.lot || ''} ${x.recipe || ''}`.toLowerCase().includes(t)) : tab === 's' ? src : []).slice(0, 40);
+    hits.replaceChildren(...(found.length ? found.map((x) => h('button', { type: 'button', class: 'mt-hit', disabled: list.some((m) => m.id === x.id),
+      onclick: () => { list.push({ id: x.id, kind: tab === 's' ? '母液' : '原瓶', bottle: '', amount: '', note: '' }); drawHits(); drawChosen(); } },
+      h('span', { class: 'xid-tag' }, x.id), ' ', h('b', null, x.name), h('span', { class: 'muted' }, ` ${label(x).slice(x.name.length)}`)))
+      : [h('p', { class: 'muted' }, t ? '没有找到。换个关键词，或试试 CAS 号。' : tab === 'r' ? `输入关键词搜索 ${rs.length} 种试剂。` : '溶液库还是空的。')]));
+  };
+  const drawChosen = () => chosen.replaceChildren(list.length ? h('table', { class: 'grid mt-grid' },
+    h('thead', null, h('tr', null, ['编号', '名称', '来源', '瓶号 / 说明', '本次用量', ''].map((c) => h('th', null, c)))),
+    h('tbody', null, list.map((m, i) => h('tr', null,
+      h('td', { class: 'mono' }, m.id),
+      h('td', null, all.get(m.id)?.name || h('span', { class: 'warn' }, '库里没有')),
+      h('td', null, h('select', { onchange: (e) => { m.kind = e.target.value; } }, MATERIAL_FROM.map((f) => h('option', { selected: m.kind === f }, f)))),
+      h('td', null, h('input', { value: m.bottle || '', placeholder: '例如 #2、2026-11-03 分装', oninput: (e) => { m.bottle = e.target.value; } })),
+      h('td', null, h('input', { value: m.amount || '', placeholder: '例如 20 mg、100 μL', oninput: (e) => { m.amount = e.target.value; } })),
+      h('td', null, h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '移除', onclick: () => { list.splice(i, 1); drawChosen(); drawHits(); } }, icon('close', 16)))))))
+    : h('p', { class: 'muted' }, '还没有选择。在上面搜索后点一下即可加入。'));
+  q.addEventListener('input', drawHits);
+  drawTabs(); drawHits(); drawChosen();
+  const why = reasonField(fm, 'mt-why');
+  modal({
+    title: `试剂等关键资源 · ${fm.id || `p. ${num}`}`, wide: true,
+    body: h('div', { class: 'form' },
+      tabs, q, hits,
+      h('span', { class: 'label' }, '本次使用'), chosen,
+      h('p', { class: 'muted' }, '保存后，页面最下方“试剂等关键资源”会列出编号、名称、CAS、规格、厂商、批号/到货、来源和用量。用量留空时，自动取“操作步骤”里写的量。'),
+      why.el),
+    buttons: [{ label: '取消' }, {
+      label: '保存', primary: true,
+      run: async () => {
+        if (!why.ok()) return false;
+        const rows = list.map((m) => ({ id: m.id, from: [m.kind, m.bottle].filter(Boolean).join(' '), amount: m.amount, note: m.note }));
+        try {
+          await updatePage(vol, num, ({ fm: f, body: b }) => {
+            if (rows.length) f.reagents = rows.map((m) => m.id); else delete f.reagents;
+            return { fm: f, body: writeMaterials(b, rows) };
+          }, `Resources for ${fm.id || `p. ${num}`}`, why.value() || '更新试剂等关键资源');
+          toast('已保存。');
+        } catch (e) { toast(saveError(e)); return false; }
+      },
+    }],
+  });
+  setTimeout(() => q.focus(), 50);
+}
+
 async function openStepsEditor(vol, num) {
   const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
   const steps = readSteps(body) || [];
@@ -2966,12 +3020,15 @@ async function openNewExperiment(volId, { series: presetSeries = '' } = {}) {
   const rList = h('div', { class: 'check-list' });
   const drawR = () => {
     const q = rFilter.value.trim().toLowerCase();
-    rList.replaceChildren(...reagents.filter((r) => !q || `${r.id} ${r.name} ${r.vendor}`.toLowerCase().includes(q)).map((r) => h('label', { class: 'check' },
+    // The library holds hundreds of bottles: show the ticked ones, plus search hits once something is typed.
+    const hits = reagents.filter((r) => picked.has(r.id) || (q && `${r.id} ${r.name} ${r.name_en || ''} ${r.cas || ''} ${r.vendor} ${r.location || ''}`.toLowerCase().includes(q))).slice(0, 60);
+    rList.replaceChildren(...(q || picked.size ? [] : [h('p', { class: 'muted' }, `输入名称、英文名、CAS 或存放位置搜索（试剂库共 ${reagents.length} 种）。`)]), ...hits.map((r) => h('label', { class: 'check' },
       h('input', { type: 'checkbox', checked: picked.has(r.id), onchange: (e) => { if (e.target.checked) picked.add(r.id); else picked.delete(r.id); } }),
-      ` ${r.id} ${r.name}`, r.vendor ? h('span', { class: 'muted' }, ` · ${r.vendor}`) : null)));
+      ` ${r.id} ${r.name}`, h('span', { class: 'muted' }, [r.cas, r.vendor, r.location].filter(Boolean).map((x) => ` · ${x}`).join('')))));
     if (!reagents.length) rList.append(h('p', { class: 'muted' }, '试剂库还是空的。可在“试剂库”里导入。'));
   };
   rFilter.addEventListener('input', drawR); drawR();
+  rFilter.placeholder = '搜索试剂：名称、英文名、CAS、位置';
   const fuDays = h('input', { id: 'ne-fu', placeholder: '例如 1, 3, 7（天后）' });
   const fuText = h('input', { id: 'ne-fu-text', value: '稳定性复测' });
   const curVol = () => lib.volume(volSel.value);
@@ -3083,7 +3140,7 @@ async function openNewExperiment(volId, { series: presetSeries = '' } = {}) {
 async function viewReagents() {
   const list = await loadReagents(lib);
   const fields = reagentFields(lib.notebook);
-  const filter = h('input', { type: 'search', placeholder: '按编号、名称、厂商、批号筛选', 'aria-label': '筛选' });
+  const filter = h('input', { type: 'search', placeholder: '按编号、中英文名、CAS、厂商、存放位置、订购者筛选', 'aria-label': '筛选' });
   const body = h('tbody');
   const today = todayISO();
   const usedBy = (id) => lib.allPages().filter((p) => (p.reagents || []).includes(id));

@@ -1587,3 +1587,35 @@ ol.pick-list.small li { margin: 2px 0; }
   html .sheet.record :is(.prose table:not(.data), table.samples, table.data) :is(th, td) { word-break: keep-all !important; overflow-wrap: break-word !important; }
   html[data-ptable="grid"] .sheet.record :is(.prose table:not(.data), table.samples, table.data) :is(th, td) { padding: 3px 4.5px !important; }
 }
+
+/* key resources table at the foot of a page, and the import dialog */
+.materials-wrap { margin: 0 0 var(--cell); overflow-x: auto; }
+.prose table.materials { display: table; width: 100%; font-size: 14px; }
+.prose table.materials td { vertical-align: top; }
+.prose table.materials .mono { font-family: var(--font-code); font-size: .92em; white-space: nowrap; }
+.prose table.materials .mat-sub { display: block; font-size: .86em; color: var(--ink-3); line-height: 1.35; }
+.prose table.materials .mat-amt { font-weight: 600; color: var(--qty, var(--form)); white-space: nowrap; }
+.prose table.materials tr.missing td { color: var(--red-ink); }
+.mt-tabs { margin-bottom: 4px; }
+.mt-hits { max-height: 30vh; overflow: auto; display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--rule); border-radius: 8px; padding: 6px; }
+.mt-hit { text-align: left; border: 0; background: transparent; padding: 6px 8px; border-radius: 6px; font: 400 14px/1.45 var(--font-ui); color: var(--ink); cursor: pointer; }
+.mt-hit:hover:not(:disabled) { background: color-mix(in srgb, var(--form) 9%, transparent); }
+.mt-hit:disabled { opacity: .45; cursor: default; }
+.mt-grid select { width: 100%; border: 0; background: transparent; padding: 7px 6px; font: 400 14px/1.3 var(--font-ui); color: var(--ink); }
+.mt-grid td:nth-child(2) { padding: 0 8px; font-size: 14px; }
+@media print {
+  html .sheet.record table.materials .mat-sub { font-size: .9em; color: var(--ink-3); }
+  html .sheet.record table.materials .mat-amt { color: var(--ink); }
+  html .sheet.record .materials-wrap { overflow: visible; }
+}
+.mt-tabs { --k: var(--form); }
+.mt-grid td.mono { white-space: nowrap; padding: 0 8px; font: 500 13px/1 var(--font-code); }
+.mt-grid select { min-width: 84px; }
+.mt-grid td:nth-child(5) input { min-width: 110px; }
+.prose table.materials th { white-space: nowrap; }
+.prose table.materials td { word-break: keep-all; overflow-wrap: break-word; }
+.prose table.materials td.nw > span { white-space: nowrap; }
+@media print {
+  html .sheet.record table.materials td.mono, html .sheet.record table.materials td.mat-amt, html .sheet.record table.materials td.nw > span { white-space: nowrap !important; overflow-wrap: normal !important; }
+  html .sheet.record table.materials td.mono { font-family: var(--font-code) !important; font-size: .95em !important; }
+}
