@@ -11,7 +11,7 @@ import {
   parseFollowup, formatFollowup, addDays, daysFrom, icsFor, toCSV, REAGENTS_PATH, REAGENT_FIELDS, parseReagents, reagentsCSV,
   nextReagentId, loadReagents, reagentFields, LOCKED_REAGENT_KEYS, loadProtocol, loadProtocols, parseProtocol, protocolPath, cleanProtocolId, reagentAlerts,
   STEP_FIELDS, STEP_OPS, STEP_CONTAINERS, readSteps, writeSteps, stepsText, headings, replaceSection, quoteBlock, sectionOf,
-  SOLUTIONS_PATH, SOLUTION_FIELDS, SOLUTION_STATUS, nextSolutionId, parseRecipe, recipeText, loadSolutions, solutionAlerts,
+  SOLUTIONS_PATH, SOLUTION_FIELDS, SOLUTION_STATUS, solutionFields, LOCKED_SOLUTION_KEYS, nextSolutionId, parseRecipe, recipeText, loadSolutions, solutionAlerts,
   HYP_STATUS, HYP_CONF, EV_KIND, hypPath, hypIds, loadHypothesis, loadHypotheses, nextHypId, evidenceCounts, nextEvidenceId,
   TOPICS_PATH, TOPIC_STATUS, TOPIC_PRIORITY, TOPIC_EVERY, loadTopics, activeTopic, topicAlerts,
   parseTSV, RESULT_HINT, looksLikeHeader, mdTable, MATERIAL_FROM, readMaterials, writeMaterials,
@@ -336,7 +336,7 @@ function modal({ title, body, buttons = [{ label: '关闭' }], wide = false, onC
   const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
   document.addEventListener('keydown', onKey, true);
   root.addEventListener('mousedown', (e) => { if (e.target === root) close(); });
-  const foot = h('div', { class: 'modal-foot' }, buttons.map((b) => h('button', {
+  const foot = h('div', { class: 'modal-foot' }, buttons.filter(Boolean).map((b) => h('button', {
     class: `btn${b.primary ? ' primary' : ''}${b.danger ? ' danger' : ''}`, type: 'button',
     onclick: async (ev) => {
       if (!b.run) return close();
@@ -964,6 +964,7 @@ async function viewEditor(vol, num, params) {
       title: titleIn.value.trim(),
       date: dateIn.value || todayISO(),
       tags: [...new Set(tagsIn.value.split(/[,\n]/).map(cleanTag).filter(Boolean))],
+      ...(readMaterials(ta.value) ? { reagents: readMaterials(ta.value).map((m) => m.id) } : {}),
     },
     body: ta.value,
   });
@@ -1115,6 +1116,8 @@ async function viewEditor(vol, num, params) {
     h('button', { class: 'tool text mk-ci', type: 'button', title: '画圈 {{文字}}', onclick: () => wrap('{{', '}}', '重点') }, '圈出'),
     h('button', { class: 'tool text', type: 'button', title: '引用另一次实验的某一节（例如完全相同的操作步骤）', onclick: () => openQuoteDialog(vol, num, (block) => insertBlock(block)) }, '引用实验'),
     h('button', { class: 'tool text', type: 'button', title: '引用思维笔记本里的假设（本实验要检验的）', onclick: () => openCiteHypothesis(vol, num, (block) => insertBlock(block)) }, '引用假设'),
+    h('button', { class: 'tool text', type: 'button', title: '从试剂库 / 溶液库导入本次用到的试剂和溶液（写在页面最下方“试剂等关键资源”）',
+      onclick: () => openMaterials(vol, num, { text: ta.value, reagents: fm.reagents || [], onInsert: (rows) => { ta.value = writeMaterials(ta.value, rows); changed(); toast('已写入页面最下方“试剂等关键资源”。'); } }) }, '试剂'),
     h('span', { class: 'tool-sep' }),
     h('button', { class: 'tool text', type: 'button', title: '反应方程式（一行一个）', onclick: () => insertBlock('```reaction\n2 H2O2 ->[Pt] 2 H2O + O2 | (1)\n```') }, '反应式'),
     h('button', { class: 'tool text', type: 'button', title: '操作步骤：操作 | 用量 | 物质 | 加到/容器 | 条件 | 细节', onclick: () => insertBlock('```steps\n移取 | 10 mL | DI 水 | 20 mL 玻璃瓶 | 室温 | 沿瓶壁缓慢加入\n```') }, '步骤'),
@@ -1627,8 +1630,9 @@ async function openSamplesEditor(vol, num) {
 
 // ----- operation steps: what, how much, into which container, under which conditions -----
 // ----- key resources: pick reagents / solutions from the libraries, say which bottle and how much -----
-async function openMaterials(vol, num) {
-  const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
+// From the page editor, `text` is the draft being edited and `onInsert` takes the rows instead of saving the page.
+async function openMaterials(vol, num, { text = null, onInsert = null, reagents = [] } = {}) {
+  const { fm, body } = text != null ? { fm: { reagents }, body: text } : parseFrontMatter(await lib.readPage(vol, num));
   const [rs, ss] = await Promise.all([loadReagents(lib).catch(() => []), loadSolutions(lib).catch(() => [])]);
   const lib2 = { r: rs, s: ss };
   const all = new Map([...rs, ...ss].map((x) => [x.id, x]));
@@ -1677,6 +1681,7 @@ async function openMaterials(vol, num) {
       run: async () => {
         if (!why.ok()) return false;
         const rows = list.map((m) => ({ id: m.id, from: [m.kind, m.bottle].filter(Boolean).join(' '), amount: m.amount, note: m.note }));
+        if (onInsert) { onInsert(rows); return; }
         try {
           await updatePage(vol, num, ({ fm: f, body: b }) => {
             if (rows.length) f.reagents = rows.map((m) => m.id); else delete f.reagents;
@@ -3166,7 +3171,8 @@ async function viewReagents() {
   } });
   return h('div', { class: 'view library' },
     topbar({ back: '#/', backLabel: '首页', title: '试剂库', sub: `${list.length} 条`, actions: [
-      h('button', { class: 'btn', type: 'button', onclick: () => editReagentColumns(list) }, icon('table', 18), h('span', { class: 'wide-only' }, '管理列')),
+      h('button', { class: 'btn', type: 'button', onclick: () => editLibColumns('r', list) }, icon('table', 18), h('span', { class: 'wide-only' }, '管理列')),
+      h('button', { class: 'btn danger', type: 'button', onclick: () => openLibBulkDelete('r', list) }, icon('trash', 18), h('span', { class: 'wide-only' }, '批量删除')),
       h('button', { class: 'btn primary', type: 'button', onclick: () => editReagent(list, null) }, icon('plus', 18), h('span', null, '新增试剂'))] }),
     demoBanner(),
     h('article', { class: 'sheet plain' },
@@ -3182,6 +3188,7 @@ async function viewSolutions() {
   const list = await loadSolutions(lib);
   const reagents = await loadReagents(lib).catch(() => []);
   const nameOf = (id) => reagents.find((r) => r.id === id)?.name || list.find((r) => r.id === id)?.name || '';
+  const fields = solutionFields(lib.notebook);
   const filter = h('input', { type: 'search', placeholder: '按编号、名称、组成、日期筛选', 'aria-label': '筛选' });
   const showAll = h('input', { type: 'checkbox', id: 'sl-all' });
   const body = h('tbody');
@@ -3192,31 +3199,39 @@ async function viewSolutions() {
     body.replaceChildren(...list.filter((r) => (showAll.checked || !['用完', '废弃'].includes(r.status)) && (!q || Object.values(r).join(' ').toLowerCase().includes(q)))
       .sort((a, b) => String(b.id).localeCompare(String(a.id))).map((r) => {
         const n = usedIn(r.id);
+        // Known columns keep their own look; added columns show as plain text.
+        const cell = (k) => {
+          if (k === 'id') return h('td', { class: 'mono' }, r.id);
+          if (k === 'name') return h('td', null, h('b', null, r.name));
+          if (k === 'recipe') return h('td', null, parseRecipe(r.recipe).map((c) => h('div', { class: 'recipe-line' }, h('span', { class: 'rg-id', 'data-rid': c.id }, c.id), ` ${nameOf(c.id)} `, h('span', { class: 'qty' }, c.amount))));
+          if (k === 'prepared') return h('td', { class: 'mono' }, r.prepared || '');
+          if (k === 'expires') return h('td', { class: `mono${r.expires && r.expires < today ? ' warn' : ''}` }, r.expires || '');
+          if (k === 'page') return h('td', null, r.page ? h('a', { href: `#/search?q=${encodeURIComponent(r.page)}`, onclick: (e) => e.stopPropagation() }, r.page) : '');
+          if (k === 'status') return h('td', null, r.status || '在用');
+          return h('td', null, r[k] || '');
+        };
         return h('tr', { class: ['用完', '废弃'].includes(r.status) ? 'retired' : null, onclick: () => editSolution(list, r) },
-          h('td', { class: 'mono' }, r.id), h('td', null, h('b', null, r.name)),
-          h('td', null, parseRecipe(r.recipe).map((c) => h('div', { class: 'recipe-line' }, h('span', { class: 'rg-id', 'data-rid': c.id }, c.id), ` ${nameOf(c.id)} `, h('span', { class: 'qty' }, c.amount)))),
-          h('td', null, r.conc || ''), h('td', null, r.volume || ''), h('td', { class: 'mono' }, r.prepared || ''),
-          h('td', { class: `mono${r.expires && r.expires < today ? ' warn' : ''}` }, r.expires || ''),
-          h('td', null, r.page ? h('a', { href: `#/search?q=${encodeURIComponent(r.page)}`, onclick: (e) => e.stopPropagation() }, r.page) : ''),
-          h('td', null, r.status || '在用'),
+          fields.map(([k]) => cell(k)),
           h('td', null, n ? h('a', { href: `#/search?q=${encodeURIComponent(r.id)}`, onclick: (e) => e.stopPropagation() }, `${n} 次`) : ''));
       }));
   };
   filter.addEventListener('input', draw); showAll.addEventListener('change', draw); draw();
   return h('div', { class: 'view library' },
     topbar({ back: '#/', backLabel: '首页', title: '溶液库', sub: `${list.length} 批`, actions: [
+      h('button', { class: 'btn', type: 'button', onclick: () => editLibColumns('s', list) }, icon('table', 18), h('span', { class: 'wide-only' }, '管理列')),
+      h('button', { class: 'btn danger', type: 'button', onclick: () => openLibBulkDelete('s', list) }, icon('trash', 18), h('span', { class: 'wide-only' }, '批量删除')),
       h('button', { class: 'btn primary', type: 'button', onclick: () => editSolution(list, null) }, icon('plus', 18), h('span', null, '登记新溶液'))] }),
     demoBanner(),
     h('article', { class: 'sheet plain' },
       h('div', { class: 'search-row' }, filter, h('label', { class: 'check', for: 'sl-all' }, showAll, ' 显示已用完/废弃'),
-        h('button', { class: 'btn', type: 'button', onclick: () => downloadText('solutions.csv', `\uFEFF${reagentsCSV(list, SOLUTION_FIELDS)}`, 'text/csv') }, '导出 CSV')),
-      h('div', { class: 'table-wrap tall' }, h('table', { class: 'data lib-table sol-table' }, thead(['编号', '名称', '组成', '浓度/配比', '总量', '配制', '有效期至', '配制记录', '状态', '使用']), body)),
+        h('button', { class: 'btn', type: 'button', onclick: () => downloadText('solutions.csv', `\uFEFF${reagentsCSV(list, solutionFields(lib.notebook))}`, 'text/csv') }, '导出 CSV')),
+      h('div', { class: 'table-wrap tall' }, h('table', { class: 'data lib-table sol-table' }, thead([...fields.map(([, l]) => l), '使用']), body)),
       h('p', { class: 'muted' }, '每配一批就登记一条（新编号），瓶签写 S-编号。步骤里选这个编号，就能从实验追到这批溶液、再追到每瓶试剂的批号。')));
 }
 
 function editSolution(list, s, preset = {}) {
   const isNew = !s;
-  const r = s ? { ...s } : { id: nextSolutionId(list), prepared: preset.prepared || todayISO(), by: signerName(), page: preset.page || '', status: '在用' };
+  const r = s ? { ...s } : { id: nextSolutionId([...list, ...refIds('S')]), prepared: preset.prepared || todayISO(), by: signerName(), page: preset.page || '', status: '在用' };
   const reagents = [];
   const lists = h('datalist', { id: 'sol-ids' });
   loadReagents(lib).then((rs) => { reagents.push(...rs); lists.replaceChildren(...rs.map((x) => h('option', { value: x.id }, `${x.name}${x.lot ? ` · 批号 ${x.lot}` : ''}`)), ...list.filter((x) => x.id !== r.id).map((x) => h('option', { value: x.id }, `${x.name}（自配，${x.prepared || ''}）`))); drawRows(); }).catch(() => {});
@@ -3236,7 +3251,13 @@ function editSolution(list, s, preset = {}) {
   }
   drawRows();
   const inputs = {};
-  const field = (k, label, attrs = {}) => { inputs[k] = h('input', { id: `sol-${k}`, value: r[k] || '', ...attrs }); return [h('label', { for: `sol-${k}` }, label), inputs[k]]; };
+  const cols = solutionFields(lib.notebook);
+  const labelOf = (k, dflt) => cols.find(([c]) => c === k)?.[1] || dflt;
+  const field = (k, label, attrs = {}) => {
+    if (!cols.some(([c]) => c === k)) return [];
+    inputs[k] = h('input', { id: `sol-${k}`, value: r[k] || '', ...attrs }); return [h('label', { for: `sol-${k}` }, labelOf(k, label)), inputs[k]];
+  };
+  const extra = cols.filter(([k]) => !SOLUTION_FIELDS.some(([d]) => d === k)).flatMap(([k, l]) => field(k, l));
   const status = h('select', { id: 'sol-status' }, SOLUTION_STATUS.map((x) => h('option', { selected: (r.status || '在用') === x }, x)));
   modal({
     title: isNew ? `登记溶液 ${r.id}` : `溶液 ${r.id}`, wide: true,
@@ -3253,8 +3274,8 @@ function editSolution(list, s, preset = {}) {
         ...field('location', '存放位置', { placeholder: '例如：4 °C 冰箱 第 2 层' }),
         ...field('page', '配制记录（实验编号）', { placeholder: '20261102-OECT-01' }),
         h('label', { for: 'sol-status' }, '状态'), status,
-        ...field('notes', '备注'))),
-    buttons: [{ label: '取消' }, {
+        ...field('notes', '备注'), ...extra)),
+    buttons: [isNew ? null : { label: '删除', danger: true, run: () => { setTimeout(() => deleteLibEntries('s', [r.id]), 50); } }, { label: '取消' }, {
       label: '保存', primary: true,
       run: async () => {
         for (const k of Object.keys(inputs)) r[k] = inputs[k].value.trim();
@@ -3264,7 +3285,7 @@ function editSolution(list, s, preset = {}) {
           await lib.commit(`${isNew ? 'Add' : 'Update'} solution ${r.id}`, async (l) => {
             const cur = l.tree.has(SOLUTIONS_PATH) ? await loadSolutions(l) : [];
             const next = [...cur.filter((x) => x.id !== r.id), r].sort((a, b) => String(a.id).localeCompare(String(b.id)));
-            return { changes: [{ path: SOLUTIONS_PATH, data: `\uFEFF${reagentsCSV(next, SOLUTION_FIELDS)}` }] };
+            return { changes: [{ path: SOLUTIONS_PATH, data: `\uFEFF${reagentsCSV(next, solutionFields(lib.notebook))}` }] };
           });
           toast(`${r.id} 已保存。瓶签请写 ${r.id}。`);
           if (view.kind === 'library') route({ quiet: true });
@@ -3279,35 +3300,42 @@ async function saveReagents(list, message) {
   return lib.commit(message, async () => ({ changes: [{ path: REAGENTS_PATH, data: `\uFEFF${reagentsCSV(list, reagentFields(lib.notebook))}` }] }));
 }
 
-// Rename, add, remove and reorder reagent columns.
-function editReagentColumns(list) {
-  const cols = reagentFields(lib.notebook).map(([k, l]) => ({ k, l }));
+// Both libraries keep their own column lists in notebook.json.
+const LIBS = {
+  r: { name: '试剂库', unit: '试剂', path: REAGENTS_PATH, nbKey: 'reagentColumns', fields: () => reagentFields(lib.notebook), locked: LOCKED_REAGENT_KEYS, load: () => loadReagents(lib) },
+  s: { name: '溶液库', unit: '溶液', path: SOLUTIONS_PATH, nbKey: 'solutionColumns', fields: () => solutionFields(lib.notebook), locked: LOCKED_SOLUTION_KEYS, load: () => loadSolutions(lib) },
+};
+// Rename, add, remove and reorder a library's columns.
+function editLibColumns(kind, list) {
+  const L = LIBS[kind];
+  const cols = L.fields().map(([k, l]) => ({ k, l }));
   const box = h('div', { class: 'col-list' });
   const draw = () => box.replaceChildren(...cols.map((c, i) => h('div', { class: 'col-row' },
     h('input', { value: c.l, 'aria-label': '列名', oninput: (e) => { c.l = e.target.value; } }),
     h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '上移', disabled: i === 0, onclick: () => { cols.splice(i - 1, 0, cols.splice(i, 1)[0]); draw(); } }, '↑'),
     h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '下移', disabled: i === cols.length - 1, onclick: () => { cols.splice(i + 1, 0, cols.splice(i, 1)[0]); draw(); } }, '↓'),
-    LOCKED_REAGENT_KEYS.includes(c.k) ? h('span', { class: 'muted small lock' }, '必需')
+    L.locked.includes(c.k) ? h('span', { class: 'muted small lock' }, '必需')
       : h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '删除这一列', onclick: () => { cols.splice(i, 1); draw(); } }, icon('close', 16)))));
   draw();
+  const lockedNames = L.fields().filter(([k]) => L.locked.includes(k)).map(([, l]) => `“${l}”`).join('');
   modal({
-    title: '管理试剂库的列',
+    title: `管理${L.name}的列`,
     body: h('div', null,
-      h('p', { class: 'muted' }, '改名直接改文字；↑↓ 调整顺序；× 删除这一列（这一列里填过的内容会一起删除，但 GitHub 历史里能找回）。“编号”和“名称”不能删。'),
+      h('p', { class: 'muted' }, `改名直接改文字；↑↓ 调整顺序；× 删除这一列（这一列里填过的内容会一起删除，但 GitHub 历史里能找回）。${lockedNames}不能删。`),
       box,
       h('button', { class: 'btn small', type: 'button', onclick: () => { cols.push({ k: `c${Date.now().toString(36)}`, l: '新列' }); draw(); box.lastChild.querySelector('input').select(); } }, icon('plus', 16), '加一列')),
     buttons: [{ label: '取消' }, { label: '保存', primary: true, run: async () => {
       if (cols.some((c) => !c.l.trim())) { toast('列名不能为空。'); return false; }
-      const removed = reagentFields(lib.notebook).filter(([k]) => !cols.some((c) => c.k === k));
+      const removed = L.fields().filter(([k]) => !cols.some((c) => c.k === k));
       const lost = removed.filter(([k]) => list.some((r) => String(r[k] || '').trim()));
       if (lost.length && !window.confirm(`“${lost.map(([, l]) => l).join('、')}”里有填过的内容，会一起删除。确定吗？`)) return false;
       const fields = cols.map((c) => [c.k, c.l.trim()]);
       try {
-        await lib.commit('Change reagent columns', async (l) => {
+        await lib.commit(`Change ${kind === 'r' ? 'reagent' : 'solution'} columns`, async (l) => {
           const nb = structuredClone(l.notebook);
-          nb.reagentColumns = fields;
+          nb[L.nbKey] = fields;
           return {
-            changes: [{ path: 'notebook.json', data: `${JSON.stringify(nb, null, 2)}\n` }, { path: REAGENTS_PATH, data: `\uFEFF${reagentsCSV(list, fields)}` }],
+            changes: [{ path: 'notebook.json', data: `${JSON.stringify(nb, null, 2)}\n` }, { path: L.path, data: `\uFEFF${reagentsCSV(list, fields)}` }],
             after: () => { l.notebook = nb; },
           };
         });
@@ -3317,9 +3345,65 @@ function editReagentColumns(list) {
   });
 }
 
+// Numbers still written on pages count as taken, so a deleted entry's number is never handed out again.
+const refIds = (p) => [...new Set(lib.allPages().flatMap((x) => String(x.text || '').match(new RegExp(`\\b${p}-\\d{4}\\b`, 'g')) || []))].map((id) => ({ id }));
+// Pages that mention a library entry (its number in the resources table, steps or text).
+const pagesUsing = (id) => search(lib.allPages(), id).map((r) => r.page);
+// Remove entries from a library. Numbers are never reused, so old pages keep pointing at the right bottle.
+async function deleteLibEntries(kind, ids) {
+  const L = LIBS[kind];
+  const used = ids.map((id) => [id, pagesUsing(id).length]).filter(([, n]) => n);
+  const word = ids.length === 1 ? ids[0] : '删除';
+  const ok = await confirmTyped(`从${L.name}删除 ${ids.length} 条`,
+    `${ids.length === 1 ? ids[0] : `${ids.slice(0, 6).join('、')}${ids.length > 6 ? ` 等 ${ids.length} 条` : ''}`}将从${L.name}删除。${used.length ? `其中 ${used.map(([id, n]) => `${id}（${n} 页用到）`).slice(0, 5).join('、')}${used.length > 5 ? ' 等' : ''}被实验页引用，删除后这些页面的资源表会显示“库里没有这个编号”。` : '没有实验页引用它们。'}编号不会被重新使用；GitHub 历史里可以找回。`,
+    word, '删除');
+  if (!ok) return false;
+  const gone = new Set(ids);
+  try {
+    await lib.commit(`Delete ${ids.length} ${kind === 'r' ? 'reagent' : 'solution'}${ids.length > 1 ? 's' : ''}`, async (l) => {
+      const cur = await (kind === 'r' ? loadReagents(l) : loadSolutions(l));
+      return { changes: [{ path: L.path, data: `\uFEFF${reagentsCSV(cur.filter((x) => !gone.has(x.id)), L.fields())}` }] };
+    });
+    toast(`已删除 ${ids.length} 条。`); setTimeout(() => route({ quiet: true }), 300);
+    return true;
+  } catch (e) { toast(saveError(e)); return false; }
+}
+// Tick entries (or everything matching a search) and delete them together.
+function openLibBulkDelete(kind, list) {
+  const L = LIBS[kind];
+  const picked = new Set();
+  const q = h('input', { type: 'search', placeholder: '筛选：编号、名称、CAS、位置、状态…', autocomplete: 'off' });
+  const box = h('div', { class: 'pick-list' });
+  const count = h('span', { class: 'muted' });
+  const match = () => { const t = q.value.trim().toLowerCase(); return list.filter((x) => !t || Object.values(x).join(' ').toLowerCase().includes(t)); };
+  const draw = () => {
+    const rows = match();
+    box.replaceChildren(...rows.slice(0, 300).map((x) => h('label', { class: 'check' },
+      h('input', { type: 'checkbox', checked: picked.has(x.id), onchange: (e) => { if (e.target.checked) picked.add(x.id); else picked.delete(x.id); count.textContent = `已选 ${picked.size} 条`; } }),
+      ' ', h('span', { class: 'c-date' }, x.id), ' ', x.name, h('span', { class: 'muted' }, [x.cas, x.conc, x.location, x.status].filter(Boolean).map((v) => ` · ${v}`).join(''))))
+      , ...(rows.length > 300 ? [h('p', { class: 'muted' }, `只显示前 300 条，共 ${rows.length} 条；“全选筛选结果”会选中全部 ${rows.length} 条。`)] : []));
+    count.textContent = `已选 ${picked.size} 条`;
+  };
+  q.addEventListener('input', draw); draw();
+  modal({
+    title: `批量删除 · ${L.name}`, wide: true,
+    body: h('div', { class: 'form' },
+      q,
+      h('div', { class: 'row-actions' },
+        h('button', { class: 'btn small', type: 'button', onclick: () => { match().forEach((x) => picked.add(x.id)); draw(); } }, '全选筛选结果'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => { picked.clear(); draw(); } }, '全不选'), count),
+      box,
+      h('p', { class: 'muted' }, `不筛选时“全选筛选结果”= 清空整个${L.name}。`)),
+    buttons: [{ label: '取消' }, { label: '删除所选', danger: true, run: () => {
+      if (!picked.size) { toast('至少勾选一条。'); return false; }
+      setTimeout(() => deleteLibEntries(kind, [...picked]), 50);
+    } }],
+  });
+}
+
 function editReagent(list, r) {
   const isNew = !r;
-  const cur = r ? { ...r } : { id: nextReagentId(list) };
+  const cur = r ? { ...r } : { id: nextReagentId([...list, ...refIds('R')]) };
   const fields = reagentFields(lib.notebook);
   const inputs = Object.fromEntries(fields.map(([k]) => [k, h('input', {
     id: `rg-${k}`, value: cur[k] || '', type: k === 'opened' || k === 'expires' ? 'date' : 'text', readonly: k === 'id' && !isNew,
@@ -3328,6 +3412,7 @@ function editReagent(list, r) {
     title: isNew ? '新增试剂' : `修改 ${cur.id}`,
     body: h('div', { class: 'form grid2' }, fields.map(([k, l]) => h('div', null, h('label', { for: `rg-${k}` }, l), inputs[k]))),
     buttons: [
+      isNew ? null : { label: '删除', danger: true, run: () => { setTimeout(() => deleteLibEntries('r', [cur.id]), 50); } },
       isNew ? null : { label: '用新批号复制', run: () => { setTimeout(() => editReagent(list, null), 0); setTimeout(() => { for (const [k] of fields) if (!['id', 'lot', 'opened', 'expires'].includes(k)) { const el = document.getElementById(`rg-${k}`); if (el) el.value = cur[k] || ''; } }, 60); } },
       { label: '取消' },
       { label: '保存', primary: true, run: async () => {
