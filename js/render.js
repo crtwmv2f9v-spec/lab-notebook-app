@@ -20,6 +20,7 @@ function setup() {
   const { marked, DOMPurify } = window;
   marked.use({
     gfm: true,
+    breaks: true, // one Enter = a new line, as written
     extensions: [
       {
         name: 'mathBlock', level: 'block',
@@ -512,7 +513,10 @@ function renderSteps(pre, src) {
 }
 
 // Amounts with units ("10 mL", "37 °C", "500 rpm") and reagent numbers stand out in running text.
-const QTY_RE = /(^|[^\w.#-])([~≈<>≤≥±]?\s?\d+(?:\.\d+)?(?:\s?[-–~]\s?\d+(?:\.\d+)?)?\s?(?:µL|μL|uL|mL|L|µg|μg|mg|kg|g|mmol|µmol|μmol|mol|mM|µM|μM|nM|M|wt%|vol%|%|°C|℃|rpm|min|ms|s|h|mV|V|mA|µA|μA|nA|kHz|Hz|nm|µm|μm|mm|cm|mS|µS|μS|W|Pa|mbar|cP))(?![A-Za-z0-9µμ])|([RS]-\d{4})\b/g;
+// A unit may be compound: mg/mL, °C/min, mW/cm², mg·mL⁻¹, mg mL-1, S/cm.
+const UNIT = '(?:µL|μL|uL|mL|L|µg|μg|ng|mg|kg|g|nmol|mmol|µmol|μmol|mol|pM|nM|µM|μM|mM|M|wt%|vol%|v/v|w/w|%|°C|℃|rpm|min|ms|µs|μs|s|h|kV|mV|µV|μV|V|pA|nA|µA|μA|mA|MHz|kHz|Hz|nm|µm|μm|mm|cm|µS|μS|mS|S|kW|mW|µW|μW|W|mJ|µJ|μJ|J|MPa|kPa|mPa·s|Pa|mbar|bar|cP|MΩ|kΩ|Ω|nF|µF|μF|mF|ppm|ppb|equiv|eq)(?:⁻?[¹²³]|\\^?-?[123](?![\\d.]))?';
+const UNITS = `${UNIT}(?:\\s?[/·⋅]\\s?${UNIT}|\\s(?=[A-Za-zµμ°]+(?:⁻[¹²³]|\\^?-[123]))${UNIT})*`;
+const QTY_RE = new RegExp(`(^|[^\\w.#-])((?:[~≈<>≤≥±]\\s?)?\\d+(?:\\.\\d+)?(?:\\s?[-–~]\\s?\\d+(?:\\.\\d+)?)?\\s?${UNITS})(?![A-Za-z0-9µμ/])|([RS]-\\d{4})\\b`, 'g');
 function markQuantities(root) {
   const skip = 'pre, code, a, .math, .katex, .samples, .steps-wrap, .reactions, h1, h2, h3, h4, .st-what, figcaption';
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.parentElement?.closest(skip) || !/\d/.test(n.nodeValue) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });

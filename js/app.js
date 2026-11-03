@@ -2612,7 +2612,7 @@ async function exportWord(pages, a, b, { title: heading = '实验记录汇总' }
   const D = window.docx;
   const W = 9638; // A4 text width in twips with 2 cm margins
   const font = { ascii: 'Arial', hAnsi: 'Arial', eastAsia: '等线', cs: 'Arial' };
-  const P = (text, o = {}) => new D.Paragraph({ spacing: { after: 80 }, ...o.para, children: [new D.TextRun({ text: String(text ?? ''), font, size: o.size || 21, bold: o.bold, italics: o.italics, color: o.color })] });
+  const P = (text, o = {}) => new D.Paragraph({ spacing: { after: 80 }, ...o.para, children: String(text ?? '').split('\n').map((t, i) => new D.TextRun({ text: t, break: i ? 1 : 0, font, size: o.size || 21, bold: o.bold, italics: o.italics, color: o.color })) });
   const border = { style: D.BorderStyle.SINGLE, size: 4, color: '999999' };
   const table = (rows, head) => {
     const n = Math.max(...[head, ...rows].filter(Boolean).map((r) => r.length));
@@ -2630,6 +2630,8 @@ async function exportWord(pages, a, b, { title: heading = '实验记录汇总' }
     const type = /^\x89PNG/.test(String.fromCharCode(...new Uint8Array(buf.slice(0, 4)))) ? 'png' : 'jpg';
     return new D.Paragraph({ alignment: D.AlignmentType.CENTER, children: [new D.ImageRun({ type, data: buf, transformation: { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) } })] });
   };
+  // Text of an element with its <br> line breaks kept.
+  const brText = (el) => { const c = el.cloneNode(true); c.querySelectorAll('br').forEach((b) => b.replaceWith('\n')); return c.textContent.trim(); };
   const tableRows = (t) => [...t.querySelectorAll('tr:not(.group)')].map((tr) => [...tr.children].map((c) => c.textContent.trim()));
   // Walk the rendered page and turn it into Word blocks.
   async function blocks(root) {
@@ -2637,8 +2639,8 @@ async function exportWord(pages, a, b, { title: heading = '实验记录汇总' }
     for (const el of root.children) {
       const tag = el.tagName;
       if (/^H[1-4]$/.test(tag)) out.push(new D.Paragraph({ heading: [D.HeadingLevel.HEADING_2, D.HeadingLevel.HEADING_2, D.HeadingLevel.HEADING_3, D.HeadingLevel.HEADING_4][+tag[1] - 1], children: [new D.TextRun({ text: el.textContent, font })] }));
-      else if (tag === 'P') { if (el.textContent.trim()) out.push(P(el.textContent)); }
-      else if (tag === 'UL' || tag === 'OL') [...el.children].forEach((li, i) => out.push(P(`${tag === 'OL' ? `${i + 1}.` : '•'} ${li.textContent.trim()}`, { para: { indent: { left: 360 } } })));
+      else if (tag === 'P') { if (el.textContent.trim()) out.push(P(brText(el))); }
+      else if (tag === 'UL' || tag === 'OL') [...el.children].forEach((li, i) => out.push(P(`${tag === 'OL' ? `${i + 1}.` : '•'} ${brText(li)}`, { para: { indent: { left: 360 } } })));
       else if (tag === 'BLOCKQUOTE') out.push(P(el.textContent.trim(), { italics: true, color: '666666' }));
       else if (tag === 'PRE') out.push(P(el.textContent, { size: 18 }));
       else if (tag === 'TABLE') out.push(table(tableRows(el)), P(''));
