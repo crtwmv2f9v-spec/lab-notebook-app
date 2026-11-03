@@ -343,7 +343,7 @@ function modal({ title, body, buttons = [{ label: '关闭' }], wide = false, onC
       try { const keep = await b.run(); if (keep !== false) close(); } catch (e) { toast(e.message); } finally { btn.disabled = false; }
     },
   }, b.label)));
-  panel.append(h('div', { class: 'modal-head' }, h('h2', null, title), h('button', { class: 'btn icon ghost', 'aria-label': '关闭', onclick: close }, icon('close'))), h('div', { class: 'modal-body' }, body), buttons.length ? foot : null);
+  panel.append(h('div', { class: 'modal-head' }, h('h2', null, title), h('button', { class: 'btn icon ghost', 'aria-label': '关闭', onclick: close }, icon('close'))), h('div', { class: 'modal-body' }, body), ...(buttons.length ? [foot] : []));
   root.append(panel);
   document.body.append(root);
   setTimeout(() => (panel.querySelector('[autofocus]') || panel.querySelector('input,textarea,select') || panel.querySelector('.modal-foot .btn.primary') || panel).focus?.(), 30);
@@ -1810,21 +1810,31 @@ function editHypothesis(hyp) {
 }
 
 // Status and confidence change only with a reason, so the history shows how the thinking moved.
+// 可信度 低 / 中 / 高: one click, no reason needed; the change still goes into 思路变化.
+function confSwitch(hyp) {
+  return h('div', { class: 'seg conf-seg', role: 'radiogroup', 'aria-label': '可信度' }, h('span', { class: 'seg-lbl' }, '可信度'),
+    HYP_CONF.map((c) => h('button', { type: 'button', role: 'radio', 'aria-checked': String(hyp.confidence === c), class: `seg-btn${hyp.confidence === c ? ' on' : ''}`,
+      onclick: async () => {
+        if (hyp.confidence === c) return;
+        const x = await cloneHyp(hyp.id);
+        x.confidence = c;
+        x.history = [...(x.history || []), { at: nowISO(), status: x.status, confidence: c, why: '' }];
+        try { await saveHyp(x, `${x.id}: confidence ${c}`); toast(`可信度：${c}`); route({ quiet: true }); } catch (e) { toast(saveError(e)); }
+      } }, c)));
+}
 function changeHypState(hyp) {
   const status = h('select', { id: 'hs-status' }, HYP_STATUS.map((x) => h('option', { selected: hyp.status === x }, x)));
-  const conf = h('select', { id: 'hs-conf' }, HYP_CONF.map((x) => h('option', { selected: hyp.confidence === x }, x)));
   const why = h('input', { id: 'hs-why', placeholder: '例如：证据 3（20261105-OECT-01）显示换溶剂后不再气爆' });
   modal({
-    title: `调整 ${hyp.id} 的状态 / 可信度`,
+    title: `调整 ${hyp.id} 的状态`,
     body: h('div', { class: 'form' },
-      h('div', { class: 'pair' }, h('div', null, h('label', { for: 'hs-status' }, '状态'), status), h('div', null, h('label', { for: 'hs-conf' }, '可信度'), conf)),
-      h('label', { for: 'hs-why' }, '依据（必填）'), why),
+      h('label', { for: 'hs-status' }, '状态'), status,
+      h('label', { for: 'hs-why' }, '依据（可不填）'), why),
     buttons: [{ label: '取消' }, {
       label: '保存', primary: true,
       run: async () => {
-        if (!why.value.trim()) { toast('写一下依据。'); return false; }
         const x = await cloneHyp(hyp.id);
-        x.status = status.value; x.confidence = conf.value;
+        x.status = status.value;
         x.history = [...(x.history || []), { at: nowISO(), status: x.status, confidence: x.confidence, why: why.value.trim() }];
         try { await saveHyp(x, `${x.id}: ${x.status} / ${x.confidence}`); route({ quiet: true }); } catch (e) { toast(saveError(e)); return false; }
       },
@@ -1902,7 +1912,7 @@ async function viewHypothesis(id) {
       h('header', { class: 'hyp-hero' },
         h('p', { class: 'hero-eyebrow' }, `${hyp.id} · 提出于 ${fmtDate(hyp.created)}`),
         h('h1', { class: 'hero-title' }, hyp.title),
-        h('div', { class: 'hyp-state' }, hypBadge(hyp), h('button', { class: 'btn small', type: 'button', onclick: () => changeHypState(hyp) }, '调整状态 / 可信度'))),
+        h('div', { class: 'hyp-state' }, hypBadge(hyp), confSwitch(hyp), h('button', { class: 'btn small', type: 'button', onclick: () => changeHypState(hyp) }, '调整状态'))),
       h('div', { class: 'hyp-cols' },
         h('div', null,
           hyp.description ? h('section', { class: 'tile' }, h('h2', null, '描述'), desc) : null,
@@ -1929,7 +1939,7 @@ async function viewHypothesis(id) {
             })) : h('p', { class: 'muted' }, '还没有实验引用这条假设。在实验页 ⋯ → 引用假设。')),
           h('section', { class: 'tile' }, h('h2', null, '思路变化'),
             h('ol', { class: 'hist-list' }, [...(hyp.history || [])].reverse().map((x) => h('li', null,
-              h('span', { class: 'ev-date' }, `${fmtDate(x.at)} ${String(x.at).slice(11, 16)}`), h('span', { class: `hyp-status st-${x.status}` }, x.status), h('span', { class: 'muted' }, ` 可信度 ${x.confidence}`), h('div', null, x.why)))))))));
+              h('span', { class: 'ev-date' }, `${fmtDate(x.at)} ${String(x.at).slice(11, 16)}`), h('span', { class: `hyp-status st-${x.status}` }, x.status), h('span', { class: 'muted' }, ` 可信度 ${x.confidence}`), x.why ? h('div', null, x.why) : null))))))));
 }
 
 // ----- potential research topics: ideas not to forget, with a review rhythm -----
@@ -2102,7 +2112,7 @@ async function conclusionEvidenceButton(sheet, vol, num, fm) {
       } }],
     });
   } }, icon('book', 14), '作为证据加入假设');
-  head.append(' ', btn, done.length ? h('span', { class: 'ns-added no-print' }, `✓ 已是 ${done.join('、')}`) : null);
+  head.append(' ', btn, ...(done.length ? [h('span', { class: 'ns-added no-print' }, `✓ 已是 ${done.join('、')}`)] : []));
 }
 
 // Put several existing pages into one series at once.

@@ -458,19 +458,30 @@ export function hypBadge(hyp) {
 async function renderHypothesis(pre, src, ctx) {
   const [first = '', ...rest] = String(src).split('\n');
   const id = (first.match(/H-\d{4}/) || [])[0];
-  const note = rest.join('\n').trim();
+  const note = rest.join('\n').trim().replace(/^本次检验\s*[:：]\s*/, '');
   const box = h('aside', { class: 'hyp-box' });
   pre.replaceWith(box);
   const hyp = id && ctx.lib ? await loadHypothesis(ctx.lib, id).catch(() => null) : null;
   if (!hyp) { box.append(h('p', { class: 'quote-missing' }, `思维笔记本里没有假设 ${id || first}。`)); return; }
   const n = evidenceCounts(hyp);
-  const ev = (hyp.evidence || []).slice(-4);
+  const ev = hyp.evidence || [];
+  // One labelled row per part: label on the left, content on the right, so the basis reads at a glance.
+  const row = (label, ...content) => h('div', { class: 'hyp-row' }, h('div', { class: 'hyp-lbl' }, label), h('div', { class: 'hyp-val' }, ...content));
+  const desc = h('div', { class: 'hyp-desc-box prose-mini' });
+  if (hyp.description) desc.innerHTML = renderMarkdown(String(hyp.description).replace(/^(\d+)[.、]\s*/gm, '$1. '), ctx);
   box.append(
-    h('div', { class: 'hyp-head' }, h('span', { class: 'hyp-tag' }, '检验假设'), h('a', { href: `#/think/${hyp.id}` }, hyp.id), h('span', { class: 'hyp-title' }, hyp.title), hypBadge(hyp)),
-    note ? h('p', { class: 'hyp-note' }, note) : null,
-    h('div', { class: 'hyp-sum' }, h('span', { class: 'ev-k k-支持' }, `支持 ${n['支持']}`), h('span', { class: 'ev-k k-反对' }, `反对 ${n['反对']}`), h('span', { class: 'ev-k k-待定' }, `待定 ${n['待定']}`)),
-    ev.length ? h('ol', { class: 'hyp-ev' }, ev.map((e) => h('li', { class: `k-${e.kind}` }, h('b', null, `证据 ${e.id.slice(1)}`), h('span', { class: 'ev-date' }, e.date || ''), ` ${e.text}`, e.src?.xid ? h('span', { class: 'ev-src' }, ` · ${e.src.xid}`) : null))) : h('p', { class: 'muted' }, '还没有证据。'),
-    (hyp.predictions || []).length ? h('div', { class: 'hyp-pred' }, h('span', { class: 'lbl' }, '若成立，应看到：'), h('ul', null, hyp.predictions.map((p) => h('li', null, p)))) : null);
+    h('header', { class: 'hyp-head' },
+      h('div', { class: 'hyp-kicker' }, h('span', { class: 'hyp-tag' }, '检验假设'), h('a', { class: 'hyp-id', href: `#/think/${hyp.id}` }, hyp.id), hypBadge(hyp)),
+      h('div', { class: 'hyp-title' }, hyp.title)),
+    h('div', { class: 'hyp-rows' },
+      note ? row('本次检验', h('span', { class: 'hyp-note' }, note)) : null,
+      hyp.description ? row('描述', desc) : null,
+      (hyp.predictions || []).length ? row('预测', h('ol', { class: 'hyp-pred' }, hyp.predictions.map((p) => h('li', null, p)))) : null,
+      row('证据链',
+        h('div', { class: 'hyp-sum' }, ['支持', '反对', '待定'].map((k) => h('span', { class: `ev-k k-${k}` }, h('b', null, n[k]), ` ${k}`))),
+        ev.length ? h('ol', { class: 'hyp-ev' }, ev.map((e) => h('li', { class: `k-${e.kind}` },
+          h('span', { class: 'ev-no' }, `E${e.id.slice(1)}`), h('span', { class: `ev-kind k-${e.kind}` }, e.kind),
+          h('span', { class: 'ev-t' }, e.text, e.src?.xid ? h('span', { class: 'ev-src' }, ` · ${e.src.xid}`) : e.src?.url ? h('span', { class: 'ev-src' }, ` · ${e.src.url}`) : null)))) : null)));
 }
 
 // ---------- chemical equations ----------

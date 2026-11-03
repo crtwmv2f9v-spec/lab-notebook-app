@@ -1459,23 +1459,47 @@ ol.ev-chain > li::before { content: ''; position: absolute; left: -22px; top: 8p
 .seg-btn.on { background: var(--k); color: #fff; border-color: var(--k); }
 .empty-tile { grid-column: 1 / -1; text-align: center; color: var(--card-ink-2); }
 /* hypothesis box inside an experiment page */
-.hyp-box { margin: 0 0 var(--cell); padding: 12px 18px 10px 20px; background: color-mix(in srgb, #ff9f0a 8%, var(--paper-solid)); border-left: 3px solid #c47f00; border-radius: 4px 10px 10px 4px; font-family: var(--font-ui); line-height: 1.5; }
-.hyp-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 14px; }
-.hyp-tag { font: 600 11px/1 var(--font-ui); letter-spacing: .12em; color: #fff; background: #c47f00; padding: 4px 7px; border-radius: 4px; }
-.hyp-head > a { font: 600 13px/1 var(--font-code); color: #a86b00; text-decoration: none; }
-.hyp-title { font-weight: 600; color: var(--ink); }
-.hyp-note { margin: 6px 0 0 !important; font-size: 14px; color: #a86b00; }
-.hyp-sum { display: flex; gap: 12px; margin: 8px 0 4px; font-size: 13px; }
-.hyp-sum .ev-k { color: var(--k); font-weight: 600; }
+/* hypothesis box in an experiment: title, then labelled rows (本次检验 / 描述 / 预测 / 证据链) */
+.hyp-box { --hy: #b5761a; margin: 0 0 var(--cell); padding: 0; background: var(--paper-solid); border: 1px solid color-mix(in srgb, var(--hy) 30%, transparent); border-radius: 12px; overflow: hidden; font-family: var(--font-ui); line-height: 1.55; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.hyp-head { padding: 12px 18px 11px; background: linear-gradient(180deg, color-mix(in srgb, var(--hy) 9%, transparent), color-mix(in srgb, var(--hy) 4%, transparent)); border-bottom: 1px solid color-mix(in srgb, var(--hy) 18%, transparent); }
+.hyp-kicker { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.hyp-tag { font: 600 10.5px/1 var(--font-ui); letter-spacing: .14em; color: var(--hy); border: 1px solid color-mix(in srgb, var(--hy) 55%, transparent); padding: 3px 6px 3px 7px; border-radius: 4px; }
+.hyp-id { font: 600 12.5px/1 var(--font-code); color: var(--hy); text-decoration: none; }
+.hyp-kicker .hyp-badges { margin-left: auto; }
 .hyp-box .hyp-conf { color: var(--ink-2); }
-ol.hyp-ev { list-style: none; margin: 0 !important; padding: 0; font-size: 13.5px; color: var(--ink-2); }
-ol.hyp-ev li { padding: 2px 0 2px 14px; position: relative; }
-ol.hyp-ev li::before { content: ''; position: absolute; left: 0; top: 9px; width: 7px; height: 7px; border-radius: 50%; background: var(--k); }
-ol.hyp-ev b { color: var(--ink); margin-right: 6px; font-weight: 600; }
-.hyp-pred { margin-top: 6px; font-size: 13.5px; color: var(--ink-2); }
-.hyp-pred .lbl { font-weight: 600; color: var(--ink); }
-.hyp-pred ul { margin: 2px 0 0 !important; padding-left: 1.3em; }
-@media print { .hyp-box { background: #fff8eb !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; break-inside: avoid; } }
+.hyp-title { margin-top: 7px; font: 650 16.5px/1.45 var(--font-ui); color: var(--ink); letter-spacing: -0.005em; }
+.hyp-rows { padding: 4px 18px 8px; }
+.hyp-row { display: grid; grid-template-columns: 4.6em 1fr; gap: 14px; padding: 8px 0; border-top: 1px solid var(--rule); font-size: 14px; color: var(--ink-2); }
+.hyp-row:first-child { border-top: 0; }
+.hyp-lbl { font: 600 12px/1.9 var(--font-ui); letter-spacing: .08em; color: var(--hy); }
+.hyp-val { min-width: 0; }
+.hyp-note { color: var(--ink); font-weight: 500; }
+.hyp-desc-box > :first-child { margin-top: 0 !important; }
+.hyp-desc-box > :last-child { margin-bottom: 0 !important; }
+.hyp-desc-box p, .hyp-desc-box ol, .hyp-desc-box ul { margin: 0 0 4px !important; line-height: 1.6 !important; font-size: 14px !important; }
+.hyp-desc-box ol, .hyp-desc-box ul, ol.hyp-pred { padding-left: 1.4em !important; }
+.hyp-desc-box li, ol.hyp-pred li { margin: 1px 0; line-height: 1.6 !important; }
+ol.hyp-pred { margin: 0 !important; }
+.hyp-sum { display: flex; gap: 14px; font-size: 13px; color: var(--ink-3); }
+.hyp-sum .ev-k b { color: var(--k); font: 700 15px/1 var(--font-ui); margin-right: 1px; }
+ol.hyp-ev { list-style: none; margin: 6px 0 0 !important; padding: 0 !important; font-size: 13.5px; }
+ol.hyp-ev li { display: grid; grid-template-columns: auto auto 1fr; gap: 8px; align-items: baseline; padding: 3px 0; line-height: 1.55 !important; }
+.ev-no { font: 600 11.5px/1 var(--font-code); color: var(--ink-3); }
+ol.hyp-ev .ev-kind { font: 600 11px/1 var(--font-ui); padding: 3px 6px; border-radius: 980px; color: var(--k); background: color-mix(in srgb, var(--k) 12%, transparent); }
+.ev-t { color: var(--ink); }
+.ev-src { color: var(--ink-3); font-size: 12.5px; }
+@media (max-width: 560px) { .hyp-row { grid-template-columns: 1fr; gap: 2px; } }
+@media print {
+  .hyp-box { --hy: #8a5a12; break-inside: avoid; box-shadow: none; border: .6pt solid #c9b28a; border-radius: 2.2mm; background: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; margin: 1mm 0 var(--cell); }
+  .hyp-head { padding: 2.4mm 4mm 2.2mm; background: #faf5ec !important; border-bottom: .5pt solid #e3d4b8; }
+  .hyp-title { font-size: 11pt; margin-top: 1.4mm; line-height: 1.4; }
+  .hyp-rows { padding: .6mm 4mm 1.2mm; }
+  .hyp-row { grid-template-columns: 13mm 1fr; gap: 3mm; padding: 1.6mm 0; border-top: .4pt solid #ece4d6; font-size: 9pt; line-height: 1.5; }
+  .hyp-lbl { font-size: 8pt; line-height: 1.75; }
+  .hyp-desc-box p, .hyp-desc-box ol, .hyp-desc-box ul, .hyp-desc-box li, ol.hyp-pred li, ol.hyp-ev li { font-size: 9pt !important; line-height: 1.5 !important; background: none !important; }
+  .hyp-sum { font-size: 8.5pt; } .hyp-sum .ev-k b { font-size: 10pt; }
+  .hyp-tag, .hyp-status, ol.hyp-ev .ev-kind { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
 
 /* ================= potential research topics ================= */
 .topics-strip { max-width: 1240px; margin: 20px auto 0; padding: 0 24px; }
@@ -1508,3 +1532,9 @@ ol.hyp-ev b { color: var(--ink); margin-right: 6px; font-weight: 600; }
 .check.choice > span { flex: 1; text-align: left; }
 ol.pick-list.small { max-height: 28vh; padding-left: 28px; display: block; font-size: 14px; }
 ol.pick-list.small li { margin: 2px 0; }
+
+/* confidence switch on the hypothesis page */
+.conf-seg { align-items: center; gap: 0; padding: 3px; border-radius: 980px; background: color-mix(in srgb, var(--card-ink, var(--ink)) 6%, transparent); --k: #c47f00; }
+.conf-seg .seg-lbl { font: 500 12.5px/1 var(--font-ui); color: var(--card-ink-2, var(--ink-2)); padding: 0 8px 0 10px; }
+.conf-seg .seg-btn { border: 0; padding: 6px 14px; font-size: 13px; color: var(--card-ink-2, var(--ink-2)); }
+.conf-seg .seg-btn.on { background: #ff9f0a; color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
