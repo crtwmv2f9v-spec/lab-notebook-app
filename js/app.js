@@ -14,7 +14,7 @@ import {
   SOLUTIONS_PATH, SOLUTION_FIELDS, SOLUTION_STATUS, solutionFields, LOCKED_SOLUTION_KEYS, nextSolutionId, parseRecipe, recipeText, loadSolutions, solutionAlerts,
   HYP_STATUS, HYP_CONF, EV_KIND, hypPath, hypIds, loadHypothesis, loadHypotheses, nextHypId, evidenceCounts, nextEvidenceId,
   TOPICS_PATH, TOPIC_STATUS, TOPIC_PRIORITY, TOPIC_EVERY, loadTopics, activeTopic, topicAlerts,
-  parseTSV, RESULT_HINT, looksLikeHeader, mdTable, MATERIAL_FROM, readMaterials, writeMaterials,
+  parseTSV, RESULT_HINT, looksLikeHeader, mdTable, MATERIAL_FROM, readMaterials, writeMaterials, renameMaterialsHeading,
 } from './lab.js';
 import { search } from './search.js';
 import { h, icon, debounce, fmtBytes, loadScript } from './util.js';
@@ -708,7 +708,7 @@ async function buildPageSheet(vol, num, { forPrint = false } = {}) {
   const md = await lib.readPage(vol, num);
   const { fm, body } = parseFrontMatter(md);
   const content = h('div', { class: 'sheet-body prose' });
-  const shown = readMaterials(body) || !(fm.reagents || []).length ? body : writeMaterials(body, fm.reagents.map((id) => ({ id })));
+  const shown = renameMaterialsHeading(readMaterials(body) || !(fm.reagents || []).length ? body : writeMaterials(body, fm.reagents.map((id) => ({ id }))));
   const ready = renderInto(content, shown, pageCtx(vol, num, null, { xid: fm.id || '' }));
   const panel = await expPanel(fm, vol, num, { forPrint }).catch(() => null);
   if (forPrint) return { el: recordSheet(vol, num, fm, panel, content), ready, fm, body };
@@ -1116,8 +1116,8 @@ async function viewEditor(vol, num, params) {
     h('button', { class: 'tool text mk-ci', type: 'button', title: '画圈 {{文字}}', onclick: () => wrap('{{', '}}', '重点') }, '圈出'),
     h('button', { class: 'tool text', type: 'button', title: '引用另一次实验的某一节（例如完全相同的操作步骤）', onclick: () => openQuoteDialog(vol, num, (block) => insertBlock(block)) }, '引用实验'),
     h('button', { class: 'tool text', type: 'button', title: '引用思维笔记本里的假设（本实验要检验的）', onclick: () => openCiteHypothesis(vol, num, (block) => insertBlock(block)) }, '引用假设'),
-    h('button', { class: 'tool text', type: 'button', title: '从试剂库 / 溶液库导入本次用到的试剂和溶液（写在页面最下方“试剂等关键资源”）',
-      onclick: () => openMaterials(vol, num, { text: ta.value, reagents: fm.reagents || [], onInsert: (rows) => { ta.value = writeMaterials(ta.value, rows); changed(); toast('已写入页面最下方“试剂等关键资源”。'); } }) }, '试剂'),
+    h('button', { class: 'tool text', type: 'button', title: '从试剂库 / 溶液库导入本次用到的试剂和溶液（写在页面最下方“试剂”一节）',
+      onclick: () => openMaterials(vol, num, { text: ta.value, reagents: fm.reagents || [], onInsert: (rows) => { ta.value = writeMaterials(ta.value, rows); changed(); toast('已写入页面最下方“试剂”一节。'); } }) }, '试剂'),
     h('span', { class: 'tool-sep' }),
     h('button', { class: 'tool text', type: 'button', title: '反应方程式（一行一个）', onclick: () => insertBlock('```reaction\n2 H2O2 ->[Pt] 2 H2O + O2 | (1)\n```') }, '反应式'),
     h('button', { class: 'tool text', type: 'button', title: '操作步骤：操作 | 用量 | 物质 | 加到/容器 | 条件 | 细节', onclick: () => insertBlock('```steps\n移取 | 10 mL | DI 水 | 20 mL 玻璃瓶 | 室温 | 沿瓶壁缓慢加入\n```') }, '步骤'),
@@ -1670,11 +1670,11 @@ async function openMaterials(vol, num, { text = null, onInsert = null, reagents 
   drawTabs(); drawHits(); drawChosen();
   const why = reasonField(fm, 'mt-why');
   modal({
-    title: `试剂等关键资源 · ${fm.id || `p. ${num}`}`, wide: true,
+    title: `试剂 · ${fm.id || `p. ${num}`}`, wide: true,
     body: h('div', { class: 'form' },
       tabs, q, hits,
       h('span', { class: 'label' }, '本次使用'), chosen,
-      h('p', { class: 'muted' }, '保存后，页面最下方“试剂等关键资源”会列出编号、名称、CAS、规格、厂商、批号/到货、来源和用量。用量留空时，自动取“操作步骤”里写的量。'),
+      h('p', { class: 'muted' }, '保存后，页面最下方“试剂”一节会列出编号、名称、CAS、规格、厂商、批号/到货、来源和用量。用量留空时，自动取“操作步骤”里写的量。'),
       why.el),
     buttons: [{ label: '取消' }, {
       label: '保存', primary: true,
@@ -1686,7 +1686,7 @@ async function openMaterials(vol, num, { text = null, onInsert = null, reagents 
           await updatePage(vol, num, ({ fm: f, body: b }) => {
             if (rows.length) f.reagents = rows.map((m) => m.id); else delete f.reagents;
             return { fm: f, body: writeMaterials(b, rows) };
-          }, `Resources for ${fm.id || `p. ${num}`}`, why.value() || '更新试剂等关键资源');
+          }, `Resources for ${fm.id || `p. ${num}`}`, why.value() || '更新试剂');
           toast('已保存。');
         } catch (e) { toast(saveError(e)); return false; }
       },

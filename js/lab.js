@@ -383,9 +383,11 @@ export function readMaterials(body) {
   const m = String(body || '').match(MATERIALS_RE);
   return m ? parseMaterials(m[1]) : null;
 }
+// The section was first called 试剂等关键资源; pages written then read as 试剂 too.
+export const renameMaterialsHeading = (body) => String(body || '').replace(/^##[ \t]+试剂等关键资源[ \t]*$/m, '## 试剂');
 // Rewrite the block in place, or add it under its own heading at the very end of the page.
 export function writeMaterials(body, list) {
   const block = `\`\`\`materials\n${materialsText(list)}\n\`\`\``;
-  if (MATERIALS_RE.test(body)) return body.replace(MATERIALS_RE, block);
-  return `${String(body || '').trimEnd()}\n\n## 试剂等关键资源\n\n${block}\n`;
+  if (MATERIALS_RE.test(body)) return renameMaterialsHeading(body.replace(MATERIALS_RE, block));
+  return `${String(body || '').trimEnd()}\n\n## 试剂\n\n${block}\n`;
 }
