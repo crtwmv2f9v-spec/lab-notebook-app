@@ -28,7 +28,8 @@ import { route } from './app.js';
 export function viewVolume(id) {
   const v = lib.volume(id);
   if (!v) return viewMissing('笔记本里没有这个卷，可能已改名或删除。');
-  const pages = lib.pages(id);
+  // Contents run by experiment date, earliest first; page numbers stay as they were (links and printouts cite them).
+  const pages = [...lib.pages(id)].sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.num - b.num);
   const more = h('button', { class: 'btn icon ghost', 'aria-label': '更多', onclick: (e) => menu(e.currentTarget, [
     { icon: 'edit', label: '卷信息', run: () => openVolumeDetails(v) },
     pages.length ? { icon: 'print', label: '打印整卷 / 存为 PDF', run: () => printVolume(id) } : null,
@@ -716,8 +717,8 @@ export async function openDeleteVolume(v) {
 // this copies a ready instruction to paste into Claude Code.
 function askClaude(vol, num, fm) {
   const v = lib.volume(vol);
-  const ref = `${(v?.code || vol).toUpperCase()}:${num}`;
-  const name = `${ref}${fm.id ? `（${fm.id}）` : ''}「${fm.title || ''}」`;
+  // The experiment number (date + volume code + sequence) never changes, so it leads; volume and date are the fallback.
+  const name = fm.id ? `${fm.id}「${fm.title || ''}」` : `「${v?.title || vol}」${fm.date ? `${String(fm.date).slice(0, 10)} ` : ''}第 ${num} 页「${fm.title || ''}」`;
   const jobs = [
     ['润色', `/labnote 润色记录本 ${name}：只改语言，事实、数值、单位和特殊块保持原样；先给我看改动对照，我同意后写回并推送。`],
     ['推断结论', `/labnote 读取记录本 ${name}，连同它引用的假设、样品表和原始数据，推断能下的结论：每条标出依据，区分“数据支持”和“推测”，并指出还缺哪些数据。`],
