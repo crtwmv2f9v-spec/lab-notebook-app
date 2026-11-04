@@ -1632,11 +1632,3 @@ ol.pick-list.small li { margin: 2px 0; }
   .view.editor .preview-pane { position: sticky; top: calc(env(safe-area-inset-top) + 61px); height: calc(100vh - 61px - 74px); overflow: auto; background: #3d4351; }
 }
 @media (max-width: 1099px) { .view.editor .sheet.page.editing { width: auto; } .pdf-wrap { padding: 10px; } }
-
-/* ---------- home: use the whole window ---------- */
-.hero, .section-title, .shelf, .dash, .topics-strip, .due-bar { max-width: none; }
-.hero, .section-title, .shelf, .dash, .topics-strip { padding-left: clamp(16px, 3vw, 48px); padding-right: clamp(16px, 3vw, 48px); }
-.due-bar { width: calc(100% - 2 * clamp(16px, 3vw, 48px)); }
-.tile.recent { max-width: none; margin-left: clamp(16px, 3vw, 48px); margin-right: clamp(16px, 3vw, 48px); }
-.shelf { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
-@media (min-width: 1500px) { .dash { grid-template-columns: 1.2fr 1fr 1fr; } }
