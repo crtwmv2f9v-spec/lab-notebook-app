@@ -1813,3 +1813,16 @@ a.m-id.missing { text-decoration: line-through; opacity: .6; }
   .sheet.record .prose .hyp-box .hyp-why p + p { margin-top: .8mm !important; }
   .sheet.record .prose h2, .sheet.record .prose h3 { break-after: avoid; page-break-after: avoid; }
 }
+
+/* v34: boards show everything at a glance — no folding, no inner scroll, no clamped text */
+ul.memos { max-height: none !important; overflow: visible !important; }
+.pj-why { display: block !important; -webkit-line-clamp: unset !important; overflow: visible !important; }
+.soon { margin-top: 10px; padding-top: 10px; border-top: 0.5px solid var(--card-line); }
+.soon-head { margin: 0 0 4px; font: 500 14px/1.4 var(--font-ui); color: var(--card-ink-2); }
+@media (min-width: 1100px) { .rail { position: static !important; max-height: none !important; overflow: visible !important; } }
+/* reading list: title, then authors · journal · year */
+a.paper-title { display: block; font: 600 14px/1.4 var(--font-ui); color: var(--card-ink, var(--ink)); text-decoration: none; }
+a.paper-title:hover { text-decoration: underline; }
+.task.done a.paper-title { text-decoration: line-through; color: var(--card-ink-2, var(--ink-3)); }
+.paper-meta { display: inline-flex; flex-wrap: wrap; gap: 0 8px; font-style: italic; }
+.paper-meta a { font-style: normal; }

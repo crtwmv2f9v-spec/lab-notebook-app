@@ -1,6 +1,6 @@
 // Offline support: the app shell and libraries are cached; notebook data is
 // cached by the app itself (IndexedDB), so GitHub API calls pass straight through.
-const VERSION = 'labnote-v33';
+const VERSION = 'labnote-v34';
 const SHELL = [
   './', 'index.html', 'css/notebook.css', 'manifest.webmanifest',
   'js/app.js', 'js/core.js', 'js/settings.js', 'js/home.js', 'js/planner.js', 'js/pages.js', 'js/editor.js', 'js/printing.js', 'js/think.js',

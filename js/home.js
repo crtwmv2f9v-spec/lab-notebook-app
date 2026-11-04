@@ -267,17 +267,8 @@ export function cardHead(title, sub, { add = null, right = null, level = 'h2' } 
     h('div', { class: 'card-tt' }, h(level, null, title), sub || null),
     right, plus);
 }
-// Show the first n items of a list; “还有 N 项” unfolds the rest in place (remembered across redraws).
-export function foldList(ul, key, n = 4) {
-  const items = [...ul.children];
-  if (items.length <= n) return ul;
-  const btn = h('button', { type: 'button', class: 'fold-btn' });
-  const set = (open) => { items.slice(n).forEach((li) => { li.hidden = !open; }); btn.textContent = open ? '收起' : `还有 ${items.length - n} 项`; };
-  btn.addEventListener('click', () => { const open = !unfolded.has(key); if (open) unfolded.add(key); else unfolded.delete(key); set(open); });
-  set(unfolded.has(key));
-  ul.append(h('li', { class: 'fold' }, btn));
-  return ul;
-}
+// Boards show every item: nothing is folded away behind “还有 N 项” (kept as a function so callers stay simple).
+export function foldList(ul) { return ul; }
 export function railCard(title, sub, ...kids) {
   const flat = kids.flat().filter(Boolean);
   const add = flat.find((k) => k.classList?.contains('add-row')) || null;
@@ -291,10 +282,76 @@ export function catList(tasks, cat, { placeholder, dated = false, dateRequired =
   const wk = weekStart(todayISO());
   const add = dated
     ? addDated(placeholder, (text, date) => changeTasks((l) => l.push(newTask(text, date ? weekStart(date) : wk, date, cat)), `Planner: add ${cat}`, redrawHome), { dateRequired })
-    : addBox(placeholder, (text) => changeTasks((l) => l.push(newTask(text, wk, null, cat)), `Planner: add ${cat}`, redrawHome));
+    : addBox(placeholder, (text) => changeTasks((l) => l.push(newTask(text, wk, null, cat)), `Planner: add ${cat}`, redrawHome).then(() => { if (cat === '文献') fillPaperRefs(); }));
   add.querySelector('input').dataset.k = `cat-${cat}`;
-  const rows = [...open.map((x) => taskRow(x, { redraw: redrawHome, showCat: false, meta: linkMeta(x.text) })), ...done.map((x) => taskRow(x, { redraw: redrawHome, showCat: false }))];
+  const row = (x) => (cat === '文献' ? paperRow(x) : taskRow(x, { redraw: redrawHome, showCat: false, meta: linkMeta(x.text) }));
+  const rows = [...open.map(row), ...done.map(row)];
   return { open, done, el: [add, foldList(h('ul', { class: 'tasks rail-tasks' }, rows), `cat-${cat}`)] };
+}
+// ----- reading list: a pasted link or DOI shows as title · authors · journal · year -----
+// Looked up once from Crossref (or DataCite for arXiv) and stored on the entry as `ref`, so it also works offline later.
+const triedRefs = new Set();
+export function paperKey(text) {
+  const t = decodeURIComponent(String(text)).trim();
+  const doi = t.match(/\b(10\.\d{4,9}\/[^\s?#"<>]+)/);
+  if (doi) return { doi: doi[1].replace(/[.,;)\]]+$/, '').replace(/\/(full|abstract|epdf|pdf|html)$/i, '') };
+  const pii = t.match(/\/pii\/(S?[0-9X]{15,17})/i);
+  if (pii) return { pii: pii[1].toUpperCase() };
+  const nat = t.match(/nature\.com\/articles\/([a-z0-9.-]+)/i);
+  if (nat) return { doi: `10.1038/${nat[1]}` };
+  const rsc = t.match(/pubs\.rsc\.org\/[^\s]*\/(?:articlelanding|articlehtml|articlepdf)\/\d{4}\/\w+\/([a-z0-9]+)/i);
+  if (rsc) return { doi: `10.1039/${rsc[1].toUpperCase()}` };
+  const arx = t.match(/arxiv\.org\/(?:abs|pdf)\/(\d{4}\.\d{4,5})/i);
+  if (arx) return { doi: `10.48550/arXiv.${arx[1]}` };
+  return null;
+}
+function shortAuthors(list) {
+  const names = (list || []).map((a) => a.family || a.familyName || a.name || '').filter(Boolean);
+  return names.length > 2 ? `${names[0]} et al.` : names.join(', ');
+}
+export async function lookupPaper(text) {
+  const key = paperKey(text);
+  if (!key) return null;
+  if (key.doi && /^10\.48550\//.test(key.doi)) {
+    const r = await fetch(`https://api.datacite.org/dois/${encodeURIComponent(key.doi)}`);
+    if (!r.ok) return null;
+    const a = (await r.json()).data?.attributes || {};
+    return { title: a.titles?.[0]?.title || '', authors: shortAuthors(a.creators), journal: 'arXiv', year: String(a.publicationYear || ''), doi: key.doi };
+  }
+  const sel = 'select=DOI,title,author,container-title,short-container-title,issued';
+  const r = await fetch(key.doi ? `https://api.crossref.org/works/${encodeURIComponent(key.doi)}` : `https://api.crossref.org/works?filter=alternative-id:${key.pii}&rows=1&${sel}`);
+  if (!r.ok) return null;
+  const j = (await r.json()).message;
+  const w = key.doi ? j : j?.items?.[0];
+  if (!w?.title?.[0]) return null;
+  return {
+    title: w.title[0].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim(),
+    authors: shortAuthors(w.author),
+    journal: w['short-container-title']?.[0] || w['container-title']?.[0] || '',
+    year: String(w.issued?.['date-parts']?.[0]?.[0] || ''),
+    doi: w.DOI,
+  };
+}
+// Fills in any reading-list entry that has a link but no title yet (new ones, and ones added before this existed).
+export async function fillPaperRefs() {
+  const doc = await loadPlanner().catch(() => null);
+  const todo = (doc?.tasks || []).filter((x) => x.cat === '文献' && !x.ref && !triedRefs.has(x.id) && paperKey(x.text));
+  if (!todo.length) return;
+  const found = [];
+  for (const x of todo) {
+    triedRefs.add(x.id);
+    try { const ref = await lookupPaper(x.text); if (ref) found.push([x.id, ref]); } catch { /* offline or blocked: tried again after the next reload */ }
+  }
+  if (found.length) changeTasks((l) => { for (const [id, ref] of found) { const t = l.find((y) => y.id === id); if (t) t.ref = ref; } }, 'Planner: paper titles', redrawHome);
+}
+function paperRow(x) {
+  const href = x.ref?.doi ? `https://doi.org/${x.ref.doi}` : linkMeta(x.text)?.href;
+  if (!x.ref) return taskRow(x, { redraw: redrawHome, showCat: false, meta: paperKey(x.text) ? h('span', { class: 'paper-meta' }, '正在查找题目…', linkMeta(x.text)) : linkMeta(x.text) });
+  const li = taskRow(x, { redraw: redrawHome, showCat: false,
+    meta: h('span', { class: 'paper-meta' }, [x.ref.authors, x.ref.journal, x.ref.year].filter(Boolean).join(' · '), href ? h('a', { href, target: '_blank', rel: 'noopener' }, '打开') : null) });
+  const main = li.querySelector('.task-main > .task-text');
+  main?.replaceWith(h('a', { class: 'task-text paper-title', href, target: '_blank', rel: 'noopener', title: x.text }, x.ref.title));
+  return li;
 }
 // A DOI or link in a reading-list entry becomes a link.
 export function linkMeta(text) {
@@ -344,6 +401,7 @@ export function homeRails() {
       h('button', { class: 'btn small rail-add', type: 'button', onclick: () => editPaper(null) }, icon('plus', 14), '新建论文'));
     for (const [card, key] of [[pj, 'pj'], [pp, 'pp']]) { const ul = card.querySelector('ul.board-list'); if (ul) foldList(ul, key); }
     const rd = catList(tasks, '文献', { placeholder: '粘贴 DOI、链接或题目' });
+    setTimeout(fillPaperRefs, 300);
     const ins = catList(tasks, '仪器', { placeholder: '仪器和时间段，如 Keithley 14:00–17:00', dated: true, dateRequired: true });
     left.replaceChildren(
       h('p', { class: 'rail-title' }, '科研主线'), pj, pp,
@@ -408,7 +466,7 @@ export function dashboard() {
         carried.map((x) => taskRow(x, { redraw: redrawHome, extra: h('button', { class: 'btn small ghost', type: 'button', onclick: () => moveTask(x.id, t, redrawHome) }, '移到今天') })),
         mine.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: redrawHome })),
         due.map((x) => reminderRow(x, redrawHome))),
-      soon.length ? h('details', { class: 'soon' }, h('summary', null, `接下来 7 天的实验提醒（${soon.length}）`),
+      soon.length ? h('div', { class: 'soon' }, h('h4', { class: 'soon-head' }, `接下来 7 天的实验提醒（${soon.length}）`),
         h('ul', { class: 'tasks' }, soon.map((x) => reminderRow(x, redrawHome))),
         h('button', { class: 'btn small ghost', type: 'button', onclick: () => exportIcs(fus.filter((x) => !x.done)) }, '导出到手机日历')) : null);
 
