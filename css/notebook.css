@@ -1805,3 +1805,11 @@ a.m-id.missing { text-decoration: line-through; opacity: .6; }
 .hyp-why p { margin: 0 0 .35em; }
 .hyp-why p:last-child { margin-bottom: 0; }
 .think .hyp-desc p { margin: 0 0 .5em; }
+
+/* v32 PDF: lists and reasoning points inside the hypothesis box are tight like the rest of the box,
+   not spaced like body paragraphs (which leave a whole ruled line under each one). Headings stay with what follows. */
+@media print {
+  .sheet.record .prose .hyp-box p, .sheet.record .prose .hyp-box ul, .sheet.record .prose .hyp-box ol { margin: 0 !important; }
+  .sheet.record .prose .hyp-box .hyp-why p + p { margin-top: .8mm !important; }
+  .sheet.record .prose h2, .sheet.record .prose h3 { break-after: avoid; page-break-after: avoid; }
+}

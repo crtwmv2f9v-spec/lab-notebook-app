@@ -159,6 +159,18 @@ try {
     await shot('print-page1', { width: 794, height: 1123, print: true });
     await evaluate("document.body.classList.remove('print-volume'); return 1;");
   });
+  await check('print-hypothesis', async () => {
+    await go('#/v/oect/2', "document.querySelector('aside.hyp-box .hyp-why p + p')");
+    await evaluate(`window.print = () => { window.__printed = 2; }; [...document.querySelectorAll('.topbar button')].pop().click(); await new Promise(r => setTimeout(r, 300)); [...document.querySelectorAll('.menu button')].find(b => b.textContent.includes('打印 / 存为 PDF')).click(); return 1;`);
+    await waitFor('window.__printed === 2', 15000);
+    await send('Emulation.setEmulatedMedia', { media: 'print' });
+    const gap = await evaluate(`const ps = [...document.querySelectorAll('#print-root .hyp-why p')]; if (ps.length < 2) return -1; return Math.max(...ps.slice(1).map((p, i) => p.getBoundingClientRect().top - ps[i].getBoundingClientRect().bottom));`);
+    await send('Emulation.setEmulatedMedia', { media: '' });
+    if (gap < 0) throw new Error('no reasoning points in the printout');
+    if (gap > 6) throw new Error(`reasoning points ${gap.toFixed(1)}px apart in print`);
+    await evaluate("document.body.classList.remove('print-volume'); return 1;");
+    return `gap ${gap.toFixed(1)}px`;
+  });
   await check('editor', async () => {
     await go('#/v/oect/2/edit', "document.querySelector('.pdf-frame')?.contentDocument?.querySelector('.rh-title')");
     const t = await evaluate("return document.querySelector('.pdf-frame').contentDocument.querySelector('.rh-title').textContent;");
