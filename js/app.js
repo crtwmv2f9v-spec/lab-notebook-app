@@ -46,6 +46,15 @@ export async function boot() {
 }
 
 export function globalKeys(e) {
+  // Cmd/Ctrl+S never saves the web page: it presses the open dialog's 保存, or the editor's 保存.
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    if (e.isComposing || e.repeat) return;
+    const dlg = [...document.querySelectorAll('.modal-root')].pop();
+    const btn = dlg ? dlg.querySelector('.modal-foot .btn.primary:not([disabled])') : document.querySelector('.ed-save:not([disabled])');
+    btn?.click();
+    return;
+  }
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
   if ((e.key === '/' && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) {
     if (!lib || document.querySelector('.modal-root')) return;

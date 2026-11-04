@@ -1800,3 +1800,8 @@ a.m-id.missing { text-decoration: line-through; opacity: .6; }
 .mk-ink { background: linear-gradient(90deg, #d7263d, #d97706, #1a8f4a, #1f6feb, #8b3fd1); -webkit-background-clip: text; background-clip: text; color: transparent !important; font-weight: 700; }
 @media print { .ink { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
 .claude-jobs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+/* v31: reasoning points each on their own line */
+.hyp-why p { margin: 0 0 .35em; }
+.hyp-why p:last-child { margin-bottom: 0; }
+.think .hyp-desc p { margin: 0 0 .5em; }

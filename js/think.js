@@ -2,7 +2,7 @@
 import { fmtDate, nowISO, parseFrontMatter, parseRef, todayISO } from './model.js';
 import { hypBadge, renderInto } from './render.js';
 import {
-  EV_KIND, HYP_CONF, HYP_STATUS, evidenceCounts, hypIds, hypObservations, predictionState, hypPath, loadHypotheses, loadHypothesis,
+  EV_KIND, HYP_CONF, HYP_STATUS, evidenceCounts, hypIds, hypObservations, rationaleItems, predictionState, hypPath, loadHypotheses, loadHypothesis,
   nextEvidenceId, nextHypId, sectionOf,
 } from './lab.js';
 import { search } from './search.js';
@@ -72,7 +72,7 @@ export function editHypothesis(hyp) {
   const isNew = !hyp;
   const obs = h('textarea', { id: 'hy-obs', rows: 5, placeholder: '只写看到、量到的事实，不写解释。一行一条，依次编号 O1、O2…\n例如：P3HT/氯仿墨水打印到银电极上时发生气爆，降低激光功率也无法避免\n同一墨水在纯石英片上可正常打印' }, hypObservations(hyp || {}).join('\n'));
   const title = h('input', { id: 'hy-title', value: hyp?.title || '', placeholder: '对上述现象最可能的解释，例如：气爆由银光热加热引发、低沸点溶剂暴沸所致' });
-  const why = h('textarea', { id: 'hy-why', rows: 3, placeholder: '这个解释为什么能同时说明 O1、O2…；排除了哪些其他解释（可不填）' }, hyp?.rationale || '');
+  const why = h('textarea', { id: 'hy-why', rows: 3, placeholder: '这个解释为什么能同时说明 O1、O2…；排除了哪些其他解释（可不填）。一行一点，例如 ① … ② …' }, hyp?.rationale || '');
   const preds = h('textarea', { id: 'hy-pred', rows: 3, placeholder: '若假设成立，在还没做过的实验里应看到什么。一行一条，编号 P1、P2…\n例如：改用邻二氯苯（沸点 180 °C）后，同样条件下不再气爆' }, (hyp?.predictions || []).join('\n'));
   const status = h('select', { id: 'hy-status' }, HYP_STATUS.map((x) => h('option', { selected: (hyp?.status || '提出') === x }, x)));
   const conf = h('select', { id: 'hy-conf' }, HYP_CONF.map((x) => h('option', { selected: (hyp?.confidence || '低') === x }, x)));
@@ -198,7 +198,7 @@ export async function viewHypothesis(id) {
   };
   const obs = hypObservations(hyp);
   const why = h('div', { class: 'prose hyp-desc' });
-  if (hyp.rationale) renderInto(why, hyp.rationale, { lib, vol: null, num: null, urls, resolveBlob: (name) => lib.readBlob(name.replace(/^\//, '')) });
+  if (hyp.rationale) renderInto(why, rationaleItems(hyp.rationale).join('\n\n'), { lib, vol: null, num: null, urls, resolveBlob: (name) => lib.readBlob(name.replace(/^\//, '')) });
   const rel = relatedPages(id);
   const evidence = hyp.evidence || [];
   const upd = async (f, msg) => { const x = await cloneHyp(id); f(x); try { await saveHyp(x, msg); route({ quiet: true }); } catch (e) { toast(saveError(e)); } };

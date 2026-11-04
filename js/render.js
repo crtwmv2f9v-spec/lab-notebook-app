@@ -1,7 +1,7 @@
 // Markdown, math, page links, charts, data tables and Jupyter notebooks.
 import { esc, h, loadScript, icon } from './util.js';
 import { parseRef, parseFrontMatter } from './model.js';
-import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions, loadHypothesis, evidenceCounts, hypObservations, predictionState, hypItem, parseMaterials, loadMethod } from './lab.js';
+import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions, loadHypothesis, evidenceCounts, hypObservations, rationaleItems, predictionState, hypItem, parseMaterials, loadMethod } from './lab.js';
 
 const CDN = 'https://cdn.jsdelivr.net/npm/';
 export const LIBS = {
@@ -520,7 +520,7 @@ async function renderHypothesis(pre, src, ctx) {
     h('div', { class: 'hyp-rows' },
       obs.length ? row('观察现象', coded(obs.map((o, i) => [`O${i + 1}`, o]))) : null,
       row('假设', h('span', { class: 'hyp-title' }, hyp.title)),
-      hyp.rationale ? row('推理', h('span', null, hyp.rationale)) : null,
+      hyp.rationale ? row('推理', h('div', { class: 'hyp-why' }, rationaleItems(hyp.rationale).map((t) => h('p', null, t)))) : null,
       row('验证证据',
         h('div', { class: 'hyp-sum' }, ['支持', '反对', '待定'].map((k) => h('span', { class: `ev-k k-${k}` }, h('b', null, n[k]), ` ${k}`))),
         ev.length ? h('ol', { class: 'hyp-ev' }, ev.map((e) => h('li', { class: `k-${e.kind}` },

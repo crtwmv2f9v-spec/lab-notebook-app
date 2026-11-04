@@ -116,11 +116,19 @@ export async function viewEditor(vol, num, params) {
 
   // ----- text helpers -----
   const fire = () => ta.dispatchEvent(new Event('input'));
+  // Replace a range through the browser's own editing so Cmd+Z / Cmd+Shift+Z can undo toolbar actions too.
+  function put(text, s, e, mode = 'end') {
+    ta.focus();
+    ta.setSelectionRange(s, e);
+    let ok = false;
+    try { ok = document.execCommand('insertText', false, text); } catch { ok = false; }
+    if (!ok || ta.value.slice(s, s + text.length) !== text) ta.setRangeText(text, s, e, mode);
+    else if (mode === 'select') ta.setSelectionRange(s, s + text.length);
+  }
   function wrap(before, after = before, placeholder = 'text') {
     const s = ta.selectionStart; const e = ta.selectionEnd;
     const sel = ta.value.slice(s, e);
-    ta.focus();
-    ta.setRangeText(before + (sel || placeholder) + after, s, e, 'end');
+    put(before + (sel || placeholder) + after, s, e);
     if (!sel) { ta.selectionStart = s + before.length; ta.selectionEnd = s + before.length + placeholder.length; }
     fire();
   }
@@ -128,20 +136,19 @@ export async function viewEditor(vol, num, params) {
     const s = ta.selectionStart; const e = ta.selectionEnd;
     const start = ta.value.lastIndexOf('\n', s - 1) + 1;
     const chunk = ta.value.slice(start, e);
-    ta.focus();
-    ta.setRangeText(chunk.split('\n').map((l) => prefix + l).join('\n'), start, e, 'end');
+    put(chunk.split('\n').map((l) => prefix + l).join('\n'), start, e);
     fire();
   }
   function insertBlock(text, selectFrom, selectLen) {
     const s = ta.selectionStart;
     const before = ta.value.slice(0, s);
     const lead = !before || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
-    ta.focus();
-    ta.setRangeText(`${lead}${text}\n`, s, ta.selectionEnd, 'end');
+    put(`${lead}${text}\n`, s, ta.selectionEnd);
     if (selectFrom != null) { ta.selectionStart = s + lead.length + selectFrom; ta.selectionEnd = ta.selectionStart + selectLen; }
     fire();
   }
-  function insertInline(text) { ta.focus(); ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, 'end'); fire(); }
+  function insertInline(text) { put(text, ta.selectionStart, ta.selectionEnd); fire(); }
+  function replaceAll(text) { if (text === ta.value) return; const keep = ta.selectionStart; put(text, 0, ta.value.length); ta.setSelectionRange(Math.min(keep, text.length), Math.min(keep, text.length)); fire(); }
 
   // ----- attachments -----
   const allNames = () => new Set([...existing.filter((n) => !removed.has(n)), ...local.keys()]);
@@ -213,7 +220,11 @@ export async function viewEditor(vol, num, params) {
 
   // ----- toolbar -----
   const tb = (ic, label, run) => h('button', { class: 'tool', type: 'button', title: label, 'aria-label': label, onclick: run }, icon(ic, 18));
+  const hist = (cmd) => { ta.focus(); try { document.execCommand(cmd); } catch { /* not supported */ } };
   const toolbar = h('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Formatting' },
+    h('button', { class: 'tool text', type: 'button', title: '撤销（⌘Z）', 'aria-label': '撤销', onclick: () => hist('undo') }, '↶'),
+    h('button', { class: 'tool text', type: 'button', title: '重做（⇧⌘Z）', 'aria-label': '重做', onclick: () => hist('redo') }, '↷'),
+    h('span', { class: 'tool-sep' }),
     tb('heading', '标题', () => prefixLines('## ')),
     tb('bold', '加粗', () => wrap('**')),
     tb('italic', '斜体', () => wrap('*')),
@@ -236,7 +247,7 @@ export async function viewEditor(vol, num, params) {
     h('button', { class: 'tool text', type: 'button', title: '引用另一次实验的某一节（例如完全相同的操作步骤）', onclick: () => openQuoteDialog(vol, num, (block) => insertBlock(block)) }, '引用实验'),
     h('button', { class: 'tool text', type: 'button', title: '引用思维笔记本里的假设：整条逻辑链做成假设框，或在步骤里行内引用某条观察 O / 预测 P', onclick: () => openCiteHypothesis(vol, num, (block) => insertBlock(block), (t) => insertInline(t)) }, '引用假设'),
     h('button', { class: 'tool text', type: 'button', title: '从试剂库 / 溶液库导入本次用到的试剂和溶液（写在页面最下方“试剂”一节）',
-      onclick: () => openMaterials(vol, num, { text: ta.value, reagents: fm.reagents || [], onInsert: (rows) => { ta.value = writeMaterials(ta.value, rows); changed(); toast('已写入页面最下方“试剂”一节。'); } }) }, '试剂'),
+      onclick: () => openMaterials(vol, num, { text: ta.value, reagents: fm.reagents || [], onInsert: (rows) => { replaceAll(writeMaterials(ta.value, rows)); toast('已写入页面最下方“试剂”一节。'); } }) }, '试剂'),
     h('button', { class: 'tool text', type: 'button', title: '引用方法卡片（插入 M-编号，页面上点它可打开卡片）', onclick: () => pickMethod(vol, (m) => insertInline(`${m.id}（${m.title}）`)) }, '方法'),
     h('span', { class: 'tool-sep' }),
     h('button', { class: 'tool text', type: 'button', title: '反应方程式（一行一个）', onclick: () => insertBlock('```reaction\n2 H2O2 ->[Pt] 2 H2O + O2 | (1)\n```') }, '反应式'),
@@ -247,7 +258,6 @@ export async function viewEditor(vol, num, params) {
 
   ta.addEventListener('keydown', (e) => {
     const mod = e.metaKey || e.ctrlKey;
-    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(false); }
     if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); wrap('**'); }
     if (mod && e.key.toLowerCase() === 'i') { e.preventDefault(); wrap('*'); }
     if (e.key === 'Tab' && !e.shiftKey && !mod) {
@@ -272,7 +282,7 @@ export async function viewEditor(vol, num, params) {
 
   // ----- save -----
   let saving = false;
-  const saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => save(false) }, origSigned ? '保存修订' : '保存');
+  const saveBtn = h('button', { class: 'btn ed-save', type: 'button', title: '保存（⌘S）', onclick: () => save(false) }, origSigned ? '保存修订' : '保存');
   const whyInput = h('input', { class: 'why-input', placeholder: '修改原因（必填），例如：补充漏记的退火时间', 'aria-label': '修改原因' });
   const signBtn = origSigned ? null : h('button', { class: 'btn primary', type: 'button', onclick: () => save(true) }, icon('pen', 18), '签名并保存');
   // New pages are experiments by default, so raw data, fingerprints and sample numbers work from the start.

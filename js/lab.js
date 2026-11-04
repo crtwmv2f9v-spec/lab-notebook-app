@@ -332,6 +332,12 @@ export function hypObservations(hyp) {
   const items = d.split(/\n(?=\s*\d+[.、)）]\s*)/).map((x) => x.replace(/^\s*\d+[.、)）]\s*/, '').trim()).filter(Boolean);
   return items.length ? items : [d];
 }
+// Reasoning: one numbered point per line. Points typed on one line (①…②…, 1. … 2. …) are split too.
+export function rationaleItems(text) {
+  const t = String(text || '').trim();
+  if (!t) return [];
+  return t.split(/\n+|\s*(?=[\u2460-\u2473\u2776-\u277f])|(?<=[。；;.!！?？])\s*(?=\d{1,2}[.、)）]\s*\S)/).map((x) => x.trim()).filter(Boolean);
+}
 // Each prediction's verdict comes from the evidence that tested it (evidence.pred = 'P2').
 export function predictionState(hyp, i) {
   const ev = (hyp.evidence || []).filter((e) => e.pred === `P${i + 1}`);
