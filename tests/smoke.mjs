@@ -75,6 +75,20 @@ try {
 
   await check('home', async () => { await waitFor("document.querySelector('.today-card') && document.querySelectorAll('.rail-card').length >= 8"); await sleep(600); await evaluate(clean); await shot('home'); });
   await check('home-wide', async () => { await shot('home-wide', { width: 1920, height: 1100 }); });
+  await check('phone-width', async () => {
+    await send('Emulation.setDeviceMetricsOverride', { width: 375, height: 812, deviceScaleFactor: 1, mobile: true });
+    await sleep(600);
+    const w = await evaluate('return document.documentElement.scrollWidth;');
+    await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+    await sleep(400);
+    if (w > 376) throw new Error(`home page is ${w}px wide on a 375px phone`);
+  });
+  await check('methods-entry', async () => {
+    await evaluate("[...document.querySelectorAll('.topbar a')].find(a => a.getAttribute('href') === '#/methods').click(); return 1;");
+    await waitFor("location.hash === '#/methods' && document.querySelectorAll('.m-card').length >= 2");
+    await evaluate("history.back(); return 1;");
+    await waitFor("document.querySelector('.today-card')");
+  });
   await check('continue-card', async () => {
     await waitFor("document.querySelector('.cont-card .cont-col') && !/读取中/.test(document.querySelector('.cont-card .card-sub').textContent)");
     return await evaluate("return document.querySelector('.cont-card .card-sub').textContent;");

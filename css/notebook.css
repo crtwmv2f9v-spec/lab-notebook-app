@@ -1694,3 +1694,10 @@ a.m-id.missing { text-decoration: line-through; opacity: .6; }
 .check.ed-exp { font: 400 14px/1.4 var(--font-ui); color: var(--ink-2); }
 .check.ed-exp code { font-size: 12.5px; }
 .update-bar .btn.primary { background: #0a84ff; border-color: #0a84ff; color: #fff; }
+
+/* home top bar: library links fold into one 资料库 menu on narrow screens */
+.narrow-only { display: none; }
+@media (max-width: 760px) {
+  .topbar .lib-link { display: none; }
+  .topbar .narrow-only { display: inline-flex; }
+}

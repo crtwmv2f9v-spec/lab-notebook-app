@@ -4,7 +4,7 @@ import { fmtDate, todayISO, parseFrontMatter } from './model.js';
 import { addDays, cleanTopic, daysFrom, loadHypotheses, sectionOf, readSamples, isResultCol, evidenceCounts, loadMethods } from './lab.js';
 import { search } from './search.js';
 import { h, icon } from './util.js';
-import { S, demoBanner, lib, modal, toast, topbar, view } from './core.js';
+import { S, demoBanner, lib, modal, toast, topbar, view, menu } from './core.js';
 import {
   PAPER_STAGE, WEEKDAYS, addBox, allFollowups, changeTasks, editPaper, editProject, exportIcs,
   isGoal, loadPlanner, memoCard, moveTask, newTask, reminderRow, ring, taskRow,
@@ -84,10 +84,19 @@ export function viewHome() {
   const vols = lib.volumes();
   const actions = [
     h('button', { class: 'btn primary', type: 'button', onclick: () => openNewExperiment('') }, icon('plus', 18), h('span', null, '新建实验')),
-    h('a', { class: 'btn ghost', href: '#/lib/reagents' }, '试剂库'),
-    h('a', { class: 'btn ghost', href: '#/lib/solutions' }, '溶液库'),
-    h('a', { class: 'btn ghost', href: '#/lib/protocols' }, '步骤库'),
-    h('button', { class: 'btn ghost', type: 'button', onclick: () => openExport('') }, '导出'),
+    h('a', { class: 'btn ghost lib-link', href: '#/lib/reagents' }, '试剂库'),
+    h('a', { class: 'btn ghost lib-link', href: '#/lib/solutions' }, '溶液库'),
+    h('a', { class: 'btn ghost lib-link', href: '#/lib/protocols' }, '步骤库'),
+    h('a', { class: 'btn ghost lib-link', href: '#/methods', title: '全部方法卡片：写论文 Experimental 用的细节' }, '方法细节'),
+    h('button', { class: 'btn ghost lib-link', type: 'button', onclick: () => openExport('') }, '导出'),
+    // Narrow screens: the same links folded into one menu, so the bar fits a phone.
+    h('button', { class: 'btn ghost narrow-only', type: 'button', onclick: (e) => menu(e.currentTarget, [
+      { icon: 'flask', label: '试剂库', run: () => { location.hash = '#/lib/reagents'; } },
+      { icon: 'flask', label: '溶液库', run: () => { location.hash = '#/lib/solutions'; } },
+      { icon: 'list', label: '步骤库', run: () => { location.hash = '#/lib/protocols'; } },
+      { icon: 'list', label: '方法细节', run: () => { location.hash = '#/methods'; } },
+      { icon: 'download', label: '导出', run: () => openExport('') },
+    ]) }, '资料库'),
     h('button', { class: 'btn icon ghost', 'aria-label': '搜索', title: '搜索（/）', onclick: () => openSearch() }, icon('search')),
     h('a', { class: 'btn icon ghost', href: '#/settings', 'aria-label': '设置', title: '设置' }, icon('gear')),
   ];
