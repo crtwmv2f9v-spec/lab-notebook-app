@@ -391,3 +391,26 @@ export function writeMaterials(body, list) {
   if (MATERIALS_RE.test(body)) return renameMaterialsHeading(body.replace(MATERIALS_RE, block));
   return `${String(body || '').trimEnd()}\n\n## 试剂\n\n${block}\n`;
 }
+
+// ---------- method cards (methods/M-0001.json): the small exact details a paper's Experimental section needs ----------
+// card = { id, vol, title, cat, status, tags, body (Markdown), params: [{ k, v }], versions: [{ v, at, since, note, params }], created, updated }
+export const METHOD_CAT = ['材料制备', '器件制备', '动物实验', '细胞实验', '图像分析', '表征测试', '统计分析', '软件与参数', '其他'];
+export const METHOD_STATUS = ['待写入', '已写入', '不写入'];
+export const methodPath = (id) => `methods/${id}.json`;
+export const methodIds = (lib) => [...lib.tree.keys()].map((p) => (p.match(/^methods\/(M-\d{4})\.json$/) || [])[1]).filter(Boolean).sort();
+export async function loadMethod(lib, id) { return cached(lib, methodPath(id), (t) => JSON.parse(t)); }
+export async function loadMethods(lib) { return (await Promise.all(methodIds(lib).map((id) => loadMethod(lib, id).catch(() => null)))).filter(Boolean); }
+export function nextMethodId(ids) {
+  const max = Math.max(0, ...ids.map((x) => parseInt(String(x).replace(/\D/g, ''), 10) || 0));
+  return `M-${String(max + 1).padStart(4, '0')}`;
+}
+const paramKey = (ps) => JSON.stringify((ps || []).filter((p) => p.k || p.v).map((p) => [p.k, p.v]));
+export const paramsChanged = (a, b) => paramKey(a) !== paramKey(b);
+// "对比度: 1.1 → 1.2；阈值：新增 Otsu"
+export function paramDiff(before, after) {
+  const A = new Map((before || []).map((p) => [p.k, p.v])); const B = new Map((after || []).map((p) => [p.k, p.v]));
+  const out = [];
+  for (const [k, v] of B) { if (!A.has(k)) out.push(`${k}：新增 ${v}`); else if (A.get(k) !== v) out.push(`${k}：${A.get(k)} → ${v}`); }
+  for (const k of A.keys()) if (!B.has(k)) out.push(`${k}：删除`);
+  return out.join('；');
+}

@@ -48,6 +48,13 @@ tags: [oect, transfer]
   return {
     'notebook.json': `${JSON.stringify(notebook, null, 2)}\n`,
     'library/reagents.csv': reagents,
+    'methods/M-0001.json': `${JSON.stringify({ id: 'M-0001', vol: 'oect', title: '沟道 ROI 圈定与面积测量', cat: '图像分析', status: '待写入', tags: ['ImageJ', '显微镜'],
+      body: '1. 显微镜图像（10×，比例尺 0.1467 µm/px）导入 ImageJ，**Image → Type → 8-bit**。\n2. 用 Freehand 工具沿沟道边缘圈定 ROI，避开银线搭接处。\n3. Analyze → Measure 得到面积，三次圈定取平均。',
+      params: [{ k: '比例尺', v: '0.1467 µm/px' }, { k: '对比度', v: 'Auto 后 +20%' }, { k: '阈值方法', v: 'Otsu' }],
+      versions: [{ v: 1, at: `${day(-10)}T10:00:00+08:00`, since: '', note: '初版', params: [{ k: '比例尺', v: '0.1467 µm/px' }, { k: '对比度', v: 'Auto' }, { k: '阈值方法', v: 'Default' }] },
+        { v: 2, at: `${day(-3)}T10:00:00+08:00`, since: x1, note: 'Default 阈值把银线算进沟道', params: [{ k: '比例尺', v: '0.1467 µm/px' }, { k: '对比度', v: 'Auto 后 +20%' }, { k: '阈值方法', v: 'Otsu' }] }],
+      created: `${day(-10)}T10:00:00+08:00`, updated: `${day(-3)}T10:00:00+08:00` }, null, 1)}\n`,
+    'methods/M-0002.json': `${JSON.stringify({ id: 'M-0002', vol: 'oect', title: '转移曲线统计：每组 n 与误差', cat: '统计分析', status: '已写入', tags: [], body: '每个条件至少 3 个器件；gm 取最大值；结果以 mean ± SD 表示，组间用 one-way ANOVA + Tukey。', params: [{ k: 'n', v: '≥ 3 devices' }, { k: '检验', v: 'one-way ANOVA, Tukey' }], versions: [{ v: 1, at: `${day(-8)}T10:00:00+08:00`, since: '', note: '初版', params: [{ k: 'n', v: '≥ 3 devices' }, { k: '检验', v: 'one-way ANOVA, Tukey' }] }], created: `${day(-8)}T10:00:00+08:00`, updated: `${day(-8)}T10:00:00+08:00` }, null, 1)}\n`,
     'planner/tasks.json': `${JSON.stringify({
       tasks: [
         { id: 'td1', text: '双周报告', week: day(0), date: day(4), cat: '截止', done: false, created: `${day(-3)}T09:00:00+08:00` },
@@ -78,7 +85,7 @@ tags: [oect, transfer]
     'library/protocols/SOP-DEMO-OECT-TR-v1.md': sop,
     'volumes/oect/pages/0001.md': page(
       `title: GOPS 浓度对沟道稳定性的影响\ndate: ${d0}\nid: ${x1}\nseries: PEDOT:PSS 配方优化\ntags: [oect, pedot-pss, gops]\nprotocol: SOP-DEMO-OECT-TR-v1\nreagents: [R-0001, R-0002, R-0003]\ndata: "01_Data/01_Keithley 4200/${d0.slice(0, 4)}/${x1}_GOPS"\nfollowups: ["✓ ${day(-2)} 稳定性复测（第 1 天）", "${day(0)} 稳定性复测（第 3 天）", "${day(4)} 稳定性复测（第 7 天）"]`,
-      `## 目的\n\n比较 0.5、1、2 wt% GOPS 对 PBS 中 transfer 稳定性的影响。\n\n## 操作步骤\n\n\`\`\`steps\n移取 | 1 mL | PEDOT:PSS R-0001 | 5 mL 玻璃瓶 | 室温\n加入 | 10 µL | GOPS R-0002 | 上一步溶液 | | 用移液枪缓慢滴加，边加边摇\n超声 | | | | 10 min，冰浴 | 防止升温\n旋涂 | 60 µL | PEDOT:PSS 墨水 S-0001 | 玻璃片 | 1500 rpm，60 s\n退火 | | | 热台 | 140 °C，60 min\n\`\`\`\n\n## 反应式\n\n\`\`\`reaction\nPEDOT^+:PSS^- + M+ + e- -> PEDOT^0 + M+:PSS^- | (1)\n栅极：2 H2O2 ->[Pt] 2 H2O + O2 | (2)\nFe^3+ + e- <=> Fe^2+ | (3)\n\`\`\`\n\n将 10 mL DI 水加入烧杯，37 °C 下搅拌 30 min；所用 PBS 为 R-0003。\n\n## 条件与结果\n\n\`\`\`samples\n编号,GOPS (wt%),退火 (°C),结果: gm_max (mS),结果: Vth (V),结果: on/off,备注\n#01,0.5,140,4.1,0.42,180,\n#09,1.0,140,3.6,0.45,240,边缘轻微翘起\n#10,2.0,140,2.2,0.51,95,\n\`\`\`\n\n## 与 SOP 的偏离\n\n- #10 浸泡 75 min（其余 60 min）。\n\n## 现象与讨论\n\nGOPS 增加后 gm 下降，但 #09 的漂移最小。\n\n## 结论\n\n1 wt% GOPS 在 gm 与稳定性之间最平衡。\n\n## 下一步\n\n- 用 1 wt% GOPS 做 7 天稳定性测试\n- 测 #09 的输出曲线\n\n## 照片\n\n![#09 · 溶液 · 墨水呈深蓝色](${x1}-#09_solution.png)\n\n![#09 · 整片器件](${x1}-#09_device.png)`),
+      `## 目的\n\n比较 0.5、1、2 wt% GOPS 对 PBS 中 transfer 稳定性的影响。\n\n## 操作步骤\n\n\`\`\`steps\n移取 | 1 mL | PEDOT:PSS R-0001 | 5 mL 玻璃瓶 | 室温\n加入 | 10 µL | GOPS R-0002 | 上一步溶液 | | 用移液枪缓慢滴加，边加边摇\n超声 | | | | 10 min，冰浴 | 防止升温\n旋涂 | 60 µL | PEDOT:PSS 墨水 S-0001 | 玻璃片 | 1500 rpm，60 s\n退火 | | | 热台 | 140 °C，60 min\n\`\`\`\n\n## 反应式\n\n\`\`\`reaction\nPEDOT^+:PSS^- + M+ + e- -> PEDOT^0 + M+:PSS^- | (1)\n栅极：2 H2O2 ->[Pt] 2 H2O + O2 | (2)\nFe^3+ + e- <=> Fe^2+ | (3)\n\`\`\`\n\n将 10 mL DI 水加入烧杯，37 °C 下搅拌 30 min；所用 PBS 为 R-0003。\n\n## 条件与结果\n\n\`\`\`samples\n编号,GOPS (wt%),退火 (°C),结果: gm_max (mS),结果: Vth (V),结果: on/off,备注\n#01,0.5,140,4.1,0.42,180,\n#09,1.0,140,3.6,0.45,240,边缘轻微翘起\n#10,2.0,140,2.2,0.51,95,\n\`\`\`\n\n## 与 SOP 的偏离\n\n- #10 浸泡 75 min（其余 60 min）。\n\n## 现象与讨论\n\nGOPS 增加后 gm 下降，但 #09 的漂移最小。沟道面积按 M-0001 测量。\n\n## 结论\n\n1 wt% GOPS 在 gm 与稳定性之间最平衡。\n\n## 下一步\n\n- 用 1 wt% GOPS 做 7 天稳定性测试\n- 测 #09 的输出曲线\n\n## 照片\n\n![#09 · 溶液 · 墨水呈深蓝色](${x1}-#09_solution.png)\n\n![#09 · 整片器件](${x1}-#09_device.png)`),
     [`volumes/oect/attachments/0001/${x1}-#09_solution.png`]: bytes(SOLUTION_PNG),
     [`volumes/oect/attachments/0001/${x1}-#09_device.png`]: bytes(DEVICE_PNG),
     'volumes/oect/pages/0003.md': page(

@@ -1,7 +1,7 @@
 // Markdown, math, page links, charts, data tables and Jupyter notebooks.
 import { esc, h, loadScript, icon } from './util.js';
 import { parseRef, parseFrontMatter } from './model.js';
-import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions, loadHypothesis, evidenceCounts, parseMaterials } from './lab.js';
+import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions, loadHypothesis, evidenceCounts, parseMaterials, loadMethod } from './lab.js';
 
 const CDN = 'https://cdn.jsdelivr.net/npm/';
 export const LIBS = {
@@ -566,7 +566,7 @@ function renderSteps(pre, src) {
 // A unit may be compound: mg/mL, °C/min, mW/cm², mg·mL⁻¹, mg mL-1, S/cm.
 const UNIT = '(?:µL|μL|uL|mL|L|µg|μg|ng|mg|kg|g|nmol|mmol|µmol|μmol|mol|pM|nM|µM|μM|mM|M|wt%|vol%|v/v|w/w|%|°C|℃|rpm|min|ms|µs|μs|s|h|kV|mV|µV|μV|V|pA|nA|µA|μA|mA|MHz|kHz|Hz|nm|µm|μm|mm|cm|µS|μS|mS|S|kW|mW|µW|μW|W|mJ|µJ|μJ|J|MPa|kPa|mPa·s|Pa|mbar|bar|cP|MΩ|kΩ|Ω|nF|µF|μF|mF|ppm|ppb|equiv|eq)(?:⁻?[¹²³]|\\^?-?[123](?![\\d.]))?';
 const UNITS = `${UNIT}(?:\\s?[/·⋅]\\s?${UNIT}|\\s(?=[A-Za-zµμ°]+(?:⁻[¹²³]|\\^?-[123]))${UNIT})*`;
-const QTY_RE = new RegExp(`(^|[^\\w.#-])((?:[~≈<>≤≥±]\\s?)?\\d+(?:\\.\\d+)?(?:\\s?[-–~]\\s?\\d+(?:\\.\\d+)?)?\\s?${UNITS})(?![A-Za-z0-9µμ/])|([RS]-\\d{4})\\b`, 'g');
+const QTY_RE = new RegExp(`(^|[^\\w.#-])((?:[~≈<>≤≥±]\\s?)?\\d+(?:\\.\\d+)?(?:\\s?[-–~]\\s?\\d+(?:\\.\\d+)?)?\\s?${UNITS})(?![A-Za-z0-9µμ/])|([RSM]-\\d{4})\\b`, 'g');
 function markQuantities(root) {
   const skip = 'pre, code, a, .math, .katex, .samples, .steps-wrap, .reactions, h1, h2, h3, h4, .st-what, figcaption';
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.parentElement?.closest(skip) || !/\d/.test(n.nodeValue) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
@@ -577,7 +577,7 @@ function markQuantities(root) {
     const frag = document.createDocumentFragment(); let last = 0; QTY_RE.lastIndex = 0;
     for (const m of t.matchAll(QTY_RE)) {
       const start = m.index + (m[1] || '').length; const text = m[2] || m[3];
-      frag.append(t.slice(last, start), h('span', { class: m[3] ? 'rg-id' : 'qty', 'data-rid': m[3] || null }, text));
+      frag.append(t.slice(last, start), m[3]?.startsWith('M-') ? h('a', { class: 'rg-id m-id', href: `#/m/${m[3]}`, 'data-rid': m[3] }, text) : h('span', { class: m[3] ? 'rg-id' : 'qty', 'data-rid': m[3] || null }, text));
       last = start + text.length;
     }
     frag.append(t.slice(last));
@@ -590,6 +590,7 @@ async function nameReagents(root, ctx) {
   const [list, sols] = await Promise.all([loadReagents(ctx.lib).catch(() => []), loadSolutions(ctx.lib).catch(() => [])]);
   const by = new Map([...list, ...sols.map((x) => ({ ...x, spec: x.conc, vendor: x.prepared && `配于 ${x.prepared}` }))].map((r) => [r.id, r]));
   for (const el of root.querySelectorAll('.rg-id')) { const r = by.get(el.dataset.rid); if (r) el.title = [r.name, r.spec, r.vendor, r.lot && `批号 ${r.lot}`].filter(Boolean).join(' · '); }
+  for (const el of root.querySelectorAll('.m-id')) loadMethod(ctx.lib, el.dataset.rid).then((m) => { el.title = `方法卡片：${m.title}`; }).catch(() => { el.classList.add('missing'); });
   for (const el of root.querySelectorAll('.st-what')) {
     const m = el.textContent.match(/^(.*?)\s*([RS]-\d{4})\s*$/);
     if (!m) continue;
