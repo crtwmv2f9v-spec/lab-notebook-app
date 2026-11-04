@@ -490,14 +490,18 @@ function viewHome() {
     return root;
   }
 
-  root.append(hero(), dashboard(), topicsStrip());
-  root.append(h('h2', { class: 'section-title' }, '记录本', h('span', null, `${vols.length} 卷 · ${lib.allPages().length} 页`)));
+  homeHooks.clear();
+  const center = h('div', { class: 'home-center' }, hero(), dashboard(), topicsStrip());
+  center.append(h('h2', { class: 'section-title' }, '记录本', h('span', null, `${vols.length} 卷 · ${lib.allPages().length} 页`)));
   const shelf = h('section', { class: 'shelf', 'aria-label': '卷' });
   for (const v of vols) shelf.append(cover(v));
   shelf.append(thinkCover());
   shelf.append(h('button', { class: 'cover new-cover', type: 'button', onclick: openNewVolume },
     icon('plus', 28), h('span', null, vols.length ? '新建卷（项目）' : '建第一个卷（项目）')));
-  root.append(shelf);
+  center.append(shelf);
+  // Wide screens: the side lists sit left and right of the usual page; narrower ones get them below it.
+  const { left, right } = homeRails();
+  root.append(h('div', { class: 'home-layout' }, left, center, right));
   if (!vols.length) root.append(h('p', { class: 'hint' }, '每个项目一个卷，页码在卷内连续编号，就像装订的记录本。'));
 
   const recent = lib.allPages().sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.num - a.num).slice(0, 8);
@@ -2418,13 +2422,16 @@ async function allFollowups() {
 }
 
 // ----- planner: today's to-dos and the week's plan, kept in planner/tasks.json -----
-// task = { id, text, week: <Monday ISO>, date?: <ISO> (a to-do for that day; none = a weekly goal), done, doneAt?, created }
+// task = { id, text, week: <Monday ISO>, date?: <ISO> (a to-do for that day; none = a weekly goal), cat?, done, doneAt?, created }
+// cat files a task under a home-page side list (杂事, 生活, 文献, 仪器, 截止); dated ones still show in that day's to-dos.
+// projects / papers: the 课题与基金 and 论文与投稿 cards on the home page's left rail.
 const TASKS_PATH = 'planner/tasks.json';
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
 const weekStart = (iso) => addDays(iso, -((new Date(`${iso}T12:00:00`).getDay() + 6) % 7));
 let planLocal = null; // { sha, doc: { tasks, memos }, dirty } — shown at once; commits follow in order
 let planQueue = Promise.resolve();
-const planDoc = (d) => ({ tasks: Array.isArray(d?.tasks) ? d.tasks : [], memos: Array.isArray(d?.memos) ? d.memos : [] });
+const arr = (x) => (Array.isArray(x) ? x : []);
+const planDoc = (d) => ({ tasks: arr(d?.tasks), memos: arr(d?.memos), projects: arr(d?.projects), papers: arr(d?.papers) });
 async function loadPlanner() {
   const sha = lib.tree.get(TASKS_PATH) || null;
   if (planLocal && (planLocal.sha === sha || planLocal.dirty)) return planLocal.doc;
@@ -2444,7 +2451,8 @@ function changePlanner(mutate, message, redraw) {
   return planQueue;
 }
 const changeTasks = (mutate, message, redraw) => changePlanner((d) => mutate(d.tasks), message, redraw);
-const newTask = (text, week, date) => ({ id: `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, text, week, ...(date ? { date } : {}), done: false, created: nowISO() });
+const newTask = (text, week, date, cat) => ({ id: `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, text, week, ...(date ? { date } : {}), ...(cat ? { cat } : {}), done: false, created: nowISO() });
+const isGoal = (x, wk) => x.week === wk && !x.date && !x.cat;
 const toggleTask = (id, redraw) => changeTasks((list) => { const t = list.find((x) => x.id === id); if (t) { t.done = !t.done; if (t.done) t.doneAt = nowISO(); else delete t.doneAt; } }, 'Planner: tick', redraw);
 const removeTask = (id, redraw) => changeTasks((list) => { const k = list.findIndex((x) => x.id === id); if (k >= 0) list.splice(k, 1); }, 'Planner: remove', redraw);
 const editTask = (id, text, redraw) => changeTasks((list) => { const t = list.find((x) => x.id === id); if (t) t.text = text; }, 'Planner: edit', redraw);
@@ -2471,7 +2479,7 @@ function dateChip(t, redraw) {
   const input = h('input', { type: 'date', class: 'date-input', value: t.date || '', 'aria-label': '改日期' });
   input.addEventListener('change', () => moveTask(t.id, input.value || null, redraw));
   const late = t.date && !t.done && t.date < todayISO();
-  return h('label', { class: `date-chip${late ? ' late' : ''}`, title: t.date ? '改日期（清空则变为本周计划）' : '指定到某一天' }, t.date ? dayLabel(t.date) : '本周', input);
+  return h('label', { class: `date-chip${late ? ' late' : ''}`, title: t.date ? (t.cat ? '改日期（可清空）' : '改日期（清空则变为本周计划）') : '指定到某一天' }, t.date ? dayLabel(t.date) : t.cat ? '无日期' : '本周', input);
 }
 
 function ring(done, total, size = 64) {
@@ -2482,8 +2490,9 @@ function ring(done, total, size = 64) {
   svg.innerHTML = `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-bg"/><circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-fg" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - f)}" transform="rotate(-90 ${size / 2} ${size / 2})"/>`;
   return h('div', { class: 'ring-box', role: 'img', 'aria-label': `已完成 ${done} / ${total}` }, svg, h('span', { class: 'ring-num' }, total ? `${Math.round(f * 100)}%` : '—'));
 }
-function taskRow(t, { redraw, extra, meta } = {}) {
+function taskRow(t, { redraw, extra, meta, showCat = true } = {}) {
   if (!meta && t.src) meta = h('a', { href: `#/v/${t.src.vol}/${t.src.num}` }, `来自 ${t.src.xid || `p. ${t.src.num}`}`);
+  if (!meta && t.cat && showCat) meta = h('span', { class: `cat-chip cat-${t.cat}` }, t.cat);
   return h('li', { class: `task${t.done ? ' done' : ''}` },
     h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!t.done), 'aria-label': t.done ? '标为未完成' : '标为完成', onclick: () => toggleTask(t.id, redraw) }),
     h('span', { class: 'task-main' }, editable(t.text, (v) => editTask(t.id, v, redraw)), meta ? h('span', { class: 'task-meta' }, meta) : null),
@@ -2561,6 +2570,164 @@ function hero() {
     h('h1', { class: 'hero-title' }, `${greet}${name ? `，${name}` : ''}。`));
 }
 
+// Everything on the home page that shows planner data redraws together, so an item added in a side list
+// appears in today's to-dos at once (and the other way round).
+const homeHooks = new Set();
+const redrawHome = () => homeHooks.forEach((f) => f());
+
+// ----- home side rails: 科研主线 on the left, 时间与日常 on the right -----
+const PROJECT_KIND = ['课题', '基金', '合作'];
+const PROJECT_STAGE = ['调研', '申请中', '进行中', '中期', '结题', '已结束'];
+const PAPER_STAGE = ['构思', '写作中', '已投稿', '审稿中', '返修', '接收', '已发表'];
+const uid = (p) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+const leftDays = (iso) => { const d = daysFrom(iso); return d < 0 ? `逾期 ${-d} 天` : d === 0 ? '今天' : `${d} 天`; };
+const urgency = (iso) => { const d = daysFrom(iso); return d < 0 ? 'late' : d <= 3 ? 'hot' : d <= 7 ? 'warm' : ''; };
+// A one-line add box with an optional date beside it.
+function addDated(placeholder, onAdd, { dateRequired = false } = {}) {
+  const date = h('input', { type: 'date', class: 'add-date', 'aria-label': '日期' });
+  const box = addBox(placeholder, (text) => {
+    if (dateRequired && !date.value) { toast('请选一个日期。'); return; }
+    onAdd(text, date.value || null); date.value = '';
+  });
+  box.insertBefore(date, box.querySelector('.add-btn'));
+  return box;
+}
+function railCard(title, sub, ...kids) {
+  return h('section', { class: 'tile rail-card' }, h('div', { class: 'rail-head' }, h('h3', null, title), sub ? h('span', { class: 'rail-sub' }, sub) : null), ...kids);
+}
+// Categorized to-dos: open ones first (by date), then the last few done.
+function catList(tasks, cat, { placeholder, dated = false, dateRequired = false, limitDone = 3 }) {
+  const list = tasks.filter((x) => x.cat === cat);
+  const open = list.filter((x) => !x.done).sort((a, b) => String(a.date || '9').localeCompare(String(b.date || '9')));
+  const done = list.filter((x) => x.done).sort((a, b) => String(b.doneAt || '').localeCompare(String(a.doneAt || ''))).slice(0, limitDone);
+  const wk = weekStart(todayISO());
+  const add = dated
+    ? addDated(placeholder, (text, date) => changeTasks((l) => l.push(newTask(text, date ? weekStart(date) : wk, date, cat)), `Planner: add ${cat}`, redrawHome), { dateRequired })
+    : addBox(placeholder, (text) => changeTasks((l) => l.push(newTask(text, wk, null, cat)), `Planner: add ${cat}`, redrawHome));
+  add.querySelector('input').dataset.k = `cat-${cat}`;
+  return { open, done, el: [add, h('ul', { class: 'tasks rail-tasks' }, open.map((x) => taskRow(x, { redraw: redrawHome, showCat: false, meta: linkMeta(x.text) })),
+    done.map((x) => taskRow(x, { redraw: redrawHome, showCat: false })))] };
+}
+// A DOI or link in a reading-list entry becomes a link.
+function linkMeta(text) {
+  const doi = String(text).match(/\b10\.\d{4,9}\/\S+/); const url = String(text).match(/https?:\/\/\S+/);
+  const href = url ? url[0] : doi ? `https://doi.org/${doi[0]}` : null;
+  return href ? h('a', { href, target: '_blank', rel: 'noopener' }, '打开') : null;
+}
+
+function editProject(p) {
+  const isNew = !p; const x = p ? { ...p } : { id: uid('P'), kind: '课题', stage: '进行中', vols: [] };
+  const f = (k, label, attrs = {}) => { const el = h('input', { id: `pj-${k}`, value: x[k] || '', ...attrs }); return [h('label', { for: `pj-${k}` }, label), el]; };
+  const sel = (k, label, opts) => [h('label', { for: `pj-${k}` }, label), h('select', { id: `pj-${k}` }, opts.map((o) => h('option', { selected: x[k] === o }, o)))];
+  const vols = h('div', { class: 'check-list' }, lib.volumes().map((v) => h('label', { class: 'check' }, h('input', { type: 'checkbox', value: v.id, checked: (x.vols || []).includes(v.id) }), ` ${v.title}`)));
+  const body = h('div', { class: 'form' }, ...f('title', '名称', { placeholder: '例如：国自然青年基金 · 唾液 OECT 早筛' }),
+    h('div', { class: 'pair' }, h('div', null, ...sel('kind', '类型', PROJECT_KIND)), h('div', null, ...sel('stage', '阶段', PROJECT_STAGE))),
+    ...f('next', '下一个节点', { placeholder: '例如：提交申请书 / 中期报告 / 完成预实验' }), ...f('due', '截止日期', { type: 'date' }),
+    ...f('note', '备注', { placeholder: '编号、经费、合作人…' }), h('span', { class: 'label' }, '关联的实验卷'), vols);
+  modal({
+    title: isNew ? '新建课题 / 基金' : x.title, body,
+    buttons: [isNew ? null : { label: '删除', danger: true, run: async () => { if ((await choose(`删除“${x.title}”？`, 'GitHub 历史里仍可找回。', [['yes', '删除'], ['no', '取消']])) !== 'yes') return false; changePlanner((d) => { d.projects = d.projects.filter((y) => y.id !== x.id); }, 'Board: remove project', redrawHome); } },
+      { label: '取消' }, { label: '保存', primary: true, run: () => {
+        for (const k of ['title', 'next', 'due', 'note']) x[k] = body.querySelector(`#pj-${k}`).value.trim();
+        x.kind = body.querySelector('#pj-kind').value; x.stage = body.querySelector('#pj-stage').value;
+        x.vols = [...vols.querySelectorAll('input:checked')].map((c) => c.value);
+        if (!x.title) { toast('写一个名称。'); return false; }
+        changePlanner((d) => { const k = d.projects.findIndex((y) => y.id === x.id); if (k >= 0) d.projects[k] = x; else d.projects.push(x); }, `Board: ${isNew ? 'add' : 'edit'} project`, redrawHome);
+      } }],
+  });
+}
+function editPaper(p) {
+  const isNew = !p; const x = p ? { ...p } : { id: uid('A'), stage: '写作中' };
+  const f = (k, label, attrs = {}) => [h('label', { for: `pp-${k}` }, label), h('input', { id: `pp-${k}`, value: x[k] || '', ...attrs })];
+  const body = h('div', { class: 'form' }, ...f('title', '题目（可简写）', { placeholder: '例如：Printed OECT for salivary MMP-8' }),
+    h('div', { class: 'pair' }, h('div', null, ...f('journal', '期刊 / 会议', { placeholder: 'Adv. Mater.' })),
+      h('div', null, h('label', { for: 'pp-stage' }, '阶段'), h('select', { id: 'pp-stage' }, PAPER_STAGE.map((o) => h('option', { selected: x.stage === o }, o))))),
+    ...f('due', '关键日期（截稿 / 返修截止）', { type: 'date' }), ...f('note', '备注', { placeholder: '稿件号、共同作者、审稿意见要点…' }));
+  modal({
+    title: isNew ? '新建论文' : x.title, body,
+    buttons: [isNew ? null : { label: '删除', danger: true, run: async () => { if ((await choose(`删除“${x.title}”？`, 'GitHub 历史里仍可找回。', [['yes', '删除'], ['no', '取消']])) !== 'yes') return false; changePlanner((d) => { d.papers = d.papers.filter((y) => y.id !== x.id); }, 'Board: remove paper', redrawHome); } },
+      { label: '取消' }, { label: '保存', primary: true, run: () => {
+        for (const k of ['title', 'journal', 'due', 'note']) x[k] = body.querySelector(`#pp-${k}`).value.trim();
+        x.stage = body.querySelector('#pp-stage').value;
+        if (!x.title) { toast('写一个题目。'); return false; }
+        changePlanner((d) => { const k = d.papers.findIndex((y) => y.id === x.id); if (k >= 0) d.papers[k] = x; else d.papers.push(x); }, `Board: ${isNew ? 'add' : 'edit'} paper`, redrawHome);
+      } }],
+  });
+}
+const dueTag = (iso) => (iso ? h('span', { class: `due-tag ${urgency(iso)}` }, `${iso.slice(5)} · ${leftDays(iso)}`) : null);
+
+async function weekStats() {
+  const t = todayISO(); const wk = weekStart(t); const end = addDays(wk, 6);
+  const inWk = (d) => d && String(d).slice(0, 10) >= wk && String(d).slice(0, 10) <= end;
+  const pages = lib.allPages().filter((p) => inWk(p.date) && !p.void);
+  const hyps = await loadHypotheses(lib).catch(() => []);
+  const ev = hyps.flatMap((x) => x.evidence || []).filter((e) => inWk(e.date)).length;
+  const tasks = (await loadPlanner()).tasks;
+  return { pages: pages.length, exps: pages.filter((p) => p.xid).length, signed: pages.filter((p) => p.signed).length, ev, done: tasks.filter((x) => x.done && inWk(x.doneAt)).length };
+}
+
+function homeRails() {
+  const left = h('aside', { class: 'rail rail-left', 'aria-label': '科研主线' });
+  const right = h('aside', { class: 'rail rail-right', 'aria-label': '时间与日常' });
+  const draw = async () => {
+    let doc; try { doc = await loadPlanner(); } catch { return; }
+    const focused = document.activeElement?.closest?.('.rail') ? document.activeElement.dataset.k : null;
+    const { tasks, projects, papers } = doc;
+    // 课题与基金
+    const pj = railCard('课题与基金', projects.length ? `${projects.filter((x) => x.stage !== '已结束').length} 个进行中` : '课题、基金、合作项目',
+      h('ul', { class: 'board-list' }, [...projects].sort((a, b) => Number(a.stage === '已结束') - Number(b.stage === '已结束') || String(a.due || '9').localeCompare(String(b.due || '9'))).map((x) => h('li', { class: `board-item${x.stage === '已结束' ? ' ended' : ''}`, onclick: (e) => { if (!e.target.closest('a')) editProject(x); } },
+        h('div', { class: 'bi-top' }, h('span', { class: 'bi-kind' }, x.kind), h('b', null, x.title)),
+        h('div', { class: 'bi-meta' }, h('span', { class: 'bi-stage' }, x.stage), x.next ? h('span', null, `下一步：${x.next}`) : null, dueTag(x.due)),
+        (x.vols || []).length ? h('div', { class: 'bi-vols' }, x.vols.map((id) => lib.volume(id)).filter(Boolean).map((v) => h('a', { href: `#/v/${v.id}` }, v.title))) : null))),
+      h('button', { class: 'btn small rail-add', type: 'button', onclick: () => editProject(null) }, icon('plus', 14), '新建课题 / 基金'));
+    // 论文与投稿
+    const counts = PAPER_STAGE.map((st) => [st, papers.filter((x) => x.stage === st).length]).filter(([, n]) => n);
+    const pp = railCard('论文与投稿', counts.length ? counts.map(([st, n]) => `${st} ${n}`).join(' · ') : '构思 → 写作 → 投稿 → 返修 → 接收',
+      h('ol', { class: 'paper-steps' }, PAPER_STAGE.slice(0, 6).map((st) => h('li', { class: papers.some((x) => x.stage === st) ? 'on' : null }, st))),
+      h('ul', { class: 'board-list' }, [...papers].sort((a, b) => PAPER_STAGE.indexOf(a.stage) - PAPER_STAGE.indexOf(b.stage)).map((x) => h('li', { class: `board-item paper st-${x.stage}`, onclick: () => editPaper(x) },
+        h('div', { class: 'bi-top' }, h('span', { class: 'bi-kind' }, x.stage), h('b', null, x.title)),
+        h('div', { class: 'bi-meta' }, x.journal ? h('i', null, x.journal) : null, dueTag(x.due))))),
+      h('button', { class: 'btn small rail-add', type: 'button', onclick: () => editPaper(null) }, icon('plus', 14), '新建论文'));
+    const rd = catList(tasks, '文献', { placeholder: '粘贴 DOI、链接或题目' });
+    const ins = catList(tasks, '仪器', { placeholder: '例如：Keithley 4200 14:00–17:00', dated: true, dateRequired: true });
+    left.replaceChildren(
+      h('p', { class: 'rail-title' }, '科研主线'), pj, pp,
+      railCard('文献待读', rd.open.length ? `${rd.open.length} 篇待读` : '读完打勾', ...rd.el),
+      railCard('仪器预约与实验队列', ins.open.length ? `${ins.open.length} 项` : '预约时间、排队的实验', ...ins.el));
+    // 截止日倒计时：自己的截止项 + 课题、论文的日期
+    const t = todayISO();
+    const dl = [
+      ...tasks.filter((x) => x.cat === '截止' && !x.done && x.date).map((x) => ({ text: x.text, date: x.date, task: x })),
+      ...projects.filter((x) => x.due && x.stage !== '已结束').map((x) => ({ text: `${x.title}${x.next ? ` · ${x.next}` : ''}`, date: x.due, open: () => editProject(x), tag: x.kind })),
+      ...papers.filter((x) => x.due && !['接收', '已发表'].includes(x.stage)).map((x) => ({ text: `${x.title} · ${x.stage}`, date: x.due, open: () => editPaper(x), tag: '论文' })),
+    ].sort((a, b) => a.date.localeCompare(b.date));
+    const dlAdd = addDated('例如：双周报告 / 组会 / 基金截止', (text, date) => changeTasks((l) => l.push(newTask(text, weekStart(date), date, '截止')), 'Planner: add deadline', redrawHome), { dateRequired: true });
+    dlAdd.querySelector('input').dataset.k = 'cat-截止';
+    const countdown = railCard('截止日倒计时', dl.length ? `${dl.filter((x) => daysFrom(x.date) <= 7).length} 项在 7 天内` : '组会、报告、基金、投稿', dlAdd,
+      h('ul', { class: 'countdown' }, dl.map((x) => {
+        const d = daysFrom(x.date);
+        return h('li', { class: `cd ${urgency(x.date)}` },
+          h('span', { class: 'cd-n' }, d < 0 ? '!' : String(d)), h('span', { class: 'cd-u' }, d < 0 ? `逾期 ${-d} 天` : d === 0 ? '今天' : '天'),
+          h('span', { class: 'cd-t' }, h('b', { class: x.open ? 'linkish' : null, onclick: x.open || null }, x.text), h('span', null, `${x.date}${x.tag ? ` · ${x.tag}` : ''}`)),
+          x.task ? h('button', { class: 'tick small', type: 'button', role: 'checkbox', 'aria-checked': 'false', 'aria-label': '完成', title: '完成', onclick: () => toggleTask(x.task.id, redrawHome) }) : null);
+      })));
+    const chores = catList(tasks, '杂事', { placeholder: '报销、采购、盖章、培训…', dated: true });
+    const life = catList(tasks, '生活', { placeholder: '运动、体检、个人事务…', dated: true });
+    const st = await weekStats();
+    const stat = (n, label) => h('div', { class: 'ws' }, h('b', null, String(n)), h('span', null, label));
+    right.replaceChildren(
+      h('p', { class: 'rail-title' }, '时间与日常'), countdown,
+      railCard('杂事', chores.open.length ? `${chores.open.length} 项待办` : '行政、采购、报销', ...chores.el),
+      railCard('生活', life.open.length ? `${life.open.length} 项` : '健康、运动、个人', ...life.el),
+      railCard('本周科研数据', `${weekStart(t).slice(5)} 至 ${addDays(weekStart(t), 6).slice(5)}`,
+        h('div', { class: 'week-stats' }, stat(st.pages, '页记录'), stat(st.exps, '个实验'), stat(st.pages ? `${Math.round((st.signed / st.pages) * 100)}%` : '—', '已签名'), stat(st.ev, '条新证据'), stat(st.done, '项待办完成'))));
+    if (focused) document.querySelector(`.rail input[data-k="${focused}"]`)?.focus();
+  };
+  homeHooks.add(draw);
+  draw();
+  return { left, right };
+}
+
 // Home: today's to-dos (your own + experiment reminders) and this week's plan, each with progress.
 function dashboard() {
   const t = todayISO(); const wk = weekStart(t);
@@ -2576,7 +2743,7 @@ function dashboard() {
     const soon = fus.filter((x) => !x.done && x.date > t && daysFrom(x.date) <= 7);
     const all = [...mine, ...carried, ...due];
     const doneN = all.filter((x) => x.done).length;
-    const todayAdd = addBox('添加今天要做的事，回车保存', (text) => changeTasks((list) => list.push(newTask(text, wk, t)), 'Planner: add to-do', draw));
+    const todayAdd = addBox('添加今天要做的事，回车保存', (text) => changeTasks((list) => list.push(newTask(text, wk, t)), 'Planner: add to-do', redrawHome));
     todayAdd.querySelector('input').dataset.k = 'today';
     const todayCard = h('div', { class: 'tile today-card' },
       h('div', { class: 'tile-head' },
@@ -2584,14 +2751,14 @@ function dashboard() {
         ring(doneN, all.length)),
       todayAdd,
       h('ul', { class: 'tasks' },
-        carried.map((x) => taskRow(x, { redraw: draw, extra: h('button', { class: 'btn small ghost', type: 'button', onclick: () => moveTask(x.id, t, draw) }, '移到今天') })),
-        mine.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: draw })),
-        due.map((x) => reminderRow(x, draw))),
+        carried.map((x) => taskRow(x, { redraw: redrawHome, extra: h('button', { class: 'btn small ghost', type: 'button', onclick: () => moveTask(x.id, t, redrawHome) }, '移到今天') })),
+        mine.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: redrawHome })),
+        due.map((x) => reminderRow(x, redrawHome))),
       soon.length ? h('details', { class: 'soon' }, h('summary', null, `接下来 7 天的实验提醒（${soon.length}）`),
-        h('ul', { class: 'tasks' }, soon.map((x) => reminderRow(x, draw))),
+        h('ul', { class: 'tasks' }, soon.map((x) => reminderRow(x, redrawHome))),
         h('button', { class: 'btn small ghost', type: 'button', onclick: () => exportIcs(fus.filter((x) => !x.done)) }, '导出到手机日历')) : null);
 
-    const goals = tasks.filter((x) => x.week === wk && !x.date);
+    const goals = tasks.filter((x) => isGoal(x, wk));
     const gDone = goals.filter((x) => x.done).length;
     const days = WEEKDAYS.map((w, k) => {
       const day = addDays(wk, k); const list = tasks.filter((x) => x.date === day);
@@ -2601,19 +2768,20 @@ function dashboard() {
         h('span', { class: 'day-bar' }, h('span', { style: { height: `${list.length ? (dn / list.length) * 100 : 0}%` } })),
         h('span', { class: 'day-n' }, list.length ? `${dn}/${list.length}` : '·'));
     });
-    const weekAdd = addBox('添加本周计划（例如：完成 GOPS 稳定性测试）', (text) => changeTasks((list) => list.push(newTask(text, wk)), 'Planner: add weekly goal', draw));
+    const weekAdd = addBox('添加本周计划（例如：完成 GOPS 稳定性测试）', (text) => changeTasks((list) => list.push(newTask(text, wk)), 'Planner: add weekly goal', redrawHome));
     weekAdd.querySelector('input').dataset.k = 'week';
     const weekCard = h('div', { class: 'tile week-card' },
       h('div', { class: 'tile-head' },
         h('div', null, h('h2', null, '本周计划'), h('p', { class: 'card-sub' }, goals.length ? `已完成 ${gDone} 项 · 还剩 ${goals.length - gDone} 项` : `${wk.slice(5)} 至 ${addDays(wk, 6).slice(5)}`)),
         ring(gDone, goals.length)),
       weekAdd,
-      h('ul', { class: 'tasks' }, goals.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: draw }))),
+      h('ul', { class: 'tasks' }, goals.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: redrawHome }))),
       h('div', { class: 'week-days', 'aria-label': '本周每天的待办完成情况' }, days),
       h('a', { class: 'more-link', href: `#/plan/${wk}` }, '查看周计划与历史 ›'));
-    box.replaceChildren(todayCard, weekCard, memoCard(doc, draw));
+    box.replaceChildren(todayCard, weekCard, memoCard(doc, redrawHome));
     if (focused) box.querySelector(`input[data-k="${focused}"]`)?.focus();
   };
+  homeHooks.add(draw);
   draw();
   return box;
 }
@@ -2625,7 +2793,7 @@ async function viewPlan(param) {
   const body = h('div', { class: 'plan-body' });
   const draw = async () => {
     const tasks = await loadTasks();
-    const goals = tasks.filter((x) => x.week === wk && !x.date);
+    const goals = tasks.filter((x) => isGoal(x, wk));
     const dayCols = WEEKDAYS.map((w, k) => {
       const day = addDays(wk, k);
       const list = tasks.filter((x) => x.date === day).sort((a, b) => Number(a.done) - Number(b.done));
@@ -2653,7 +2821,7 @@ async function viewPlan(param) {
       h('div', { class: 'day-grid' }, dayCols),
       weeks.length ? h('h2', { class: 'section-title' }, '往周') : null,
       weeks.length ? h('div', { class: 'tile' }, h('ul', { class: 'history' }, weeks.map((w) => {
-        const all = tasks.filter((x) => x.week === w); const dn = all.filter((x) => x.done).length;
+        const all = tasks.filter((x) => x.week === w && (x.date || !x.cat)); const dn = all.filter((x) => x.done).length;
         return h('li', null, h('a', { href: `#/plan/${w}` }, h('span', { class: 'hw' }, `${w} 至 ${addDays(w, 6).slice(5)}`),
           h('span', { class: 'hbar' }, h('span', { style: { width: `${all.length ? (dn / all.length) * 100 : 0}%` } })),
           h('span', { class: 'hn' }, `${dn} / ${all.length}`)));

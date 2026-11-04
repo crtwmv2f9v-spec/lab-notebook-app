@@ -48,6 +48,27 @@ tags: [oect, transfer]
   return {
     'notebook.json': `${JSON.stringify(notebook, null, 2)}\n`,
     'library/reagents.csv': reagents,
+    'planner/tasks.json': `${JSON.stringify({
+      tasks: [
+        { id: 'td1', text: '双周报告', week: day(0), date: day(4), cat: '截止', done: false, created: `${day(-3)}T09:00:00+08:00` },
+        { id: 'td2', text: '组会汇报 GOPS 稳定性', week: day(0), date: day(1), cat: '截止', done: false, created: `${day(-3)}T09:00:00+08:00` },
+        { id: 'td3', text: 'Keithley 4200 14:00–17:00', week: day(0), date: day(0), cat: '仪器', done: false, created: `${day(-1)}T09:00:00+08:00` },
+        { id: 'td4', text: '双光子打印机 9:00–12:00', week: day(0), date: day(2), cat: '仪器', done: false, created: `${day(-1)}T09:00:00+08:00` },
+        { id: 'td5', text: 'Rivnay 2018 Nat. Rev. Mater. OECT 综述 10.1038/natrevmats.2017.86', week: day(0), cat: '文献', done: false, created: `${day(-2)}T09:00:00+08:00` },
+        { id: 'td6', text: '报销 PEDOT:PSS 发票', week: day(0), date: day(3), cat: '杂事', done: false, created: `${day(-2)}T09:00:00+08:00` },
+        { id: 'td7', text: '实验室安全培训', week: day(0), cat: '杂事', done: false, created: `${day(-2)}T09:00:00+08:00` },
+        { id: 'td8', text: '跑步 5 km', week: day(0), date: day(0), cat: '生活', done: false, created: `${day(-1)}T09:00:00+08:00` },
+      ],
+      memos: [],
+      projects: [
+        { id: 'P1', title: '唾液 MMP-8 OECT 牙周炎早筛', kind: '课题', stage: '进行中', next: '完成 7 天稳定性', due: day(12), vols: ['oect'] },
+        { id: 'P2', title: '国自然青年基金', kind: '基金', stage: '申请中', next: '提交申请书初稿', due: day(9), vols: [] },
+      ],
+      papers: [
+        { id: 'A1', title: 'Fully printed OECT for salivary biomarkers', journal: 'Adv. Mater.', stage: '写作中', due: day(20) },
+        { id: 'A2', title: 'GOPS crosslinking and drift in PEDOT:PSS', journal: 'ACS AMI', stage: '返修', due: day(6) },
+      ],
+    }, null, 1)}\n`,
     'thinking/topics.json': `${JSON.stringify({ topics: [
       { id: 'T-001', title: '唾液 MMP-8 的 OECT 检测（牙周炎早筛）', why: 'MMP-8 是牙周炎活动期的标志物；现有床旁检测灵敏度不足。', links: 'H-0001', priority: '高', status: '调研中', pinned: true, every: 14, next: day(0), reviews: [{ at: `${day(-14)}T09:00:00+08:00`, note: '读了 2 篇综述，抗体修饰栅极可行。' }], created: `${day(-30)}T09:00:00+08:00` },
       { id: 'T-002', title: '打印 PEDOT:PSS 器件的批间一致性', why: '为后续量产与临床样本测试打基础。', priority: '中', status: '想法', pinned: false, every: 30, next: day(12), reviews: [], created: `${day(-5)}T09:00:00+08:00` },
