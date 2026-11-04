@@ -7,6 +7,7 @@ import { h, icon, loadScript } from './util.js';
 import { choose, copyText, demoBanner, downloadText, lib, modal, prepareFile, saveError, show, toast, topbar, view, viewMissing } from './core.js';
 import { hero } from './home.js';
 import { route } from './app.js';
+import { PAPER_STAGE, editPaper, loadPlanner } from './planner.js';
 
 // ----- method cards: per-volume archive of exact details, versioned, exportable to a Methods draft -----
 export const methodCount = (vol) => (methodCache.list || []).filter((m) => m.vol === vol).length;
@@ -20,6 +21,12 @@ export function methodsBtn(vol) {
 export const methodCache = { list: null };
 export async function allMethods() { methodCache.list = await loadMethods(lib).catch(() => []); return methodCache.list; }
 export const curParams = (m) => m.params || [];
+// Method cards serve papers: a notebook (volume) can feed several papers, and one card can serve more than one.
+export async function allPapers() { try { return [...((await loadPlanner()).papers || [])].sort((a, b) => PAPER_STAGE.indexOf(a.stage) - PAPER_STAGE.indexOf(b.stage) || String(a.title).localeCompare(String(b.title))); } catch { return []; } }
+const paperChip = (pp) => h('a', { class: 'm-paper', href: `#/methods/a/${pp.id}`, title: [pp.journal, pp.stage].filter(Boolean).join(' · ') }, pp.title);
+const MODE_KEY = 'labnote-methods-mode';
+const getMode = () => { try { return localStorage.getItem(MODE_KEY) || 'paper'; } catch { return 'paper'; } };
+const setMode = (m) => { try { localStorage.setItem(MODE_KEY, m); } catch { /* private window */ } };
 export async function saveMethod(m, message, files = []) {
   m.updated = nowISO();
   await lib.commit(message, async () => ({ changes: [{ path: methodPath(m.id), data: `${JSON.stringify(m, null, 1)}\n` }, ...files] }));
@@ -27,42 +34,73 @@ export async function saveMethod(m, message, files = []) {
 }
 export const methodCtx = () => ({ lib, vol: null, num: null, urls: view.urls, resolveBlob: (name) => lib.readBlob(name.replace(/^\/+/, '')) });
 
-export async function viewMethods(vol) {
+export async function viewMethods(vol, paperId = '') {
   const v = vol ? lib.volume(vol) : null;
   if (vol && !v) return viewMissing('笔记本里没有这个卷。');
-  const all = await allMethods();
+  const [all, papers] = await Promise.all([allMethods(), allPapers()]);
+  const pById = new Map(papers.map((pp) => [pp.id, pp]));
   const list = vol ? all.filter((m) => m.vol === vol) : all;
+  const linked = (m) => (m.papers || []).filter((id) => pById.has(id));
   const q = h('input', { type: 'search', placeholder: '搜索：标题、正文、参数、标签', 'aria-label': '搜索' });
   const st = h('select', { 'aria-label': '状态' }, h('option', { value: '' }, '全部状态'), METHOD_STATUS.map((x) => h('option', { value: x }, x)));
+  const ap = h('select', { 'aria-label': '文章' }, h('option', { value: '' }, '全部文章'), papers.map((pp) => h('option', { value: pp.id, selected: pp.id === paperId }, pp.title)), h('option', { value: '-' }, '未关联文章'));
+  let mode = paperId ? 'paper' : getMode();
+  const modeBtns = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': '分组方式' });
+  const drawMode = () => modeBtns.replaceChildren(...[['paper', '按文章'], ['cat', '按分类']].map(([k, l]) => h('button', { type: 'button', class: `seg-btn${mode === k ? ' on' : ''}`, onclick: () => { mode = k; setMode(k); drawMode(); draw(); } }, l)));
   const body = h('div', { class: 'm-groups' });
+  const card = (m, { showCat = false, showPapers = true } = {}) => h('a', { class: `tile m-card st-${m.status || '待写入'}`, href: `#/m/${m.id}` },
+    h('div', { class: 'm-top' }, h('span', { class: 'xid-tag' }, m.id), showCat ? h('span', { class: 'm-catlbl' }, m.cat || '其他') : null, h('span', { class: 'm-status' }, m.status || '待写入'), (m.versions || []).length > 1 ? h('span', { class: 'm-ver' }, `v${m.versions.length}`) : null),
+    h('h3', null, m.title),
+    curParams(m).length ? h('dl', { class: 'm-params' }, curParams(m).slice(0, 4).map((p) => [h('dt', null, p.k), h('dd', null, p.v)])) : h('p', { class: 'muted' }, String(m.body || '').replace(/[#*>`!\[\]()]/g, '').slice(0, 80)),
+    showPapers && linked(m).length ? h('div', { class: 'm-papers' }, linked(m).map((id) => h('span', { class: 'm-paper' }, pById.get(id).title))) : null,
+    !vol && m.vol ? h('span', { class: 'm-vol' }, lib.volume(m.vol)?.title || m.vol) : null);
+  const catOrder = (ms) => [...METHOD_CAT, ...new Set(ms.map((m) => m.cat).filter((c) => !METHOD_CAT.includes(c)))];
+  const byCat = (a, b) => catOrder([a, b]).indexOf(a.cat || '其他') - catOrder([a, b]).indexOf(b.cat || '其他') || a.id.localeCompare(b.id);
   const draw = () => {
     const t = q.value.trim().toLowerCase();
     const hit = list.filter((m) => (!st.value || (m.status || '待写入') === st.value)
+      && (!ap.value || (ap.value === '-' ? !linked(m).length : linked(m).includes(ap.value)))
       && (!t || `${m.id} ${m.title} ${m.body} ${(m.tags || []).join(' ')} ${curParams(m).map((p) => `${p.k} ${p.v}`).join(' ')}`.toLowerCase().includes(t)));
-    const cats = [...METHOD_CAT, ...new Set(hit.map((m) => m.cat).filter((c) => !METHOD_CAT.includes(c)))];
-    body.replaceChildren(...(hit.length ? cats.map((c) => [c, hit.filter((m) => (m.cat || '其他') === c)]).filter(([, ms]) => ms.length).map(([c, ms]) => h('section', { class: 'm-group' },
-      h('h2', { class: 'm-cat' }, c, h('span', null, `${ms.length}`)),
-      h('div', { class: 'm-grid' }, ms.sort((a, b) => a.id.localeCompare(b.id)).map((m) => h('a', { class: `tile m-card st-${m.status || '待写入'}`, href: `#/m/${m.id}` },
-        h('div', { class: 'm-top' }, h('span', { class: 'xid-tag' }, m.id), h('span', { class: 'm-status' }, m.status || '待写入'), (m.versions || []).length > 1 ? h('span', { class: 'm-ver' }, `v${m.versions.length}`) : null),
-        h('h3', null, m.title),
-        curParams(m).length ? h('dl', { class: 'm-params' }, curParams(m).slice(0, 4).map((p) => [h('dt', null, p.k), h('dd', null, p.v)])) : h('p', { class: 'muted' }, String(m.body || '').replace(/[#*>`!\[\]()]/g, '').slice(0, 80)),
-        !vol && m.vol ? h('span', { class: 'm-vol' }, lib.volume(m.vol)?.title || m.vol) : null)))))
-      : [h('div', { class: 'tile empty-m' }, h('p', null, list.length ? '没有符合条件的卡片。' : '还没有方法卡片。'), h('p', { class: 'muted' }, '每张卡片记一个细节：例如“伤口床 ROI 如何圈定”“调色对比度”“ImageJ 阈值方法”。写论文时可以一键汇总成 Experimental 初稿。'))]));
+    if (!hit.length) {
+      body.replaceChildren(h('div', { class: 'tile empty-m' }, h('p', null, list.length ? '没有符合条件的卡片。' : '还没有方法卡片。'), h('p', { class: 'muted' }, '每张卡片记一个细节：例如“伤口床 ROI 如何圈定”“调色对比度”“ImageJ 阈值方法”。关联到文章后，写论文时可以按文章一键汇总成 Experimental 初稿。')));
+      return;
+    }
+    if (mode === 'paper') {
+      const groups = [...papers.map((pp) => [pp, hit.filter((m) => linked(m).includes(pp.id))]), [null, hit.filter((m) => !linked(m).length)]].filter(([, ms]) => ms.length);
+      body.replaceChildren(...groups.map(([pp, ms]) => h('section', { class: `m-group m-article${pp ? '' : ' m-unlinked'}` },
+        h('header', { class: 'm-art-head' },
+          h('div', { class: 'm-art-tt' },
+            h('span', { class: 'm-art-kicker' }, pp ? '文章' : '未关联文章'),
+            h('h2', { class: 'm-cat' }, pp ? pp.title : '这些卡片还没有归到文章', h('span', null, `${ms.length}`)),
+            pp ? h('p', { class: 'm-art-meta' }, [pp.journal, pp.stage, `${ms.filter((m) => (m.status || '待写入') === '待写入').length} 张待写入`].filter(Boolean).join(' · ')) : h('p', { class: 'm-art-meta' }, '打开卡片 → 修改 → 勾选“相关文章”。')),
+          pp ? h('div', { class: 'm-art-act' },
+            h('button', { class: 'btn small', type: 'button', onclick: () => openMethodsExport(vol, ms, pp) }, icon('download', 16), '这篇的 Experimental'),
+            h('button', { class: 'btn small ghost', type: 'button', onclick: () => editPaper(pp) }, '文章信息')) : null),
+        h('div', { class: 'm-grid' }, [...ms].sort(byCat).map((m) => card(m, { showCat: true, showPapers: false }))))));
+    } else {
+      const cats = catOrder(hit);
+      body.replaceChildren(...cats.map((c) => [c, hit.filter((m) => (m.cat || '其他') === c)]).filter(([, ms]) => ms.length).map(([c, ms]) => h('section', { class: 'm-group' },
+        h('h2', { class: 'm-cat' }, c, h('span', null, `${ms.length}`)),
+        h('div', { class: 'm-grid' }, ms.sort((a, b) => a.id.localeCompare(b.id)).map((m) => card(m))))));
+    }
   };
-  q.addEventListener('input', draw); st.addEventListener('change', draw); draw();
+  q.addEventListener('input', draw); st.addEventListener('change', draw); ap.addEventListener('change', draw); drawMode(); draw();
   const todo = list.filter((m) => (m.status || '待写入') === '待写入').length;
+  const unlinked = list.filter((m) => !linked(m).length).length;
+  const cur = paperId ? pById.get(paperId) : null;
   return h('div', { class: 'view methods' },
-    topbar({ back: vol ? `#/v/${vol}` : '#/', backLabel: vol ? v.title : '首页', title: vol ? `方法细节 · ${v.title}` : '全部方法卡片', sub: `${list.length} 张 · ${todo} 张待写入论文`, actions: [
+    topbar({ back: vol ? `#/v/${vol}` : '#/', backLabel: vol ? v.title : '首页', title: vol ? `方法细节 · ${v.title}` : cur ? `方法细节 · ${cur.title}` : '方法细节（按文章）', sub: `${list.length} 张 · ${todo} 张待写入论文${unlinked ? ` · ${unlinked} 张未关联文章` : ''}`, actions: [
       vol ? h('a', { class: 'btn ghost', href: '#/methods' }, h('span', { class: 'wide-only' }, '全部卷')) : null,
-      h('button', { class: 'btn', type: 'button', onclick: () => openMethodsExport(vol, list) }, icon('download', 18), h('span', { class: 'wide-only' }, '生成 Experimental 初稿')),
-      h('button', { class: 'btn primary', type: 'button', onclick: () => editMethod(null, vol) }, icon('plus', 18), h('span', null, '新建卡片'))].filter(Boolean) }),
+      h('button', { class: 'btn', type: 'button', onclick: () => openMethodsExport(vol, ap.value && ap.value !== '-' ? list.filter((m) => linked(m).includes(ap.value)) : list, ap.value && ap.value !== '-' ? pById.get(ap.value) : null) }, icon('download', 18), h('span', { class: 'wide-only' }, '生成 Experimental 初稿')),
+      h('button', { class: 'btn primary', type: 'button', onclick: () => editMethod(null, vol, ap.value && ap.value !== '-' ? [ap.value] : []) }, icon('plus', 18), h('span', null, '新建卡片'))].filter(Boolean) }),
     demoBanner(),
-    h('div', { class: 'm-wrap' }, h('div', { class: 'search-row' }, q, st), body));
+    h('div', { class: 'm-wrap' }, h('div', { class: 'search-row' }, modeBtns, ap, q, st), body));
 }
 
 export async function viewMethod(id) {
   const m = await loadMethod(lib, id).catch(() => null);
   if (!m) return viewMissing(`没有方法卡片 ${id}。`);
+  const papers = (await allPapers()).filter((pp) => (m.papers || []).includes(pp.id));
   const desc = h('div', { class: 'prose m-body' });
   if (m.body) renderInto(desc, m.body, methodCtx());
   const used = search(lib.allPages(), id).map((r) => r.page).sort((a, b) => String(a.date).localeCompare(String(b.date)));
@@ -76,6 +114,7 @@ export async function viewMethod(id) {
     h('div', { class: 'm-wrap m-one' },
       h('header', { class: 'm-hero' },
         h('p', { class: 'hero-eyebrow' }, `${m.cat || '其他'} · ${m.id}${vs.length ? ` · v${vs.length}` : ''}`),
+        h('p', { class: 'm-art-line' }, h('span', { class: 'm-art-kicker' }, '相关文章'), papers.length ? papers.map(paperChip) : h('span', { class: 'muted' }, '还没关联文章（点“修改”勾选）')),
         h('h1', { class: 'hero-title' }, m.title),
         h('div', { class: 'seg m-status-seg', role: 'radiogroup', 'aria-label': '论文状态' }, METHOD_STATUS.map((x) => h('button', { type: 'button', class: `seg-btn${(m.status || '待写入') === x ? ' on' : ''}`, onclick: () => setStatus(x) }, x))),
         (m.tags || []).length ? h('p', { class: 'm-tags' }, m.tags.map((t) => `#${t}`).join('  ')) : null),
@@ -95,9 +134,15 @@ export async function viewMethod(id) {
               : h('p', { class: 'muted' }, `在实验页正文或步骤里写 ${m.id}（编辑页工具栏“方法”），就会列在这里。`))))));
 }
 
-export function editMethod(m, vol) {
+export async function editMethod(m, vol, presetPapers = []) {
   const isNew = !m;
-  const x = m ? structuredClone(m) : { vol: vol || '', cat: '图像分析', status: '待写入', tags: [], params: [], versions: [] };
+  const x = m ? structuredClone(m) : { vol: vol || '', cat: '图像分析', status: '待写入', tags: [], params: [], versions: [], papers: presetPapers };
+  const papers = await allPapers();
+  const picked = new Set(x.papers || []);
+  const pbx = papers.length ? h('div', { class: 'm-paper-pick' }, papers.map((pp) => h('label', { class: 'check' },
+    h('input', { type: 'checkbox', checked: picked.has(pp.id), onchange: (e) => { if (e.target.checked) picked.add(pp.id); else picked.delete(pp.id); } }),
+    ' ', h('b', null, pp.title), h('span', { class: 'muted' }, ` ${[pp.journal, pp.stage].filter(Boolean).join(' · ')}`))))
+    : h('p', { class: 'muted' }, '还没有文章。先在首页“论文与投稿”里新建论文（题目可简写），再回来勾选。');
   const files = [];
   const title = h('input', { id: 'me-title', value: x.title || '', placeholder: '例如：伤口床 ROI 圈定方法' });
   const cat = h('select', { id: 'me-cat' }, METHOD_CAT.map((c) => h('option', { selected: x.cat === c }, c)));
@@ -131,8 +176,9 @@ export function editMethod(m, vol) {
   modal({
     title: isNew ? '新建方法卡片' : `修改 ${x.id}`, wide: true,
     body: h('div', { class: 'form' },
+      h('span', { class: 'label' }, '相关文章（这张卡片写进哪篇论文的 Experimental，可多选）'), pbx,
       lbl('me-title', '标题'), title,
-      h('div', { class: 'pair' }, h('div', null, lbl('me-cat', '分类（论文 Methods 小节）'), cat), h('div', null, lbl('me-vol', '所属卷（课题）'), vsel)),
+      h('div', { class: 'pair' }, h('div', null, lbl('me-cat', '分类（论文 Methods 小节）'), cat), h('div', null, lbl('me-vol', '来自哪个记录本（卷）'), vsel)),
       lbl('me-body', '做法'), body,
       h('span', { class: 'label' }, '参数（改动会自动记一版）'), pbox,
       h('div', { class: 'pair' }, h('div', null, lbl('me-since', '自哪个实验起'), since), h('div', null, lbl('me-note', '修改说明'), note)),
@@ -147,6 +193,7 @@ export function editMethod(m, vol) {
         if (isNew) x.id = nextMethodId(methodIds(lib));
         const ps = params.map((p) => ({ k: p.k.trim(), v: p.v.trim() })).filter((p) => p.k || p.v);
         x.body = body.value.replaceAll('/methods/attachments/__new__/', `/methods/attachments/${x.id}/`);
+        x.papers = [...picked];
         Object.assign(x, { title: title.value.trim(), cat: cat.value, vol: vsel.value, tags: tags.value.split(/[,，]/).map((t) => t.trim()).filter(Boolean) });
         if (isNew || paramsChanged(x.params, ps)) x.versions = [...(x.versions || []), { v: (x.versions || []).length + 1, at: nowISO(), since: since.value.trim(), note: note.value.trim() || (isNew ? '初版' : ''), params: ps }];
         x.params = ps;
@@ -173,14 +220,14 @@ export async function pickMethod(vol, onPick) {
 }
 
 // Methods draft: cards grouped by category into Markdown or Word, ready to edit into the paper.
-export function openMethodsExport(vol, list) {
+export function openMethodsExport(vol, list, paper = null) {
   const scope = h('select', { id: 'mx-scope' }, h('option', { value: 'todo' }, '只要“待写入”'), h('option', { value: 'all' }, '“待写入”和“已写入”'));
   const mark = h('input', { type: 'checkbox', id: 'mx-mark', checked: true });
   const pick = () => list.filter((m) => (scope.value === 'all' ? (m.status || '待写入') !== '不写入' : (m.status || '待写入') === '待写入'));
   const groups = (ms) => METHOD_CAT.concat([...new Set(ms.map((m) => m.cat))].filter((c) => !METHOD_CAT.includes(c))).map((c) => [c, ms.filter((m) => (m.cat || '其他') === c)]).filter(([, g]) => g.length);
   const plain = (md) => String(md || '').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\*\*|__|==|\+\+|\{\{|\}\}/g, '').trim();
   const pline = (m) => curParams(m).map((p) => `${p.k} ${p.v}`).join('; ');
-  const title = vol ? `Experimental · ${lib.volume(vol)?.title || vol}` : 'Experimental';
+  const title = paper ? `Experimental · ${paper.title}` : vol ? `Experimental · ${lib.volume(vol)?.title || vol}` : 'Experimental';
   const finish = async (ms) => {
     if (!mark.checked) return;
     const todo = ms.filter((m) => (m.status || '待写入') === '待写入');
@@ -192,7 +239,7 @@ export function openMethodsExport(vol, list) {
   };
   const md = (ms) => [`# ${title}`, '', ...groups(ms).flatMap(([c, g]) => [`## ${c}`, '', ...g.flatMap((m) => [`### ${m.title}`, '', plain(m.body), '', ...(curParams(m).length ? [`Parameters: ${pline(m)}.`, ''] : []), `<!-- ${m.id} v${(m.versions || []).length || 1} -->`, ''])])].join('\n');
   modal({
-    title: '生成 Experimental 初稿',
+    title: paper ? `Experimental 初稿 · ${paper.title}` : '生成 Experimental 初稿',
     body: h('div', { class: 'form' },
       h('label', { for: 'mx-scope' }, '包括哪些卡片'), scope,
       h('label', { class: 'check', for: 'mx-mark' }, mark, ' 导出后把“待写入”标为“已写入”'),

@@ -419,6 +419,7 @@ export function homeRails() {
     let doc; try { doc = await loadPlanner(); } catch { return; }
     const focused = document.activeElement?.closest?.('.rail') ? document.activeElement.dataset.k : null;
     const { tasks, projects, papers } = doc;
+    const paperMethods = await loadMethods(lib).catch(() => []);
     // 课题与基金
     const active = projects.filter((x) => !['想法', '调研', '已结束'].includes(x.stage || '想法'));
     const early = (st) => projects.filter((x) => (x.stage || '想法') === st).length;
@@ -443,7 +444,8 @@ export function homeRails() {
       h('ol', { class: 'paper-steps' }, PAPER_STAGE.slice(0, 6).map((st) => h('li', { class: papers.some((x) => x.stage === st) ? 'on' : null }, st))),
       h('ul', { class: 'board-list' }, [...papers].sort((a, b) => PAPER_STAGE.indexOf(a.stage) - PAPER_STAGE.indexOf(b.stage)).map((x) => h('li', { class: `board-item paper st-${x.stage}`, onclick: () => editPaper(x) },
         h('div', { class: 'bi-top' }, h('span', { class: 'bi-kind' }, x.stage), h('b', null, x.title)),
-        h('div', { class: 'bi-meta' }, x.journal ? h('i', null, x.journal) : null, dueTag(x.due))))),
+        h('div', { class: 'bi-meta' }, x.journal ? h('i', null, x.journal) : null, dueTag(x.due),
+          h('a', { class: 'bi-m', href: `#/methods/a/${x.id}`, title: '这篇文章的方法卡片' }, `方法卡片 ${paperMethods.filter((m) => (m.papers || []).includes(x.id)).length}`))))),
       h('button', { class: 'btn small rail-add', type: 'button', onclick: () => editPaper(null) }, icon('plus', 14), '新建论文'));
     for (const [card, key] of [[pj, 'pj'], [pp, 'pp']]) { const ul = card.querySelector('ul.board-list'); if (ul) foldList(ul, key); }
     const rd = catList(tasks, '文献', { placeholder: '粘贴 DOI、链接或题目' });

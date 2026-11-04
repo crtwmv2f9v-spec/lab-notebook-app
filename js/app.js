@@ -86,7 +86,7 @@ export async function route(opts = {}) {
   if (a === 'lib' && b === 'protocols' && c) return show('library', () => viewProtocol(c));
   if (a === 'series' && b) return show('library', () => viewSeries(b));
   if (a === 'plan') return show('plan', () => viewPlan(b));
-  if (a === 'methods') return show('methods', () => viewMethods(''));
+  if (a === 'methods') return show('methods', () => viewMethods('', b === 'a' && c ? c : ''));
   if (a === 'm' && b) return show('methods', () => viewMethod(b));
   if (a === 'v' && b && c === 'methods') return show('methods', () => viewMethods(b));
   if (a === 'think' && !b) return show('think', viewThinking);

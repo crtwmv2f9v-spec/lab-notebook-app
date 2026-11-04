@@ -48,13 +48,13 @@ tags: [oect, transfer]
   return {
     'notebook.json': `${JSON.stringify(notebook, null, 2)}\n`,
     'library/reagents.csv': reagents,
-    'methods/M-0001.json': `${JSON.stringify({ id: 'M-0001', vol: 'oect', title: '沟道 ROI 圈定与面积测量', cat: '图像分析', status: '待写入', tags: ['ImageJ', '显微镜'],
+    'methods/M-0001.json': `${JSON.stringify({ id: 'M-0001', vol: 'oect', papers: ['A1'], title: '沟道 ROI 圈定与面积测量', cat: '图像分析', status: '待写入', tags: ['ImageJ', '显微镜'],
       body: '1. 显微镜图像（10×，比例尺 0.1467 µm/px）导入 ImageJ，**Image → Type → 8-bit**。\n2. 用 Freehand 工具沿沟道边缘圈定 ROI，避开银线搭接处。\n3. Analyze → Measure 得到面积，三次圈定取平均。',
       params: [{ k: '比例尺', v: '0.1467 µm/px' }, { k: '对比度', v: 'Auto 后 +20%' }, { k: '阈值方法', v: 'Otsu' }],
       versions: [{ v: 1, at: `${day(-10)}T10:00:00+08:00`, since: '', note: '初版', params: [{ k: '比例尺', v: '0.1467 µm/px' }, { k: '对比度', v: 'Auto' }, { k: '阈值方法', v: 'Default' }] },
         { v: 2, at: `${day(-3)}T10:00:00+08:00`, since: x1, note: 'Default 阈值把银线算进沟道', params: [{ k: '比例尺', v: '0.1467 µm/px' }, { k: '对比度', v: 'Auto 后 +20%' }, { k: '阈值方法', v: 'Otsu' }] }],
       created: `${day(-10)}T10:00:00+08:00`, updated: `${day(-3)}T10:00:00+08:00` }, null, 1)}\n`,
-    'methods/M-0002.json': `${JSON.stringify({ id: 'M-0002', vol: 'oect', title: '转移曲线统计：每组 n 与误差', cat: '统计分析', status: '已写入', tags: [], body: '每个条件至少 3 个器件；gm 取最大值；结果以 mean ± SD 表示，组间用 one-way ANOVA + Tukey。', params: [{ k: 'n', v: '≥ 3 devices' }, { k: '检验', v: 'one-way ANOVA, Tukey' }], versions: [{ v: 1, at: `${day(-8)}T10:00:00+08:00`, since: '', note: '初版', params: [{ k: 'n', v: '≥ 3 devices' }, { k: '检验', v: 'one-way ANOVA, Tukey' }] }], created: `${day(-8)}T10:00:00+08:00`, updated: `${day(-8)}T10:00:00+08:00` }, null, 1)}\n`,
+    'methods/M-0002.json': `${JSON.stringify({ id: 'M-0002', vol: 'oect', papers: ['A1', 'A2'], title: '转移曲线统计：每组 n 与误差', cat: '统计分析', status: '已写入', tags: [], body: '每个条件至少 3 个器件；gm 取最大值；结果以 mean ± SD 表示，组间用 one-way ANOVA + Tukey。', params: [{ k: 'n', v: '≥ 3 devices' }, { k: '检验', v: 'one-way ANOVA, Tukey' }], versions: [{ v: 1, at: `${day(-8)}T10:00:00+08:00`, since: '', note: '初版', params: [{ k: 'n', v: '≥ 3 devices' }, { k: '检验', v: 'one-way ANOVA, Tukey' }] }], created: `${day(-8)}T10:00:00+08:00`, updated: `${day(-8)}T10:00:00+08:00` }, null, 1)}\n`,
     'planner/tasks.json': `${JSON.stringify({
       tasks: [
         { id: 'td1', text: '双周报告', week: day(0), date: day(4), cat: '截止', done: false, created: `${day(-3)}T09:00:00+08:00` },
