@@ -327,17 +327,15 @@ export function nextEvidenceId(hyp) {
   return `E${max + 1}`;
 }
 
-// ---------- potential research topics (thinking/topics.json) ----------
-// { id: 'T-001', title, why, links, priority, status, pinned, every (days, 0 = no review), next (ISO date), reviews: [{ at, note }], created, updated }
-export const TOPICS_PATH = 'thinking/topics.json';
-export const TOPIC_STATUS = ['想法', '调研中', '准备开展', '进行中', '已转为课题', '放弃'];
-export const TOPIC_PRIORITY = ['高', '中', '低'];
-export const TOPIC_EVERY = [[7, '每周'], [14, '每两周'], [30, '每月'], [90, '每季度'], [0, '不提醒']];
-export async function loadTopics(lib) { return (await cached(lib, TOPICS_PATH, (t) => JSON.parse(t).topics || [])) || []; }
-export const activeTopic = (t) => !['已转为课题', '放弃'].includes(t.status);
-export function topicAlerts(list, within = 0, today = todayISO()) {
-  return list.filter((t) => activeTopic(t) && t.every && /^\d{4}-\d{2}-\d{2}$/.test(t.next || '') && daysFrom(t.next, today) <= within)
-    .map((t) => ({ date: t.next, text: `回顾课题：${t.title}`, topic: t.id }));
+// ---------- projects (planner/tasks.json → projects): one list from a first idea to a finished grant ----------
+// project = { id, title, kind, stage, next, due, vols, note, why, priority, links, every (days between reviews, 0 = none),
+//             nextReview (ISO date), reviews: [{ at, note }], created }   — the former 潜在研究课题 are its 想法 / 调研 stages.
+export const PROJECT_STAGE = ['想法', '调研', '申请中', '进行中', '中期', '结题', '已结束'];
+export const PROJECT_PRIORITY = ['高', '中', '低'];
+export const REVIEW_EVERY = [[0, '不提醒'], [7, '每周'], [14, '每两周'], [30, '每月'], [90, '每季度']];
+export function projectReviewAlerts(list, within = 0, today = todayISO()) {
+  return (list || []).filter((p) => p.stage !== '已结束' && p.every && /^\d{4}-\d{2}-\d{2}$/.test(p.nextReview || '') && daysFrom(p.nextReview, today) <= within)
+    .map((p) => ({ date: p.nextReview, text: `回顾课题：${p.title}`, project: p.id }));
 }
 
 // ---------- tables pasted from Excel / WPS / Origin / Numbers ----------

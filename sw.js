@@ -1,9 +1,11 @@
 // Offline support: the app shell and libraries are cached; notebook data is
 // cached by the app itself (IndexedDB), so GitHub API calls pass straight through.
-const VERSION = 'labnote-v24';
+const VERSION = 'labnote-v26';
 const SHELL = [
   './', 'index.html', 'css/notebook.css', 'manifest.webmanifest',
-  'js/app.js', 'js/store.js', 'js/model.js', 'js/render.js', 'js/search.js', 'js/util.js', 'js/demo.js', 'js/lab.js', 'js/demo-lab.js', 'vendor/docx.umd.js',
+  'js/app.js', 'js/core.js', 'js/settings.js', 'js/home.js', 'js/planner.js', 'js/pages.js', 'js/editor.js', 'js/printing.js', 'js/think.js',
+  'js/methods.js', 'js/libraries.js', 'js/searchui.js',
+  'js/store.js', 'js/model.js', 'js/render.js', 'js/search.js', 'js/util.js', 'js/demo.js', 'js/lab.js', 'js/demo-lab.js', 'vendor/docx.umd.js',
   'icons/favicon.svg', 'icons/icon-192.png',
 ];
 const CDN_HOSTS = ['cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
@@ -26,7 +28,9 @@ self.addEventListener('fetch', (e) => {
     e.respondWith((async () => {
       const cache = await caches.open(VERSION);
       try {
-        const res = await Promise.race([fetch(req), timeout(5000)]);
+        // no-cache: always ask the server (a cheap 304 when unchanged), so a reload never runs yesterday's files.
+        const fresh = req.mode === 'navigate' ? fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }) : fetch(req, { cache: 'no-cache' });
+        const res = await Promise.race([fresh, timeout(5000)]);
         if (res.ok) cache.put(req, res.clone());
         return res;
       } catch {

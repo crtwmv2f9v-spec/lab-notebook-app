@@ -68,7 +68,9 @@ tags: [oect, transfer]
       ],
       memos: [],
       projects: [
-        { id: 'P1', title: '唾液 MMP-8 OECT 牙周炎早筛', kind: '课题', stage: '进行中', next: '完成 7 天稳定性', due: day(12), vols: ['oect'] },
+        { id: 'P1', title: '唾液 MMP-8 OECT 牙周炎早筛', kind: '课题', stage: '进行中', next: '完成 7 天稳定性', due: day(12), vols: ['oect'], why: 'MMP-8 是牙周炎活动期的标志物；现有床旁检测灵敏度不足。', priority: '高', every: 14, nextReview: day(0), reviews: [{ at: `${day(-14)}T09:00:00+08:00`, note: '读了 2 篇综述，抗体修饰栅极可行。' }] },
+        { id: 'P3', title: '打印 PEDOT:PSS 器件的批间一致性', kind: '课题', stage: '想法', why: '为后续量产与临床样本测试打基础。', priority: '中', every: 30, nextReview: day(12), vols: [] },
+        { id: 'P4', title: '可拉伸 OECT', kind: '课题', stage: '调研', why: '贴附皮肤的长期监测。', priority: '中', every: 0, vols: [] },
         { id: 'P2', title: '国自然青年基金', kind: '基金', stage: '申请中', next: '提交申请书初稿', due: day(9), vols: [] },
       ],
       papers: [
@@ -76,10 +78,6 @@ tags: [oect, transfer]
         { id: 'A2', title: 'GOPS crosslinking and drift in PEDOT:PSS', journal: 'ACS AMI', stage: '返修', due: day(6) },
       ],
     }, null, 1)}\n`,
-    'thinking/topics.json': `${JSON.stringify({ topics: [
-      { id: 'T-001', title: '唾液 MMP-8 的 OECT 检测（牙周炎早筛）', why: 'MMP-8 是牙周炎活动期的标志物；现有床旁检测灵敏度不足。', links: 'H-0001', priority: '高', status: '调研中', pinned: true, every: 14, next: day(0), reviews: [{ at: `${day(-14)}T09:00:00+08:00`, note: '读了 2 篇综述，抗体修饰栅极可行。' }], created: `${day(-30)}T09:00:00+08:00` },
-      { id: 'T-002', title: '打印 PEDOT:PSS 器件的批间一致性', why: '为后续量产与临床样本测试打基础。', priority: '中', status: '想法', pinned: false, every: 30, next: day(12), reviews: [], created: `${day(-5)}T09:00:00+08:00` },
-    ] }, null, 1)}\n`,
     'thinking/H-0001.json': `${JSON.stringify({ id: 'H-0001', title: '旋涂后气泡/气爆由氯仿快速挥发引起', status: '验证中', confidence: '中', description: '1. 配制墨水时加入少量氯仿（沸点 61 °C）助溶。\n2. 旋涂后加热到 60 °C 附近时出现气泡，偶尔小气爆。\n3. 不含氯仿的对照组气泡明显少。', predictions: ['去掉氯仿后不再出现气泡', '降低退火升温速率可减少气泡', '气泡数量随氯仿比例增加'], evidence: [{ id: 'E1', kind: '支持', date: day(-6), text: '加热到 60 °C 附近时瓶内出现大量气泡，瓶盖处有泄压声。', photos: [] }, { id: 'E2', kind: '待定', date: day(-4), text: '文献：氯仿沸点 61.2 °C，蒸气压 21 kPa（20 °C）。', src: { url: '10.1021/ja00000a000' }, photos: [] }, { id: 'E3', kind: '反对', date: day(-3), text: '不含氯仿的对照组在 140 °C 退火时也出现少量气泡。', src: { xid: x1, vol: 'oect', num: 1 }, photos: [] }], history: [{ at: `${day(-7)}T10:00:00+08:00`, status: '提出', confidence: '低', why: '提出' }, { at: `${day(-4)}T15:00:00+08:00`, status: '验证中', confidence: '中', why: '证据 1 与沸点吻合' }], created: `${day(-7)}T10:00:00+08:00`, updated: `${day(-3)}T10:00:00+08:00` }, null, 1)}\n`,
     'library/solutions.csv': `id,name,recipe,conc,volume,prepared,by,expires,location,page,status,notes\nS-0001,PEDOT:PSS 墨水（1 wt% GOPS）,R-0001 × 1 mL; R-0002 × 10 µL,1 wt% GOPS,1 mL,${d0},示例用户,${day(10)},4 °C 冰箱,${x1},在用,\n`,
     'library/protocols/SOP-DEMO-OECT-TR-v1.md': sop,
