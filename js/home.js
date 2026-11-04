@@ -7,7 +7,7 @@ import { h, icon } from './util.js';
 import { S, demoBanner, lib, modal, toast, topbar, view, menu } from './core.js';
 import {
   PAPER_STAGE, WEEKDAYS, addBox, allFollowups, changeTasks, editPaper, editProject, exportIcs,
-  isGoal, loadPlanner, memoCard, moveTask, newTask, reminderRow, ring, taskRow,
+  editable, isGoal, loadPlanner, memoCard, moveTask, newTask, reminderRow, ring, taskRow,
   toggleTask, weekStart,
 } from './planner.js';
 import { openNewExperiment } from './pages.js';
@@ -344,13 +344,53 @@ export async function fillPaperRefs() {
   }
   if (found.length) changeTasks((l) => { for (const [id, ref] of found) { const t = l.find((y) => y.id === id); if (t) t.ref = ref; } }, 'Planner: paper titles', redrawHome);
 }
+// A few keywords instead of the whole title, so the list stays one short line per paper.
+const ABBR = [
+  [/organic electrochemical transistors?/gi, 'OECT'], [/organic field[- ]effect transistors?/gi, 'OFET'], [/field[- ]effect transistors?/gi, 'FET'],
+  [/single[- ]walled carbon nanotubes?/gi, 'SWCNT'], [/carbon nanotubes?/gi, 'CNT'], [/zeolitic imidazolate frameworks?/gi, 'ZIF'], [/metal[- ]organic frameworks?/gi, 'MOF'],
+  [/covalent organic frameworks?/gi, 'COF'], [/two[- ]photon (?:polymeri[sz]ation|lithography|printing|direct laser writing)/gi, '2PP'], [/direct laser writing/gi, 'DLW'],
+  [/poly\(3,4-ethylenedioxythiophene\)\s*:?\s*poly\(styrene ?sulfonate\)/gi, 'PEDOT:PSS'], [/poly\(3-hexylthiophene\)/gi, 'P3HT'], [/reduced graphene oxide/gi, 'rGO'], [/graphene oxide/gi, 'GO'],
+  [/electrochemical impedance spectroscopy/gi, 'EIS'], [/molecularly imprinted polymers?/gi, 'MIP'], [/hydrogen peroxide/gi, 'H2O2'], [/glucose oxidase/gi, 'GOx'], [/prussian blue/gi, 'PB'],
+  [/silver nanowires?/gi, 'AgNW'], [/direct ink writing/gi, 'DIW'], [/aerosol[- ]jet print(?:ing|ed)/gi, 'AJP'], [/matrix metalloproteinase[- ]?8/gi, 'MMP-8'], [/point[- ]of[- ]care/gi, 'POC'],
+  [/machine learning/gi, 'ML'], [/deep learning/gi, 'DL'], [/three[- ]dimensional|3-dimensional/gi, '3D'], [/two[- ]dimensional/gi, '2D'],
+];
+const STOP = new Set(('a an the of for in on with and or to by from via using use based toward towards novel new high highly performance enhanced efficient effective study effect effects approach '
+  + 'application applications loaded network networks system systems strategy simple facile one step one-step through its their as at into under over between ultra robust stable improved '
+  + 'sensitive sensitivity selective rapid fast low cost low-cost large scale large-scale advanced recent progress review perspective toward properties property design designed fabrication '
+  + 'fabricated synthesis prepared preparation method methods material materials device devices insight insights understanding role new-type type types its this that these').split(' '));
+export function paperKeywords(title) {
+  let t = String(title || '').trim();
+  if (!t) return '';
+  if (/[㐀-鿿]/.test(t)) return t.length > 24 ? `${t.slice(0, 24)}…` : t;
+  for (const [re, ab] of ABBR) t = t.replace(re, ab);
+  const strong = (w) => /[A-Z].*[A-Z0-9]|\d/.test(w) || /^[A-Z]{2,}/.test(w);
+  const out = [];
+  for (const raw of t.split(/[\s,;]+(?![^()]*\))/)) {
+    const tok = raw.replace(/^["'“]+|["'”.?!:]+$/g, '').replace(/^\(([^()]*)\)$/, '$1');
+    if (!tok || tok.split('-').every((w) => STOP.has(w.toLowerCase()))) continue;
+    const parts = tok.includes('-') && !tok.includes('(') && tok.split('-').some(strong) ? tok.split('-') : [tok];
+    for (let w of parts) {
+      w = w.replace(/^([A-Z][A-Z0-9]+)s$/, '$1');
+      if (!w || STOP.has(w.toLowerCase()) || (w.length < 3 && !strong(w))) continue;
+      if (!out.some((o) => o.toLowerCase() === w.toLowerCase())) out.push(w);
+    }
+  }
+  const pick = [...out.filter(strong), ...out.filter((w) => !strong(w))].slice(0, 5);
+  return pick.join(' · ');
+}
 function paperRow(x) {
   const href = x.ref?.doi ? `https://doi.org/${x.ref.doi}` : linkMeta(x.text)?.href;
   if (!x.ref) return taskRow(x, { redraw: redrawHome, showCat: false, meta: paperKey(x.text) ? h('span', { class: 'paper-meta' }, '正在查找题目…', linkMeta(x.text)) : linkMeta(x.text) });
+  const first = String(x.ref.authors || '').split(/[ ,]/)[0];
   const li = taskRow(x, { redraw: redrawHome, showCat: false,
-    meta: h('span', { class: 'paper-meta' }, [x.ref.authors, x.ref.journal, x.ref.year].filter(Boolean).join(' · '), href ? h('a', { href, target: '_blank', rel: 'noopener' }, '打开') : null) });
+    meta: h('span', { class: 'paper-meta' }, [[first, x.ref.year].filter(Boolean).join(' '), x.ref.journal].filter(Boolean).join(' · '), href ? h('a', { href, target: '_blank', rel: 'noopener' }, '打开') : null) });
+  // Keywords: generated from the title, click to rewrite them in your own words (kept as `keys`).
+  const keys = x.keys || paperKeywords(x.ref.title) || x.ref.title;
   const main = li.querySelector('.task-main > .task-text');
-  main?.replaceWith(h('a', { class: 'task-text paper-title', href, target: '_blank', rel: 'noopener', title: x.text }, x.ref.title));
+  main?.replaceWith(editable(keys, (v) => changeTasks((l) => { const y = l.find((z) => z.id === x.id); if (y) y.keys = v; }, 'Planner: paper keywords', redrawHome), 'task-text paper-keys'));
+  li.classList.add('paper-row');
+  li.title = `${x.ref.title}\n${[x.ref.authors, x.ref.journal, x.ref.year].filter(Boolean).join(' · ')}\n（点关键词可改写）`;
+  if (!x.date) li.querySelector('.date-chip')?.remove();
   return li;
 }
 // A DOI or link in a reading-list entry becomes a link.
@@ -387,7 +427,13 @@ export function homeRails() {
         h('div', { class: 'bi-top' }, h('span', { class: 'bi-kind' }, x.kind || '课题'), h('b', null, x.title)),
         h('div', { class: 'bi-meta' }, h('span', { class: 'bi-stage' }, x.stage), x.next ? h('span', null, `下一步：${x.next}`) : null, dueTag(x.due)),
         (x.vols || []).length ? h('div', { class: 'bi-vols' }, x.vols.map((id) => lib.volume(id)).filter(Boolean).flatMap((v) => [h('a', { href: `#/v/${v.id}` }, v.title), h('a', { class: 'bi-m', href: `#/v/${v.id}/methods` }, '方法细节')])) : null)))
-        : h('p', { class: 'muted small' }, '还没有在推进的课题。想法和调研阶段的课题在课题看板里。'),
+        : h('p', { class: 'muted small' }, '还没有在推进的课题。'),
+      ...['调研', '想法'].map((st) => {
+        const list = projects.filter((x) => (x.stage || '想法') === st);
+        return list.length ? h('div', { class: 'pj-early' }, h('h4', null, `${st} ${list.length}`),
+          h('ul', { class: 'idea-list' }, list.map((x) => h('li', { onclick: () => editProject(x), title: x.why || '点击修改' },
+            h('b', null, x.title), x.why ? h('span', { class: 'idea-why' }, x.why) : null, x.next ? h('span', { class: 'idea-why' }, `下一步：${x.next}`) : null)))) : null;
+      }),
       h('div', { class: 'rail-actions' },
         h('a', { class: 'btn small', href: '#/projects' }, '课题看板 ›'),
         h('button', { class: 'btn small ghost', type: 'button', onclick: () => editProject(null, { stage: '想法' }) }, icon('plus', 14), '记一个想法')));

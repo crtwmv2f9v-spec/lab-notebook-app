@@ -1826,3 +1826,17 @@ a.paper-title:hover { text-decoration: underline; }
 .task.done a.paper-title { text-decoration: line-through; color: var(--card-ink-2, var(--ink-3)); }
 .paper-meta { display: inline-flex; flex-wrap: wrap; gap: 0 8px; font-style: italic; }
 .paper-meta a { font-style: normal; }
+
+/* v35: reading list — one compact keyword line + a tiny source line; full title on hover */
+li.task.paper-row { padding-top: 5px; padding-bottom: 5px; }
+li.task.paper-row .task-main { line-height: 1.3; }
+.paper-keys { font: 600 13.5px/1.35 var(--font-ui); color: var(--card-ink); }
+li.task.paper-row .paper-meta { font-size: 11.5px; }
+/* projects card: ideas and surveys listed too */
+.pj-early { margin-top: 10px; }
+.pj-early h4 { margin: 0 0 4px; font: 600 11.5px/1.3 var(--font-ui); letter-spacing: .08em; color: var(--card-ink-2); }
+ul.idea-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+ul.idea-list li { padding: 5px 9px; border-radius: 8px; background: color-mix(in srgb, var(--card-ink) 4%, transparent); cursor: pointer; font: 400 13px/1.4 var(--font-ui); color: var(--card-ink); }
+ul.idea-list li:hover { background: color-mix(in srgb, var(--card-ink) 8%, transparent); }
+ul.idea-list b { display: block; font-weight: 600; }
+.idea-why { display: block; font-size: 12px; color: var(--card-ink-2); }
