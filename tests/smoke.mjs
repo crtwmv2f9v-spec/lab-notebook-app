@@ -144,7 +144,7 @@ try {
   });
   await check('volume', async () => { await go('#/v/oect', "document.querySelector('.toc-table')"); await evaluate(clean); await shot('volume'); });
   await check('page', async () => {
-    await go('#/v/oect/1', "document.querySelector('table.samples') && document.querySelector('table.materials') && document.querySelector('ol.steps')");
+    await go('#/v/oect/1', "document.querySelector('table.samples') && document.querySelector('table.materials') && document.querySelector('ol.steps') && document.querySelector('.ink-red')");
     await evaluate(clean); await shot('page');
   });
   await check('page-hypothesis', async () => { await go('#/v/oect/2', "document.querySelector('aside.hyp-box .hyp-row')"); await evaluate(clean); });

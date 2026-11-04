@@ -12,6 +12,7 @@ export const loadLib = (name) => loadScript(...LIBS[name]);
 
 // ctx = { lib, vol, num, resolveBlob(name) -> Promise<Blob>, urls: [] }
 let cur = null;
+const INK = { 红: 'red', 蓝: 'blue', 绿: 'green', 橙: 'orange', 紫: 'purple', 灰: 'grey' };
 let ready = false;
 
 function setup() {
@@ -51,6 +52,16 @@ function setup() {
           if (m) return { type: 'embedInline', raw: m[0], target: m[1].split('|')[0].trim() };
         },
         renderer(t) { return `<a class="file-chip" href="#" data-att-link="${esc(t.target)}">${esc(t.target)}</a>`; },
+      },
+      // {红|coloured ink}: a few pen colours, written as a word so the source stays readable
+      {
+        name: 'ink', level: 'inline',
+        start(src) { const i = src.search(/\{(?:红|蓝|绿|橙|紫|灰)\|/); return i < 0 ? undefined : i; },
+        tokenizer(src) {
+          const m = /^\{(红|蓝|绿|橙|紫|灰)\|([^}\n]+)\}/.exec(src);
+          if (m) return { type: 'ink', raw: m[0], color: INK[m[1]], tokens: this.lexer.inlineTokens(m[2]) };
+        },
+        renderer(t) { return `<span class="ink ink-${t.color}">${this.parser.parseInline(t.tokens)}</span>`; },
       },
       // ==highlighter==  ++underline++  {{circled}}
       ...[['mark', '==', '==', 'mark', 'hl'], ['uline', '++', '++', 'span', 'pen-ul'], ['circle', '{{', '}}', 'span', 'pen-circle']].map(([name, a, b, tag, cls]) => ({

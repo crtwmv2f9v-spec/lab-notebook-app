@@ -1757,3 +1757,13 @@ a.m-id.missing { text-decoration: line-through; opacity: .6; }
   .sheet.record .sheet-body li > ul, .sheet.record .sheet-body li > ol { margin: 0 !important; }
   .sheet.record .sheet-body .katex { line-height: 1; }
 }
+
+/* pen colours: {红|文字} */
+.ink { font-weight: 550; }
+.ink-red { color: #d7263d; } .ink-blue { color: #1f6feb; } .ink-green { color: #1a8f4a; }
+.ink-orange { color: #d97706; } .ink-purple { color: #8b3fd1; } .ink-grey { color: #6b7280; }
+:root[data-theme="dark"] .ink-red { color: #ff6b7a; } :root[data-theme="dark"] .ink-blue { color: #6ea8ff; } :root[data-theme="dark"] .ink-green { color: #4cd182; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ink-red { color: #ff6b7a; } :root:not([data-theme="light"]) .ink-blue { color: #6ea8ff; } :root:not([data-theme="light"]) .ink-green { color: #4cd182; } }
+.menu-item.ink-red, .menu-item.ink-blue, .menu-item.ink-green, .menu-item.ink-orange, .menu-item.ink-purple, .menu-item.ink-grey { font-weight: 600; }
+.mk-ink { background: linear-gradient(90deg, #d7263d, #d97706, #1a8f4a, #1f6feb, #8b3fd1); -webkit-background-clip: text; background-clip: text; color: transparent !important; font-weight: 700; }
+@media print { .ink { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }

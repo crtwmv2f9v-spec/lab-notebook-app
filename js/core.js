@@ -288,7 +288,7 @@ export function modal({ title, body, buttons = [{ label: '关闭' }], wide = fal
 export function menu(anchor, items) {
   document.querySelectorAll('.menu').forEach((m) => m.remove());
   const m = h('div', { class: 'menu', role: 'menu' }, items.filter(Boolean).map((it) => h('button', {
-    class: 'menu-item', role: 'menuitem', type: 'button',
+    class: `menu-item${it.cls ? ` ${it.cls}` : ''}`, role: 'menuitem', type: 'button',
     onclick: () => { m.remove(); it.run(); },
   }, icon(it.icon, 18), it.label)));
   document.body.append(m);

@@ -8,7 +8,7 @@ import {
 } from './lab.js';
 import { search } from './search.js';
 import { debounce, fmtBytes, h, icon } from './util.js';
-import { S, choose, demoBanner, field, lib, modal, prepareFile, saveError, signerName, thead, toast, topbar, view, viewMissing } from './core.js';
+import { S, choose, demoBanner, field, lib, modal, prepareFile, saveError, signerName, thead, toast, topbar, view, viewMissing, menu } from './core.js';
 import { amendEntry, pageCtx, reasonField, refLink, updatePage, newXid } from './pages.js';
 import { pdfPreview } from './printing.js';
 import { openCiteHypothesis } from './think.js';
@@ -231,6 +231,8 @@ export async function viewEditor(vol, num, params) {
     h('button', { class: 'tool text mk-hl', type: 'button', title: '荧光笔 ==文字==', onclick: () => wrap('==', '==', '重点') }, '荧光'),
     h('button', { class: 'tool text mk-ul', type: 'button', title: '下划线 ++文字++', onclick: () => wrap('++', '++', '重点') }, '下划线'),
     h('button', { class: 'tool text mk-ci', type: 'button', title: '画圈 {{文字}}', onclick: () => wrap('{{', '}}', '重点') }, '圈出'),
+    h('button', { class: 'tool text mk-ink', type: 'button', title: '字的颜色：选中文字后点这里，写成 {红|文字}', onclick: (e) => menu(e.currentTarget,
+      [['红', 'red'], ['蓝', 'blue'], ['绿', 'green'], ['橙', 'orange'], ['紫', 'purple'], ['灰', 'grey']].map(([n, c]) => ({ icon: 'pen', label: `${n}色`, cls: `ink-${c}`, run: () => wrap(`{${n}|`, '}', '文字') }))) }, '颜色'),
     h('button', { class: 'tool text', type: 'button', title: '引用另一次实验的某一节（例如完全相同的操作步骤）', onclick: () => openQuoteDialog(vol, num, (block) => insertBlock(block)) }, '引用实验'),
     h('button', { class: 'tool text', type: 'button', title: '引用思维笔记本里的假设（本实验要检验的）', onclick: () => openCiteHypothesis(vol, num, (block) => insertBlock(block)) }, '引用假设'),
     h('button', { class: 'tool text', type: 'button', title: '从试剂库 / 溶液库导入本次用到的试剂和溶液（写在页面最下方“试剂”一节）',
