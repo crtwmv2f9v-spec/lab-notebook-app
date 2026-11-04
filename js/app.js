@@ -702,13 +702,78 @@ function refLink(key, curVol) {
 }
 
 // Builds the page sheet; `ready` resolves when figures and charts are drawn.
+// Older pages list reagents only in the front matter; they get the same 试剂 table at the foot.
+const shownBody = (fm, body) => renameMaterialsHeading(readMaterials(body) || !(fm.reagents || []).length ? body : writeMaterials(body, fm.reagents.map((id) => ({ id }))));
+
+// ----- live PDF preview: the page laid out with the export's own print styles, in an A4 frame -----
+let printCss = null;
+const printRules = () => (printCss ??= fetch('css/notebook.css').then((r) => r.text()).then((css) => {
+  let out = ''; const re = /@media\s+print\s*\{/g; let m;
+  while ((m = re.exec(css))) {
+    let depth = 1; let j = re.lastIndex;
+    while (j < css.length && depth) { if (css[j] === '{') depth++; else if (css[j] === '}') depth--; j++; }
+    out += `${css.slice(re.lastIndex, j - 1)}\n`; re.lastIndex = j;
+  }
+  return out;
+}).catch(() => ''));
+function pdfPreview() {
+  const A4 = (210 / 25.4) * 96;
+  const frame = h('iframe', { class: 'pdf-frame', title: 'PDF 预览', tabindex: '-1' });
+  const page = h('div', { class: 'pdf-page' }, frame);
+  const wrap = h('div', { class: 'pdf-wrap' }, page);
+  let doc = null;
+  const fit = () => {
+    if (!doc?.body) return;
+    const z = Math.min(1.3, Math.max(0.3, (wrap.clientWidth - 32) / A4));
+    const hgt = Math.max(doc.body.scrollHeight, A4 * 297 / 210);
+    Object.assign(frame.style, { width: `${A4}px`, height: `${hgt}px`, transform: `scale(${z})` });
+    Object.assign(page.style, { width: `${A4 * z}px`, height: `${hgt * z}px` });
+  };
+  const ready = printRules().then((css) => new Promise((resolve) => {
+    const de = document.documentElement;
+    const head = [...document.head.querySelectorAll('link[rel="stylesheet"], style')].map((n) => n.outerHTML).join('');
+    frame.addEventListener('load', () => {
+      doc = frame.contentDocument;
+      new ResizeObserver(fit).observe(doc.body);
+      new ResizeObserver(fit).observe(wrap);
+      resolve();
+    }, { once: true });
+    frame.srcdoc = `<!doctype html><html lang="zh-CN" data-theme="light" data-font="${de.dataset.font || ''}" data-size="${de.dataset.size || ''}" data-ptable="${de.dataset.ptable || 'booktabs'}"><head><meta charset="utf-8"><base href="${document.baseURI}">${head}<style>${css}</style><style>
+      html, body { margin: 0; background: #fff !important; overflow: hidden; }
+      body { width: 210mm; }
+      #print-root { display: block !important; }
+      a { pointer-events: none; }
+    </style></head><body class="print-volume"><div id="print-root"></div></body></html>`;
+  }));
+  let seq = 0;
+  // Lay out the page as the export would; the old one stays on screen until the new one is ready.
+  async function update(vol, num, fm, body, ctx) {
+    const mine = ++seq;
+    await ready;
+    const content = h('div', { class: 'sheet-body prose' });
+    const panel = await expPanel(fm, vol, num, { forPrint: true }).catch(() => null);
+    const sheet = recordSheet(vol, num, fm, panel, content);
+    const holder = doc.createElement('div');
+    holder.style.cssText = 'position:absolute;left:0;top:0;width:210mm;visibility:hidden';
+    holder.append(printFrame([sheet]));
+    doc.body.append(holder);
+    await renderInto(content, shownBody(fm, body), ctx);
+    if (mine !== seq) { holder.remove(); return; }
+    doc.getElementById('print-root').replaceChildren(...holder.childNodes);
+    holder.remove();
+    fitChartsForPrint(doc.getElementById('print-root'), 680);
+    fit();
+  }
+  return { el: wrap, update, fit };
+}
+
 async function buildPageSheet(vol, num, { forPrint = false } = {}) {
   const v = lib.volume(vol);
   const entry = lib.page(vol, num);
   const md = await lib.readPage(vol, num);
   const { fm, body } = parseFrontMatter(md);
   const content = h('div', { class: 'sheet-body prose' });
-  const shown = renameMaterialsHeading(readMaterials(body) || !(fm.reagents || []).length ? body : writeMaterials(body, fm.reagents.map((id) => ({ id }))));
+  const shown = shownBody(fm, body);
   const ready = renderInto(content, shown, pageCtx(vol, num, null, { xid: fm.id || '' }));
   const panel = await expPanel(fm, vol, num, { forPrint }).catch(() => null);
   if (forPrint) return { el: recordSheet(vol, num, fm, panel, content), ready, fm, body };
@@ -778,15 +843,18 @@ function recordSheet(vol, num, fm, panel, content) {
 // keeps the browser from adding its own date, title and address lines.
 function printSheets(nodes) {
   const pr = document.getElementById('print-root');
-  // Running header and footer, repeated on every sheet of paper.
+  pr.replaceChildren(printFrame(nodes));
+  return pr;
+}
+// Running header and footer, repeated on every sheet of paper.
+function printFrame(nodes) {
   const nb = lib?.notebook || {};
-  pr.replaceChildren(h('table', { class: 'print-frame' },
+  return (h('table', { class: 'print-frame' },
     h('thead', null, h('tr', null, h('td', { class: 'pf-top' }, h('div', { class: 'pf-run' },
       h('span', null, nb.title || '实验记录本'), h('span', null, 'LABORATORY RECORD'))))),
     h('tbody', null, h('tr', null, h('td', { class: 'pf-body' }, nodes))),
     h('tfoot', null, h('tr', null, h('td', { class: 'pf-bottom' }, h('div', { class: 'pf-run foot' },
       h('span', null, nb.owner ? `记录人　${nb.owner}` : ''), h('span', null, `导出于 ${todayISO()}`)))))));
-  return pr;
 }
 
 async function viewPage(vol, num, params) {
@@ -943,7 +1011,7 @@ async function viewEditor(vol, num, params) {
   const tagsIn = h('input', { class: 'val', value: (fm.tags || []).join(', '), placeholder: '逗号分隔，例如 oect, gops', 'aria-label': '标签' });
   const ta = h('textarea', { class: 'editor-text', spellcheck: 'true', 'aria-label': '正文', placeholder: '在这里写。支持 Markdown、$公式$、[[页面链接]] 和附件。' });
   ta.value = body || '';
-  const preview = h('div', { class: 'prose preview', 'aria-label': '预览' });
+  const pdf = pdfPreview();
   const status = h('span', { class: 'ed-status', 'aria-live': 'polite' }, draft ? '已恢复草稿' : '');
   const strip = h('div', { class: 'att-strip' });
   const fileIn = h('input', { type: 'file', multiple: true, hidden: true, accept: 'image/*,.csv,.tsv,.json,.ipynb,.pdf,.txt,.xlsx,.zip' });
@@ -984,13 +1052,13 @@ async function viewEditor(vol, num, params) {
   const renderPreview = debounce(async () => {
     if (!wide() && split.dataset.tab !== 'preview') return;
     const old = previewUrls.splice(0);
-    const ctx = pageCtx(vol, num ?? lib.nextNumber(vol), local);
+    const n = num ?? lib.nextNumber(vol);
+    const ctx = pageCtx(vol, n, local);
     ctx.urls = previewUrls;
-    const y = preview.scrollTop;
-    await renderInto(preview, ta.value, ctx);
-    preview.scrollTop = y;
-    old.forEach((u) => URL.revokeObjectURL(u));
-  }, 350);
+    const c = collect();
+    await pdf.update(vol, n, { ...c.fm, id: fm.id, series: fm.series, protocol: fm.protocol, amended: fm.amended }, c.body, ctx);
+    setTimeout(() => old.forEach((u) => URL.revokeObjectURL(u)), 2000);
+  }, 450);
 
   const autosize = () => { ta.style.height = 'auto'; ta.style.height = `${Math.max(ta.scrollHeight + 4, 360)}px`; };
   const changed = () => { status.textContent = '编辑中'; saveDraft(); renderPreview(); };
@@ -1139,7 +1207,7 @@ async function viewEditor(vol, num, params) {
   // ----- write / preview tabs (narrow screens) -----
   const wide = () => window.matchMedia('(min-width: 1100px)').matches;
   const writePane = h('div', { class: 'pane write-pane' }, toolbar, ta, strip);
-  const previewPane = h('div', { class: 'pane preview-pane' }, h('div', { class: 'pane-label' }, '预览'), preview);
+  const previewPane = h('div', { class: 'pane preview-pane' }, h('div', { class: 'pane-label' }, 'PDF 预览'), pdf.el);
   const split = h('div', { class: 'ed-split', 'data-tab': 'write' }, writePane, previewPane);
   const tabWrite = h('button', { class: 'tab', type: 'button', role: 'tab', 'aria-selected': 'true', onclick: () => setTab('write') }, icon('write', 18), '编写');
   const tabPrev = h('button', { class: 'tab', type: 'button', role: 'tab', 'aria-selected': 'false', onclick: () => setTab('preview') }, icon('eye', 18), '预览');
