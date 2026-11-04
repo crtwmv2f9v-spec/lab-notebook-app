@@ -1701,3 +1701,59 @@ a.m-id.missing { text-decoration: line-through; opacity: .6; }
   .topbar .lib-link { display: none; }
   .topbar .narrow-only { display: inline-flex; }
 }
+
+/* ================= home: one type scale, a coloured mark per card, quieter details ================= */
+.view.home .hero-eyebrow { margin: 0 0 10px; font: 650 12.5px/1 var(--font-ui); letter-spacing: .16em; color: var(--accent); }
+.view.home .hero-title { font: 760 clamp(34px, 4.2vw, 50px)/1.06 var(--font-ui); letter-spacing: -0.035em; }
+.c-head { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; }
+.card-ic { flex: none; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: var(--acc); color: #fff; box-shadow: 0 3px 10px color-mix(in srgb, var(--acc) 32%, transparent); }
+.card-tt { flex: 1; min-width: 0; }
+.c-head h2 { margin: 0; font: 740 23px/1.15 var(--font-ui); letter-spacing: -0.028em; color: var(--card-ink); }
+.c-head h3 { margin: 0; font: 720 17px/1.2 var(--font-ui); letter-spacing: -0.018em; color: var(--card-ink); }
+.c-head .card-sub { margin: 3px 0 0; font: 500 12.5px/1.35 var(--font-ui); letter-spacing: 0; color: var(--card-ink-2); }
+.c-head .ring-box { flex: none; }
+.card-plus { flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; cursor: pointer; background: color-mix(in srgb, var(--acc) 13%, transparent); color: var(--acc); transition: transform .25s cubic-bezier(.2,.8,.2,1), background .2s; }
+.card-plus:hover { background: color-mix(in srgb, var(--acc) 22%, transparent); }
+.card-plus.on { transform: rotate(45deg); background: var(--acc); color: #fff; }
+.rail-card .c-head { gap: 10px; margin-bottom: 10px; }
+.rail-card .card-ic { width: 26px; height: 26px; border-radius: 8px; }
+.rail-card .card-plus { width: 26px; height: 26px; }
+.add-row[hidden] { display: none !important; }
+.today-card { --acc: #0a84ff; } .week-card { --acc: #5e5ce6; } .memo-card { --acc: #f5a400; } .cont-card { --acc: #34c759; }
+.view.home .rail { gap: 18px; }
+.view.home .rail-title { margin: 0 0 2px; font: 750 12.5px/1 var(--font-ui); letter-spacing: .24em; color: var(--bench-ink); opacity: .5; }
+.view.home .tile { padding: 22px 24px 20px; }
+.view.home .rail-card { padding: 16px 18px 14px; }
+/* list text at one size; dates, sources and counts smaller and quieter */
+.view.home .task-text { font-size: 15px; font-weight: 500; line-height: 1.4; }
+.view.home .bi-top, .view.home .ci-title { font-size: 14.5px; }
+.view.home .task-meta, .view.home .bi-meta, .view.home .ci-meta, .view.home .cd-t span, .view.home .memo-date { font-size: 12px; color: color-mix(in srgb, var(--card-ink-2) 85%, transparent); }
+.view.home .cont-col h3 { font: 700 12px/1 var(--font-ui); letter-spacing: .14em; color: var(--card-ink-2); }
+.fold { list-style: none; border: 0 !important; }
+.fold-btn { border: 0; background: none; padding: 6px 2px 2px; font: 600 12.5px/1 var(--font-ui); color: var(--acc, var(--accent)); cursor: pointer; }
+.fold-btn:hover { text-decoration: underline; }
+
+/* ================= record page on screen: numbered section headings, as in the PDF ================= */
+.sheet.page:not(.record) .sheet-body.prose { counter-reset: sec; }
+.sheet.page:not(.record) .sheet-body.prose > h2 { counter-increment: sec; display: flex; align-items: baseline; gap: 12px; font: 700 19px/var(--cell) var(--font-ui); letter-spacing: .1em; color: var(--form); }
+.sheet.page:not(.record) .sheet-body.prose > h2::before { content: counter(sec, decimal-leading-zero); font: 600 13px/1 var(--font-code); letter-spacing: .02em; color: var(--ink-3); }
+.sheet.page:not(.record) .sheet-body.prose > h3 { font: 650 16px/var(--cell) var(--font-ui); letter-spacing: .06em; color: var(--form); }
+.sheet.page:not(.record) .sheet-head .title { font: 750 22px/1.3 var(--font-ui); letter-spacing: -0.01em; }
+
+/* ================= PDF: ruled lines belong to the written lines themselves ================= */
+@media print {
+  /* One page-wide grid drifted out of step below any box, table or figure whose height is not a whole number of lines.
+     Now each paragraph and list item draws its own rules from its own first line, so text always sits on them. */
+  .sheet.record .sheet-body { background-image: none !important; }
+  .sheet.record .sheet-body > p, .sheet.record .sheet-body > ul > li, .sheet.record .sheet-body > ol > li,
+  .sheet.record .sheet-body li > ul > li, .sheet.record .sheet-body li > ol > li, .sheet.record .sheet-body > blockquote > p {
+    /* One tile per line with the rule near its foot (Chrome's PDF output drops repeating gradients). The rule keeps
+       0.35 mm clear of the tile edge: tiles are resampled, and a rule touching the edge bleeds a hairline onto the
+       top edge of every paragraph. */
+    background-image: linear-gradient(to bottom, transparent calc(var(--cell) - 0.55mm), #e8ecf3 calc(var(--cell) - 0.55mm), #e8ecf3 calc(var(--cell) - 0.35mm), transparent calc(var(--cell) - 0.35mm)) !important;
+    background-size: 100% var(--cell) !important; background-repeat: repeat-y !important; background-position: 0 0 !important;
+    line-height: var(--cell) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .sheet.record .sheet-body li > ul, .sheet.record .sheet-body li > ol { margin: 0 !important; }
+  .sheet.record .sheet-body .katex { line-height: 1; }
+}

@@ -94,7 +94,7 @@ try {
     return await evaluate("return document.querySelector('.cont-card .card-sub').textContent;");
   });
   await check('countdown-basis', async () => {
-    const t = await evaluate("return [...document.querySelectorAll('.rail-card')].find(c => c.querySelector('h3').textContent === '截止日倒计时').querySelector('.rail-sub').textContent;");
+    const t = await evaluate("return [...document.querySelectorAll('.rail-card')].find(c => c.querySelector('h3').textContent === '截止日倒计时').querySelector('.card-sub').textContent;");
     if (!/北京时间|本机时间/.test(t)) throw new Error(`basis missing: ${t}`);
     return t;
   });

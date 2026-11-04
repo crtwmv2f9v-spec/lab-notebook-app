@@ -7,7 +7,7 @@ import {
 } from './lab.js';
 import { h, icon } from './util.js';
 import { choose, demoBanner, downloadText, field, lib, modal, saveError, show, toast, topbar, view } from './core.js';
-import { hero, redrawHome, uid } from './home.js';
+import { hero, redrawHome, uid, cardHead, foldList } from './home.js';
 import { toggleFollowup } from './pages.js';
 import { route } from './app.js';
 
@@ -196,18 +196,17 @@ export function memoCard(doc, draw) {
   const memos = [...doc.memos].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || String(b.updated || b.created).localeCompare(String(a.updated || a.created)));
   const pinned = memos.filter((m) => m.pinned).length;
   const upd = (id, f, msg) => changePlanner((d) => { const m = d.memos.find((x) => x.id === id); if (m) f(m, d); }, msg, draw);
-  const add = addBox('记一条备忘，回车保存', (text) => changePlanner((d) => d.memos.push({ id: `m${Date.now().toString(36)}`, text, pinned: false, created: nowISO() }), 'Memo: add', draw));
+  const add = addBox('记一条备忘', (text) => changePlanner((d) => d.memos.push({ id: `m${Date.now().toString(36)}`, text, pinned: false, created: nowISO() }), 'Memo: add', draw));
   add.querySelector('input').dataset.k = 'memo';
   return h('div', { class: 'tile memo-card' },
-    h('div', { class: 'tile-head' }, h('div', null, h('h2', null, '备忘录'),
-      h('p', { class: 'card-sub' }, memos.length ? `${memos.length} 条${pinned ? ` · 置顶 ${pinned}` : ''}` : '要买的耗材、要问导师的问题、灵感…'))),
+    cardHead('备忘录', memos.length ? `${memos.length} 条${pinned ? ` · 置顶 ${pinned}` : ''}` : '耗材、要问导师的问题、灵感', { add }),
     add,
-    h('ul', { class: 'memos' }, memos.map((m) => h('li', { class: `memo${m.pinned ? ' pinned' : ''}` },
+    foldList(h('ul', { class: 'memos' }, memos.map((m) => h('li', { class: `memo${m.pinned ? ' pinned' : ''}` },
       h('div', { class: 'memo-main' },
         editable(m.text, (v) => upd(m.id, (x) => { x.text = v; x.updated = nowISO(); }, 'Memo: edit'), 'memo-text'),
         h('span', { class: 'memo-date' }, fmtDate(m.updated || m.created))),
       h('button', { class: 'memo-pin', type: 'button', 'aria-pressed': String(!!m.pinned), 'aria-label': m.pinned ? '取消置顶' : '置顶', title: m.pinned ? '取消置顶' : '置顶', html: PIN_SVG, onclick: () => upd(m.id, (x) => { x.pinned = !x.pinned; }, 'Memo: pin') }),
-      h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Memo: remove', draw) }, icon('close', 14))))));
+      h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Memo: remove', draw) }, icon('close', 14))))), 'memos'));
 }
 
 // Reminder strip under the top bar on every page while today's or earlier to-dos are open.

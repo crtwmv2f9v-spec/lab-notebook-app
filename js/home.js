@@ -27,13 +27,12 @@ export const CLOTHS = [
 export function continueCard() {
   const sub = h('p', { class: 'card-sub' }, '读取中…');
   const cols = h('div', { class: 'cont-grid' });
-  const box = h('section', { class: 'cont-wrap' }, h('div', { class: 'tile cont-card' }, h('div', { class: 'tile-head' }, h('div', null, h('h2', null, '接着做'), sub)), cols));
+  const box = h('section', { class: 'cont-wrap' }, h('div', { class: 'tile cont-card' }, cardHead('接着做', sub), cols));
   const item = (x) => h('li', null, h('a', { class: 'cont-item', href: x.href },
     h('span', { class: 'ci-title' }, x.tag ? h('span', { class: 'xid-tag' }, x.tag) : null, x.title),
     h('span', { class: 'ci-meta' }, x.where ? h('span', null, x.where) : null, x.chips.map((c) => h('span', { class: `ci-chip${/草稿|冲突|缺|空/.test(c) ? ' warn' : ''}` }, c)))));
-  const col = (title, list, empty, more) => h('div', { class: 'cont-col' }, h('h3', null, title, list.length ? h('span', null, String(list.length)) : null),
-    list.length ? h('ul', null, list.slice(0, 6).map(item)) : h('p', { class: 'muted small' }, empty),
-    list.length > 6 && more ? h('a', { class: 'more-link', href: more }, `全部 ${list.length} ›`) : null);
+  const col = (title, list, empty) => h('div', { class: 'cont-col' }, h('h3', null, title, list.length ? h('span', null, String(list.length)) : null),
+    list.length ? foldList(h('ul', null, list.map(item)), `cont-${title}`) : h('p', { class: 'muted small' }, empty));
   (async () => {
     const recs = [];
     const pre = `${lib.key}:draft:`;
@@ -74,8 +73,8 @@ export function continueCard() {
     sub.textContent = [`${recs.length} 条记录待收尾`, `${hyps.length} 条假设在验证`, `${ms.length} 张方法卡片待写入论文`].join(' · ');
     cols.replaceChildren(
       col('记录', recs, '记录都已签名、写完。'),
-      col('假设', hyps, '没有在验证的假设。', '#/think'),
-      col('写进论文', byVol, '方法卡片都已写入论文。', '#/methods'));
+      col('假设', hyps, '没有在验证的假设。'),
+      col('写进论文', byVol, '方法卡片都已写入论文。'));
   })().catch((e) => { sub.textContent = `读取失败：${e.message}`; });
   return box;
 }
@@ -241,8 +240,48 @@ export function addDated(placeholder, onAdd, { dateRequired = false } = {}) {
   box.insertBefore(date, box.querySelector('.add-btn'));
   return box;
 }
+// ----- card chrome: a coloured mark, a bold title, a quiet subtitle; add boxes stay folded behind a ＋ -----
+const CARD_LOOK = {
+  今日待办: ['done', '#0a84ff'], 本周计划: ['calendar', '#5e5ce6'], 备忘录: ['note', '#f5a400'], 接着做: ['go', '#34c759'],
+  课题与基金: ['bulb', '#30b0c7'], 论文与投稿: ['doc', '#af52de'], 文献待读: ['book', '#a2845e'], 仪器预约与实验队列: ['flask', '#32ade6'],
+  截止日倒计时: ['flag', '#ff3b30'], 杂事: ['case', '#ff9500'], 生活: ['heart', '#ff2d55'], 本周科研数据: ['bars', '#00b8a9'],
+};
+const openAdds = new Set(); // add boxes opened with ＋; they stay open across redraws until closed
+const unfolded = new Set(); // lists opened with “还有 N 项”
+export function cardHead(title, sub, { add = null, right = null, level = 'h2' } = {}) {
+  if (sub && !(sub instanceof Element)) sub = h('p', { class: 'card-sub' }, sub);
+  const [ic, color] = CARD_LOOK[title] || ['list', '#8e8e93'];
+  let plus = null;
+  if (add) {
+    const key = add.querySelector('input')?.dataset.k || title;
+    const open = openAdds.has(key);
+    add.hidden = !open;
+    plus = h('button', { class: `card-plus${open ? ' on' : ''}`, type: 'button', title: '添加', 'aria-label': `添加：${title}`, 'aria-expanded': String(open), onclick: (e) => {
+      const show = add.hidden; add.hidden = !show;
+      e.currentTarget.classList.toggle('on', show); e.currentTarget.setAttribute('aria-expanded', String(show));
+      if (show) { openAdds.add(key); add.querySelector('input')?.focus(); } else openAdds.delete(key);
+    } }, icon('plus', 16));
+  }
+  return h('div', { class: 'c-head', style: { '--acc': color } },
+    h('span', { class: 'card-ic', 'aria-hidden': 'true' }, icon(ic, 16)),
+    h('div', { class: 'card-tt' }, h(level, null, title), sub || null),
+    right, plus);
+}
+// Show the first n items of a list; “还有 N 项” unfolds the rest in place (remembered across redraws).
+export function foldList(ul, key, n = 4) {
+  const items = [...ul.children];
+  if (items.length <= n) return ul;
+  const btn = h('button', { type: 'button', class: 'fold-btn' });
+  const set = (open) => { items.slice(n).forEach((li) => { li.hidden = !open; }); btn.textContent = open ? '收起' : `还有 ${items.length - n} 项`; };
+  btn.addEventListener('click', () => { const open = !unfolded.has(key); if (open) unfolded.add(key); else unfolded.delete(key); set(open); });
+  set(unfolded.has(key));
+  ul.append(h('li', { class: 'fold' }, btn));
+  return ul;
+}
 export function railCard(title, sub, ...kids) {
-  return h('section', { class: 'tile rail-card' }, h('div', { class: 'rail-head' }, h('h3', null, title), sub ? h('span', { class: 'rail-sub' }, sub) : null), ...kids);
+  const flat = kids.flat().filter(Boolean);
+  const add = flat.find((k) => k.classList?.contains('add-row')) || null;
+  return h('section', { class: 'tile rail-card', style: { '--acc': (CARD_LOOK[title] || [])[1] || '#8e8e93' } }, cardHead(title, sub, { add, level: 'h3' }), ...flat);
 }
 // Categorized to-dos: open ones first (by date), then the last few done.
 export function catList(tasks, cat, { placeholder, dated = false, dateRequired = false, limitDone = 3 }) {
@@ -254,8 +293,8 @@ export function catList(tasks, cat, { placeholder, dated = false, dateRequired =
     ? addDated(placeholder, (text, date) => changeTasks((l) => l.push(newTask(text, date ? weekStart(date) : wk, date, cat)), `Planner: add ${cat}`, redrawHome), { dateRequired })
     : addBox(placeholder, (text) => changeTasks((l) => l.push(newTask(text, wk, null, cat)), `Planner: add ${cat}`, redrawHome));
   add.querySelector('input').dataset.k = `cat-${cat}`;
-  return { open, done, el: [add, h('ul', { class: 'tasks rail-tasks' }, open.map((x) => taskRow(x, { redraw: redrawHome, showCat: false, meta: linkMeta(x.text) })),
-    done.map((x) => taskRow(x, { redraw: redrawHome, showCat: false })))] };
+  const rows = [...open.map((x) => taskRow(x, { redraw: redrawHome, showCat: false, meta: linkMeta(x.text) })), ...done.map((x) => taskRow(x, { redraw: redrawHome, showCat: false }))];
+  return { open, done, el: [add, foldList(h('ul', { class: 'tasks rail-tasks' }, rows), `cat-${cat}`)] };
 }
 // A DOI or link in a reading-list entry becomes a link.
 export function linkMeta(text) {
@@ -303,8 +342,9 @@ export function homeRails() {
         h('div', { class: 'bi-top' }, h('span', { class: 'bi-kind' }, x.stage), h('b', null, x.title)),
         h('div', { class: 'bi-meta' }, x.journal ? h('i', null, x.journal) : null, dueTag(x.due))))),
       h('button', { class: 'btn small rail-add', type: 'button', onclick: () => editPaper(null) }, icon('plus', 14), '新建论文'));
+    for (const [card, key] of [[pj, 'pj'], [pp, 'pp']]) { const ul = card.querySelector('ul.board-list'); if (ul) foldList(ul, key); }
     const rd = catList(tasks, '文献', { placeholder: '粘贴 DOI、链接或题目' });
-    const ins = catList(tasks, '仪器', { placeholder: '例如：Keithley 4200 14:00–17:00', dated: true, dateRequired: true });
+    const ins = catList(tasks, '仪器', { placeholder: '仪器和时间段，如 Keithley 14:00–17:00', dated: true, dateRequired: true });
     left.replaceChildren(
       h('p', { class: 'rail-title' }, '科研主线'), pj, pp,
       railCard('文献待读', rd.open.length ? `${rd.open.length} 篇待读` : '读完打勾', ...rd.el),
@@ -316,7 +356,7 @@ export function homeRails() {
       ...projects.filter((x) => x.due && x.stage !== '已结束').map((x) => ({ text: `${x.title}${x.next ? ` · ${x.next}` : ''}`, date: x.due, open: () => editProject(x), tag: x.kind })),
       ...papers.filter((x) => x.due && !['接收', '已发表'].includes(x.stage)).map((x) => ({ text: `${x.title} · ${x.stage}`, date: x.due, open: () => editPaper(x), tag: '论文' })),
     ].sort((a, b) => a.date.localeCompare(b.date));
-    const dlAdd = addDated('例如：双周报告 / 组会 / 基金截止', (text, date) => changeTasks((l) => l.push(newTask(text, weekStart(date), date, '截止')), 'Planner: add deadline', redrawHome), { dateRequired: true });
+    const dlAdd = addDated('截止事项，如 双周报告', (text, date) => changeTasks((l) => l.push(newTask(text, weekStart(date), date, '截止')), 'Planner: add deadline', redrawHome), { dateRequired: true });
     dlAdd.querySelector('input').dataset.k = 'cat-截止';
     const countdown = railCard('截止日倒计时', `${dl.length ? `${dl.filter((x) => dlDays(x.date) <= 7).length} 项在 7 天内 · ` : ''}${dlBasis()}`, dlAdd,
       h('ul', { class: 'countdown' }, dl.map((x) => {
@@ -326,8 +366,9 @@ export function homeRails() {
           h('span', { class: 'cd-t' }, h('b', { class: x.open ? 'linkish' : null, onclick: x.open || null }, x.text), h('span', null, `${x.date}${x.tag ? ` · ${x.tag}` : ''}`)),
           x.task ? h('button', { class: 'tick small', type: 'button', role: 'checkbox', 'aria-checked': 'false', 'aria-label': '完成', title: '完成', onclick: () => toggleTask(x.task.id, redrawHome) }) : null);
       })));
-    const chores = catList(tasks, '杂事', { placeholder: '报销、采购、盖章、培训…', dated: true });
-    const life = catList(tasks, '生活', { placeholder: '运动、体检、个人事务…', dated: true });
+    { const ul = countdown.querySelector('ul.countdown'); if (ul) foldList(ul, 'dl'); }
+    const chores = catList(tasks, '杂事', { placeholder: '报销、采购、盖章…', dated: true });
+    const life = catList(tasks, '生活', { placeholder: '运动、体检…', dated: true });
     const st = await weekStats();
     const stat = (n, label) => h('div', { class: 'ws' }, h('b', null, String(n)), h('span', null, label));
     right.replaceChildren(
@@ -358,12 +399,10 @@ export function dashboard() {
     const soon = fus.filter((x) => !x.done && x.date > t && daysFrom(x.date) <= 7);
     const all = [...mine, ...carried, ...due];
     const doneN = all.filter((x) => x.done).length;
-    const todayAdd = addBox('添加今天要做的事，回车保存', (text) => changeTasks((list) => list.push(newTask(text, wk, t)), 'Planner: add to-do', redrawHome));
+    const todayAdd = addBox('添加今天要做的事', (text) => changeTasks((list) => list.push(newTask(text, wk, t)), 'Planner: add to-do', redrawHome));
     todayAdd.querySelector('input').dataset.k = 'today';
     const todayCard = h('div', { class: 'tile today-card' },
-      h('div', { class: 'tile-head' },
-        h('div', null, h('h2', null, '今日待办'), h('p', { class: 'card-sub' }, all.length ? `已完成 ${doneN} 项 · 还剩 ${all.length - doneN} 项` : '今天还没有安排')),
-        ring(doneN, all.length)),
+      cardHead('今日待办', all.length ? `已完成 ${doneN} · 还剩 ${all.length - doneN}` : '今天还没有安排', { right: ring(doneN, all.length) }),
       todayAdd,
       h('ul', { class: 'tasks' },
         carried.map((x) => taskRow(x, { redraw: redrawHome, extra: h('button', { class: 'btn small ghost', type: 'button', onclick: () => moveTask(x.id, t, redrawHome) }, '移到今天') })),
@@ -383,14 +422,12 @@ export function dashboard() {
         h('span', { class: 'day-bar' }, h('span', { style: { height: `${list.length ? (dn / list.length) * 100 : 0}%` } })),
         h('span', { class: 'day-n' }, list.length ? `${dn}/${list.length}` : '·'));
     });
-    const weekAdd = addBox('添加本周计划（例如：完成 GOPS 稳定性测试）', (text) => changeTasks((list) => list.push(newTask(text, wk)), 'Planner: add weekly goal', redrawHome));
+    const weekAdd = addBox('添加本周计划', (text) => changeTasks((list) => list.push(newTask(text, wk)), 'Planner: add weekly goal', redrawHome));
     weekAdd.querySelector('input').dataset.k = 'week';
     const weekCard = h('div', { class: 'tile week-card' },
-      h('div', { class: 'tile-head' },
-        h('div', null, h('h2', null, '本周计划'), h('p', { class: 'card-sub' }, goals.length ? `已完成 ${gDone} 项 · 还剩 ${goals.length - gDone} 项` : `${wk.slice(5)} 至 ${addDays(wk, 6).slice(5)}`)),
-        ring(gDone, goals.length)),
+      cardHead('本周计划', goals.length ? `已完成 ${gDone} · 还剩 ${goals.length - gDone}` : `${wk.slice(5)} 至 ${addDays(wk, 6).slice(5)}`, { add: weekAdd, right: ring(gDone, goals.length) }),
       weekAdd,
-      h('ul', { class: 'tasks' }, goals.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: redrawHome }))),
+      foldList(h('ul', { class: 'tasks' }, goals.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: redrawHome }))), 'goals'),
       h('div', { class: 'week-days', 'aria-label': '本周每天的待办完成情况' }, days),
       h('a', { class: 'more-link', href: `#/plan/${wk}` }, '查看周计划与历史 ›'));
     box.replaceChildren(todayCard, weekCard, memoCard(doc, redrawHome));
