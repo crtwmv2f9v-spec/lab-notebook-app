@@ -259,6 +259,7 @@ export async function viewPage(vol, num, params) {
     { icon: 'list', label: '录入操作步骤（用量、容器、条件）', run: () => openStepsEditor(vol, num) },
     { icon: 'link', label: '引用另一次实验（步骤完全相同时）…', run: () => openQuoteDialog(vol, num, null) },
     { icon: 'book', label: '引用假设（本实验要检验的）…', run: () => openCiteHypothesis(vol, num, null) },
+    { icon: 'edit', label: '交给 Claude Code（润色 / 推断结论 / 建议）…', run: () => askClaude(vol, num, fm) },
     { icon: 'plus', label: '登记本页配制的溶液（S-编号）…', run: async () => editSolution(await loadSolutions(lib), null, { page: fm.id || `${vol}/${num}`, prepared: fm.date, steps: readSteps(raw) || [] }) },
     fm.void ? { icon: 'history', label: '取消作废', run: () => setVoid(vol, num, null) } : { icon: 'close', label: '作废这一页…', run: () => setVoid(vol, num, fm) },
     { icon: 'trash', label: '永久删除这一页…', run: () => openDeletePage(vol, num, fm) },
@@ -711,6 +712,28 @@ export async function openDeleteVolume(v) {
   if (!ok) return;
   try { await lib.deleteVolume(v.id); toast(`已删除“${v.title}”。`); location.hash = '#/'; } catch (e) { toast(saveError(e)); }
 }
+// Claude Code reads the notebook from the Mac mirror (~/LabNotebook/entries) with the `labnote` skill;
+// this copies a ready instruction to paste into Claude Code.
+function askClaude(vol, num, fm) {
+  const v = lib.volume(vol);
+  const ref = `${(v?.code || vol).toUpperCase()}:${num}`;
+  const name = `${ref}${fm.id ? `（${fm.id}）` : ''}「${fm.title || ''}」`;
+  const jobs = [
+    ['润色', `/labnote 润色记录本 ${name}：只改语言，事实、数值、单位和特殊块保持原样；先给我看改动对照，我同意后写回并推送。`],
+    ['推断结论', `/labnote 读取记录本 ${name}，连同它引用的假设、样品表和原始数据，推断能下的结论：每条标出依据，区分“数据支持”和“推测”，并指出还缺哪些数据。`],
+    ['下一步建议', `/labnote 根据记录本 ${name} 和它检验的假设，找出还未检验的预测，建议下一步最关键的 1–3 个实验（变量、对照、判断标准）。`],
+    ['整理成证据', `/labnote 把记录本 ${name} 的结论整理成它所引用假设的一条证据（支持 / 反对 / 待定，并注明检验哪条预测 P），给我看后写回。`],
+  ];
+  const copy = async (t) => { try { await navigator.clipboard.writeText(t); toast('已复制，粘贴到 Claude Code 即可。'); } catch { toast(t); } };
+  modal({
+    title: '交给 Claude Code',
+    body: h('div', { class: 'form' },
+      h('p', { class: 'muted' }, 'Claude Code 能直接读取这台 Mac 上的记录本副本（每次会先从 GitHub 拉取最新内容）。选一项，指令会复制到剪贴板，粘贴到 Claude Code 对话框即可。写回前它会先给你看改动。'),
+      h('div', { class: 'claude-jobs' }, jobs.map(([t, text]) => h('button', { class: 'btn', type: 'button', onclick: () => copy(text) }, t)))),
+    buttons: [{ label: '关闭' }],
+  });
+}
+
 export const DELETE_NOTE = '页面和它的照片、附件从记录本中删除，后面的页码自动前移（第 1 页起连续编号），所有指向被移动页面的链接、引用、证据和待办会一起更新。实验编号（如 20261101-OECT-01）不变。旧版本只留在 GitHub 历史和硬盘上的每周备份里。';
 export async function openDeletePage(vol, num, fm) {
   const word = fm.id || `${num}`;

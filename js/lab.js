@@ -306,7 +306,8 @@ export function solutionAlerts(list, within = 14, today = todayISO()) {
 }
 
 // ---------- thinking notebook: hypotheses and their evidence (thinking/H-0001.json) ----------
-// { id, title, status, confidence, description, predictions: [text], evidence: [{ id: 'E1', kind, date, text, src?: { xid, vol, num } | { url }, photos: [repo path] }],
+// { id, title (假设), status, confidence, observations: [text] (O1…), rationale (推理), predictions: [text] (P1…), description (old cards),
+//   evidence: [{ …, pred?: 'P1' }], evidence: [{ id: 'E1', kind, date, text, src?: { xid, vol, num } | { url }, photos: [repo path] }],
 //   history: [{ at, status, confidence, why }], created, updated }
 export const THINK_DIR = 'thinking/';
 export const HYP_STATUS = ['提出', '验证中', '支持', '否定', '搁置'];
@@ -322,6 +323,29 @@ export function nextHypId(ids) {
   return `H-${String(max + 1).padStart(4, '0')}`;
 }
 export const evidenceCounts = (hyp) => Object.fromEntries(EV_KIND.map((k) => [k, (hyp.evidence || []).filter((e) => e.kind === k).length]));
+// The logic chain reads 观察 O1… → 假设 → 推理 → 证据 E1… → 预测 P1…. Older cards kept their observations in a numbered
+// `description`; read them as O1… without rewriting the file (the next save stores `observations`).
+export function hypObservations(hyp) {
+  if (Array.isArray(hyp.observations)) return hyp.observations;
+  const d = String(hyp.description || '').trim();
+  if (!d) return [];
+  const items = d.split(/\n(?=\s*\d+[.、)）]\s*)/).map((x) => x.replace(/^\s*\d+[.、)）]\s*/, '').trim()).filter(Boolean);
+  return items.length ? items : [d];
+}
+// Each prediction's verdict comes from the evidence that tested it (evidence.pred = 'P2').
+export function predictionState(hyp, i) {
+  const ev = (hyp.evidence || []).filter((e) => e.pred === `P${i + 1}`);
+  const kind = ev.some((e) => e.kind === '反对') ? '反对' : ev.some((e) => e.kind === '支持') ? '支持' : ev.length ? '待定' : '';
+  return { kind, label: kind === '支持' ? '已证实' : kind === '反对' ? '被否定' : kind === '待定' ? '结果待定' : '未检验', ev };
+}
+// One item of the chain by its code: O2 / E1 / P3 → { code, text } (for [[H-0001#P3]] and the experiment box).
+export function hypItem(hyp, code) {
+  const m = /^([OEP])(\d+)$/i.exec(String(code || '').trim());
+  if (!m) return null;
+  const n = +m[2]; const k = m[1].toUpperCase();
+  const text = k === 'O' ? hypObservations(hyp)[n - 1] : k === 'P' ? (hyp.predictions || [])[n - 1] : (hyp.evidence || []).find((e) => e.id === `E${n}`)?.text;
+  return text ? { code: `${k}${n}`, kind: k, text } : null;
+}
 export function nextEvidenceId(hyp) {
   const max = Math.max(0, ...(hyp.evidence || []).map((e) => parseInt(String(e.id).replace(/\D/g, ''), 10) || 0));
   return `E${max + 1}`;

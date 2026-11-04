@@ -1,7 +1,7 @@
 // Markdown, math, page links, charts, data tables and Jupyter notebooks.
 import { esc, h, loadScript, icon } from './util.js';
 import { parseRef, parseFrontMatter } from './model.js';
-import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions, loadHypothesis, evidenceCounts, parseMaterials, loadMethod } from './lab.js';
+import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions, loadHypothesis, evidenceCounts, hypObservations, predictionState, hypItem, parseMaterials, loadMethod } from './lab.js';
 
 const CDN = 'https://cdn.jsdelivr.net/npm/';
 export const LIBS = {
@@ -121,6 +121,8 @@ function setup() {
 }
 
 function pageLink(target, label) {
+  const hm = /^(H-\d{4})(?:#([OEP]\d+))?$/i.exec(target.trim());
+  if (hm) return `<a class="hypref" href="#/think/${esc(hm[1])}" data-hyp="${esc(hm[1])}" data-code="${esc((hm[2] || '').toUpperCase())}">${esc(label || `${hm[1]}${hm[2] ? ` · ${hm[2].toUpperCase()}` : ''}`)}</a>`;
   const r = parseRef(target, cur?.vol);
   if (!r) return `<span class="pageref bad">[[${esc(target)}]]</span>`;
   const lib = cur?.lib;
@@ -183,6 +185,15 @@ export async function hydrate(root, ctx) {
   for (const code of root.querySelectorAll('pre > code.language-hypothesis')) jobs.push(renderHypothesis(code.parentElement, code.textContent, ctx));
   for (const code of root.querySelectorAll('pre > code.language-reaction')) renderReactions(code.parentElement, code.textContent);
   for (const code of root.querySelectorAll('pre > code.language-steps')) renderSteps(code.parentElement, code.textContent);
+  // [[H-0001#P1]]: hover shows the item; the PDF prints it as a footnote-style gloss after the code.
+  for (const a of root.querySelectorAll('a.hypref[data-hyp]')) {
+    if (!ctx.lib) continue;
+    jobs.push(loadHypothesis(ctx.lib, a.dataset.hyp).then((x) => {
+      const it = a.dataset.code ? hypItem(x, a.dataset.code) : null;
+      a.title = it ? `${x.id} ${it.code}：${it.text}` : `${x.id}：${x.title}`;
+      if (it?.kind === 'P' || it?.kind === 'O') a.classList.add(`hr-${it.kind}`);
+    }).catch(() => a.classList.add('missing')));
+  }
   for (const code of root.querySelectorAll('pre > code.language-materials')) jobs.push(renderMaterials(code.parentElement, code.textContent, ctx, root));
   markQuantities(root);
   jobs.push(nameReagents(root, ctx));
@@ -491,6 +502,7 @@ export function hypBadge(hyp) {
 async function renderHypothesis(pre, src, ctx) {
   const [first = '', ...rest] = String(src).split('\n');
   const id = (first.match(/H-\d{4}/) || [])[0];
+  const testing = new Set((first.match(/\bP\d+\b/gi) || []).map((x) => x.toUpperCase()));
   const note = rest.join('\n').trim().replace(/^本次检验\s*[:：]\s*/, '');
   const box = h('aside', { class: 'hyp-box' });
   pre.replaceWith(box);
@@ -498,23 +510,27 @@ async function renderHypothesis(pre, src, ctx) {
   if (!hyp) { box.append(h('p', { class: 'quote-missing' }, `思维笔记本里没有假设 ${id || first}。`)); return; }
   const n = evidenceCounts(hyp);
   const ev = hyp.evidence || [];
-  // One labelled row per part: label on the left, content on the right, so the basis reads at a glance.
+  const obs = hypObservations(hyp);
+  // The chain in reading order: 观察 → 假设 → 推理 → 证据 → 预测; the predictions this experiment tests are marked.
   const row = (label, ...content) => h('div', { class: 'hyp-row' }, h('div', { class: 'hyp-lbl' }, label), h('div', { class: 'hyp-val' }, ...content));
-  const desc = h('div', { class: 'hyp-desc-box prose-mini' });
-  if (hyp.description) desc.innerHTML = renderMarkdown(String(hyp.description).replace(/^(\d+)[.、]\s*/gm, '$1. '), ctx);
+  const coded = (items) => h('ol', { class: 'hyp-codes' }, items.map(([code, text, extra, on]) => h('li', { class: on ? 'on' : null }, h('span', { class: 'code' }, code), h('span', null, text, extra || null))));
   box.append(
     h('header', { class: 'hyp-head' },
-      h('div', { class: 'hyp-kicker' }, h('span', { class: 'hyp-tag' }, '检验假设'), h('a', { class: 'hyp-id', href: `#/think/${hyp.id}` }, hyp.id), hypBadge(hyp)),
-      h('div', { class: 'hyp-title' }, hyp.title)),
+      h('div', { class: 'hyp-kicker' }, h('span', { class: 'hyp-tag' }, '检验假设'), h('a', { class: 'hyp-id', href: `#/think/${hyp.id}` }, hyp.id), hypBadge(hyp))),
     h('div', { class: 'hyp-rows' },
-      note ? row('本次检验', h('span', { class: 'hyp-note' }, note)) : null,
-      hyp.description ? row('描述', desc) : null,
-      (hyp.predictions || []).length ? row('预测', h('ol', { class: 'hyp-pred' }, hyp.predictions.map((p) => h('li', null, p)))) : null,
-      row('证据链',
+      obs.length ? row('观察现象', coded(obs.map((o, i) => [`O${i + 1}`, o]))) : null,
+      row('假设', h('span', { class: 'hyp-title' }, hyp.title)),
+      hyp.rationale ? row('推理', h('span', null, hyp.rationale)) : null,
+      row('验证证据',
         h('div', { class: 'hyp-sum' }, ['支持', '反对', '待定'].map((k) => h('span', { class: `ev-k k-${k}` }, h('b', null, n[k]), ` ${k}`))),
         ev.length ? h('ol', { class: 'hyp-ev' }, ev.map((e) => h('li', { class: `k-${e.kind}` },
-          h('span', { class: 'ev-no' }, `E${e.id.slice(1)}`), h('span', { class: `ev-kind k-${e.kind}` }, e.kind),
-          h('span', { class: 'ev-t' }, e.text, e.src?.xid ? h('span', { class: 'ev-src' }, ` · ${e.src.xid}`) : e.src?.url ? h('span', { class: 'ev-src' }, ` · ${e.src.url}`) : null)))) : null)));
+          h('span', { class: 'ev-no' }, e.id), h('span', { class: `ev-kind k-${e.kind}` }, e.kind),
+          h('span', { class: 'ev-t' }, e.text, e.pred ? h('span', { class: 'ev-src' }, ` · 检验 ${e.pred}`) : null, e.src?.xid ? h('span', { class: 'ev-src' }, ` · ${e.src.xid}`) : e.src?.url ? h('span', { class: 'ev-src' }, ` · ${e.src.url}`) : null)))) : null),
+      (hyp.predictions || []).length ? row('可检验预测', coded(hyp.predictions.map((p, i) => {
+        const st = predictionState(hyp, i); const on = testing.has(`P${i + 1}`);
+        return [`P${i + 1}`, p, h('span', { class: `pred-st${on ? ' now' : st.kind ? ` k-${st.kind}` : ''}` }, on ? '本次检验' : st.label), on];
+      }))) : null,
+      note ? row('检验方法', h('span', { class: 'hyp-note' }, note)) : null));
 }
 
 // ---------- key resources: every reagent / solution used, traced back to its bottle ----------
@@ -567,7 +583,7 @@ function renderSteps(pre, src) {
       part('st-op', s.op), part('st-amt', s.amount), part('st-what', s.what),
       s.into ? h('span', { class: 'st-to' }, '→') : null, part('st-into', s.into),
       part('st-cond', s.cond)),
-    s.note ? h('div', { class: 'st-note' }, s.note) : null)));
+    s.note ? h('div', { class: 'st-note', html: esc(s.note).replace(/\[\[(H-\d{4}(?:#[OEP]\d+)?)(?:\|([^\]]+))?\]\]/gi, (_, t, l) => pageLink(t, l)) }) : null)));
   pre.replaceWith(h('div', { class: 'steps-wrap' },
     h('div', { class: 'st-legend', 'aria-hidden': 'true' }, part('st-op', '操作'), part('st-amt', '用量'), part('st-what', '物质'), part('st-into', '容器'), part('st-cond', '条件')),
     list));
