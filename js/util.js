@@ -33,6 +33,7 @@ export function debounce(fn, ms) {
 
 const P = {
   back: 'M15 5l-7 7 7 7',
+  home: 'M4 11l8-7 8 7M6 9.5V20h4.5v-5.5h3V20H18V9.5',
   next: 'M9 5l7 7-7 7',
   search: 'M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM15.5 15.5L20 20',
   plus: 'M12 5v14M5 12h14',

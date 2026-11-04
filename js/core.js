@@ -162,10 +162,12 @@ export function offerUpdate() {
 }
 
 // ---------- chrome ----------
-export function topbar({ back, backLabel = '返回', title, sub, actions = [] }) {
+export function topbar({ back, backLabel = '返回', title, sub, actions = [], home = !!back }) {
   return h('header', { class: 'topbar' },
     h('div', { class: 'tb-left' },
       back ? h('a', { class: 'btn icon ghost', href: back, 'aria-label': backLabel, title: backLabel }, icon('back')) : null,
+      // One click home from anywhere (also the H key when not typing).
+      home ? h('a', { class: 'btn icon ghost tb-home', href: '#/', 'aria-label': '回到首页', title: '回到首页（H）' }, icon('home')) : null,
       h('div', { class: 'tb-title' },
         h('span', { class: 'tb-main' }, title),
         sub ? h('span', { class: 'tb-sub' }, sub) : null)),

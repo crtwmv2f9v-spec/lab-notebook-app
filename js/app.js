@@ -60,6 +60,9 @@ export function globalKeys(e) {
     if (!lib || document.querySelector('.modal-root')) return;
     e.preventDefault(); openSearch();
   }
+  if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'h' && !document.querySelector('.modal-root') && location.hash.replace(/^#\/?/, '')) {
+    e.preventDefault(); location.hash = '#/'; return;
+  }
   if (view.kind === 'page' && !typing && !document.querySelector('.modal-root')) {
     if (e.key === 'ArrowLeft') document.querySelector('[data-nav="prev"]')?.click();
     if (e.key === 'ArrowRight') document.querySelector('[data-nav="next"]')?.click();

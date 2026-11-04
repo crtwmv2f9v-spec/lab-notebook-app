@@ -356,7 +356,7 @@ export async function viewEditor(vol, num, params) {
     split, fileIn);
 
   const root = h('div', { class: 'view editor' },
-    topbar({ title: isNew ? `${v.title} · 新页` : `编辑第 ${num} 页`, sub: v.title, actions: [] }),
+    topbar({ title: isNew ? `${v.title} · 新页` : `编辑第 ${num} 页`, sub: v.title, actions: [], home: true }),
     demoBanner(), sheet,
     h('div', { class: 'action-bar' }, status, origSigned ? whyInput : null, h('div', { class: 'ab-buttons' }, h('button', { class: 'btn ghost', type: 'button', onclick: cancel }, '取消'), saveBtn, signBtn)));
   root.querySelector('.topbar .tb-left').prepend(h('button', { class: 'btn icon ghost', 'aria-label': '取消', title: '取消', onclick: cancel }, icon('close')));

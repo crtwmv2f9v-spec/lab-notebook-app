@@ -1858,3 +1858,6 @@ a.m-paper:hover { text-decoration: underline; }
 .m-art-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 6px; }
 .m-paper-pick { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, #af52de 6%, transparent); }
 .methods .search-row .seg { flex: none; }
+.methods .search-row .seg { --k: #af52de; }
+/* v37: home button next to back */
+.tb-home { margin-left: -4px; }
