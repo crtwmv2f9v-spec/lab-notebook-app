@@ -1897,7 +1897,7 @@ a.m-paper:hover { text-decoration: underline; }
   .lb-fill u { flex: 1; border-bottom: .5pt solid #777; text-decoration: none; }
 }
 @media print {
-  .bench-sheet section { break-inside: avoid; }
+  .bench-sheet section.keep { break-inside: avoid; }
   .bench-sheet section:first-of-type table.bn-t th.blank-h, .bench-sheet section:first-of-type table.bn-t td.blank { min-width: 32mm; }
 }
 /* v39: choose sections for record / checklist */
@@ -1910,4 +1910,10 @@ a.m-paper:hover { text-decoration: underline; }
   .bn-item .bx { flex: none; margin-top: .6mm; }
   .bench-sheet section > table.bn-t + .bn-item, .bench-sheet section > .bn-item + table.bn-t { margin-top: 2mm; }
   table.bn-t th.blank-h.wide, table.bn-t.steps-t td.blank { min-width: 32mm; }
+}
+@media print {
+  table.bn-t td.loc { font-weight: 600; color: #1f4f8a; max-width: 42mm; }
+  table.bn-t.steps-t td:nth-child(2), table.bn-t.steps-t td:nth-child(3) { white-space: nowrap; }
+  table.bn-t td.src { font-size: 7.8pt; color: #444; }
+  table.bn-t .muted-p { font-size: 7pt; color: #aaa; }
 }

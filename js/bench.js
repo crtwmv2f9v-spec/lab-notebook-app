@@ -142,7 +142,7 @@ export async function openExportPage(vol, num) {
       remember();
       const rec = pick('r'); const ben = pick('b');
       if (!rec.length && !ben.length) { toast('至少勾一节。'); return false; }
-      await exportParts(vol, num, fm, { record: rec.map((s) => s.md).join('\n\n'), bench: ben, order: order.value, extra: blanks.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean), labels: labels.checked, orient: orient.value });
+      await exportParts(vol, num, fm, { all: shownBody(fm, body), record: rec.map((s) => s.md).join('\n\n'), bench: ben, order: order.value, extra: blanks.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean), labels: labels.checked, orient: orient.value });
     } }],
   });
 }
@@ -159,12 +159,51 @@ export async function benchSheets(vol, num, fm, sections, opt) {
   let n = 0;
   const head = (t, sub) => h('h2', null, h('span', { class: 'bn-no' }, String(++n).padStart(2, '0')), t, sub ? h('small', null, sub) : null);
   const v = lib.volume(vol);
+  // Where everything is: every code in the checklist sections and the page's reagent list, with its storage place;
+  // an aliquot or solution also lists the bottle it comes from (or the candidate bottles named in its notes).
+  const loc = (r) => r?.location || '';
+  const pickCodes = new Set();
+  for (const sct of sections) for (const m of sct.md.matchAll(CODE_RE)) pickCodes.add(m[1]);
+  for (const m of String(opt.all || '').matchAll(/```materials\n([\s\S]*?)```/g)) for (const x of parseMaterials(m[1])) pickCodes.add(x.id);
+  const srcOf = (r) => {
+    const from = String(r?.recipe || '').match(CODE_RE) || [];
+    const cand = from.length ? [] : [...String(r?.notes || '').matchAll(CODE_RE)].map((m) => m[1]);
+    const fmt = (id) => { const x = by.get(id); return `${id} ${x?.name || ''}${loc(x) ? `（${loc(x)}）` : '（位置未登记）'}`; };
+    return [...from.map(fmt), ...(cand.length ? [`候选原瓶：${cand.map(fmt).join('；')}`] : [])].join('；');
+  };
+  // Bottles of one aliquot family with the same contents, place and source share a row: A-CB-01、02.
+  const groups = [];
+  for (const id of [...pickCodes].sort((a, b) => (a[0] === 'R' ? 0 : a[0] === 'A' ? 1 : 2) - (b[0] === 'R' ? 0 : b[0] === 'A' ? 1 : 2) || a.localeCompare(b))) {
+    const r = by.get(id);
+    const fam = id.match(/^(A-[A-Z0-9]+)-(\d{2})$/);
+    const sig = fam && JSON.stringify([fam[1], r?.name, r?.volume, loc(r), r?.recipe, r?.notes]);
+    const g = sig && groups.find((x) => x.sig === sig);
+    if (g) g.ids.push(id); else groups.push({ sig, ids: [id], r });
+  }
+  const pickRows = groups.map(({ ids, r }) => {
+    const id = ids[0];
+    const label = ids.length > 1 ? `${id}、${ids.slice(1).map((x) => x.slice(-2)).join('、')}` : id;
+    const src = id.startsWith('R-') ? '' : srcOf(r) || String(r?.notes || '');
+    return h('tr', null, h('td', { class: 'ck' }, box()), h('td', { class: 'mono' }, label), h('td', null, r?.name || '（库里没有这个编号）'),
+      h('td', null, [r?.spec || r?.conc, r?.volume && `${r.volume}${ids.length > 1 ? ` × ${ids.length}` : ''}`].filter(Boolean).join(' · ')),
+      loc(r) ? h('td', { class: 'loc' }, loc(r)) : h('td', { class: 'blank' }, h('span', { class: 'muted-p' }, id.startsWith('R-') ? '未登记' : '放好后填')),
+      h('td', { class: 'src' }, src));
+  });
+  const codesIn = (t) => [...String(t || '').matchAll(CODE_RE)].map((m) => m[1]);
+  // A step's substance: its own place; for an aliquoting step (substance not in the library), where its source bottle is kept.
+  const whereOf = (st) => {
+    const own = [...new Set(codesIn(st.what).map((id) => loc(by.get(id))).filter(Boolean))];
+    if (own.length) return own.join('；');
+    const src = [...new Set(codesIn(st.into).filter((id) => id.startsWith('A-')).flatMap((id) => codesIn(`${by.get(id)?.recipe || ''} ${by.get(id)?.notes || ''}`))
+      .filter((id) => id.startsWith('R-')).map((id) => loc(by.get(id))).filter(Boolean))];
+    return src.length ? `原瓶：${src.join(' / ')}` : '';
+  };
   const render = (it) => {
     if (it.type === 'line') return h('div', { class: 'bn-item' }, box(), h('span', null, it.text));
     if (it.type === 'steps') {
       return h('table', { class: 'bn-t steps-t' },
-        h('thead', null, h('tr', null, h('th', { class: 'ck' }, '✓'), STEP_FIELDS.map(([, l]) => h('th', null, l)), h('th', { class: 'blank-h wide' }, '实际 / 备注'))),
-        h('tbody', null, it.rows.map((s) => h('tr', null, h('td', { class: 'ck' }, box()), STEP_FIELDS.map(([k]) => h('td', null, s[k] || '')), h('td', { class: 'blank' })))));
+        h('thead', null, h('tr', null, h('th', { class: 'ck' }, '✓'), STEP_FIELDS.flatMap(([k, l]) => [h('th', null, l), k === 'what' ? h('th', null, '存放位置') : null]), h('th', { class: 'blank-h wide' }, '实际 / 备注'))),
+        h('tbody', null, it.rows.map((s) => h('tr', null, h('td', { class: 'ck' }, box()), STEP_FIELDS.flatMap(([k]) => [h('td', null, s[k] || ''), k === 'what' ? h('td', { class: 'loc' }, whereOf(s)) : null]), h('td', { class: 'blank' })))));
     }
     if (it.type === 'materials') {
       return h('table', { class: 'bn-t' },
@@ -183,7 +222,14 @@ export async function benchSheets(vol, num, fm, sections, opt) {
       h('span', null, h('i', null, '记录日期'), String(fm.date || '').slice(0, 10)),
       h('span', null, h('i', null, '实验日期'), h('u')),
       h('span', null, h('i', null, '操作人'), h('u'))))];
-  for (const p of parts) nodes.push(h('section', null, head(p.title), p.items.map(render)));
+  if (pickRows.length) {
+    nodes.push(h('section', { class: `bn-pick${pickRows.length <= 12 ? ' keep' : ''}` }, head('试剂取用', '先按位置取齐；没登记位置的现场写上，回来补到库里'),
+      h('table', { class: 'bn-t' },
+        h('thead', null, h('tr', null, h('th', { class: 'ck' }, '✓'), ['编号', '名称', '规格 / 浓度', '存放位置', '原瓶（分装 / 配制来源）'].map((c) => h('th', null, c)))),
+        h('tbody', null, pickRows))));
+  }
+  const rowsIn = (p) => p.items.reduce((n, it) => n + (it.rows?.length || 1), 0);
+  for (const p of parts) nodes.push(h('section', { class: rowsIn(p) <= 14 ? 'keep' : null }, head(p.title), p.items.map(render)));
   nodes.push(h('section', { class: 'bn-obs' }, head('现象与备注'), Array.from({ length: 6 }, () => h('div', { class: 'bn-line' }))));
   const sheets = [h('article', { class: `bench-sheet${landscape ? ' landscape' : ''}` }, nodes)];
   const codes = opt.labels ? madeCodes(items) : [];
