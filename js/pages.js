@@ -253,6 +253,7 @@ export async function viewPage(vol, num, params) {
     fm.id ? null : { icon: 'flask', label: '设为实验（分配实验编号）…', run: () => makeExperiment(vol, num, fm) },
     { icon: 'flask', label: '导入试剂 / 溶液…', run: () => openMaterials(vol, num) },
     { icon: 'print', label: '打印 / 存为 PDF', run: () => exportPdf([lib.page(vol, num)], fm.date, fm.date, { cover: false }) },
+    { icon: 'print', label: '实验操作单（打印带去实验室）/ 导出表格…', run: () => import('./bench.js').then((m) => m.openBench(vol, num)) },
     { icon: 'history', label: '历史版本', run: () => openHistory(vol, num) },
     { icon: 'print', label: '打印纸质记录卡', run: () => printCard(vol, num) },
     fm.id ? { icon: 'copy', label: '命名助手（数据/照片文件名）', run: () => openNaming(fm, num) } : null,

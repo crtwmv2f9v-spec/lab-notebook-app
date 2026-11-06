@@ -171,6 +171,17 @@ try {
     await evaluate("document.body.classList.remove('print-volume'); return 1;");
     return `gap ${gap.toFixed(1)}px`;
   });
+  await check('bench-sheet', async () => {
+    await go('#/v/oect/1', "document.querySelector('ol.steps')");
+    const r = await evaluate(`window.print = () => { window.__printed = 3; }; const m = await import('./js/bench.js'); const c = await import('./js/core.js');
+      const { body } = (await import('./js/model.js')).parseFrontMatter(await c.lib.readPage('oect', 1)); const parts = m.benchParts(body);
+      await m.printBench('oect', 1, { title: 't' }, parts, { extra: ['备注'], steps: true, notes: true, labels: ['A-CB-01'], orient: 'auto', materials: [] });
+      return { steps: parts.steps.length, tables: parts.tables.length, boxes: document.querySelectorAll('#print-root .bench-sheet .bx').length, labels: document.querySelectorAll('#print-root .bn-label').length };`);
+    await waitFor('window.__printed === 3', 5000);
+    await evaluate("document.body.classList.remove('print-volume', 'print-bench'); document.getElementById('bench-page')?.remove(); return 1;");
+    if (!r.steps || !r.boxes || r.labels !== 1) throw new Error(JSON.stringify(r));
+    return `${r.steps} steps, ${r.tables} tables, ${r.boxes} tick boxes`;
+  });
   await check('editor', async () => {
     await go('#/v/oect/2/edit', "document.querySelector('.pdf-frame')?.contentDocument?.querySelector('.rh-title')");
     const t = await evaluate("return document.querySelector('.pdf-frame').contentDocument.querySelector('.rh-title').textContent;");

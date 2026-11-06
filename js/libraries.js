@@ -2,7 +2,7 @@
 import { todayISO } from './model.js';
 import { renderInto } from './render.js';
 import {
-  LOCKED_REAGENT_KEYS, LOCKED_SOLUTION_KEYS, REAGENTS_PATH, SOLUTIONS_PATH, SOLUTION_FIELDS, SOLUTION_STATUS, cleanProtocolId, loadProtocol,
+  LOCKED_REAGENT_KEYS, LOCKED_SOLUTION_KEYS, CODE_SRC, cleanAbbr, nextAliquotIds, REAGENTS_PATH, SOLUTIONS_PATH, SOLUTION_FIELDS, SOLUTION_STATUS, cleanProtocolId, loadProtocol,
   loadProtocols, loadReagents, loadSolutions, nextReagentId, nextSolutionId, parseProtocol, parseReagents, parseRecipe,
   protocolPath, reagentFields, reagentsCSV, recipeText, solutionFields,
 } from './lab.js';
@@ -94,13 +94,57 @@ export async function viewSolutions(initial = '') {
     topbar({ back: '#/', backLabel: '首页', title: '溶液库', sub: `${list.length} 批`, actions: [
       h('button', { class: 'btn', type: 'button', onclick: () => editLibColumns('s', list) }, icon('table', 18), h('span', { class: 'wide-only' }, '管理列')),
       h('button', { class: 'btn danger', type: 'button', onclick: () => openLibBulkDelete('s', list) }, icon('trash', 18), h('span', { class: 'wide-only' }, '批量删除')),
+      h('button', { class: 'btn', type: 'button', title: '从原瓶分装成小瓶，每瓶一个 A- 编号（例如 A-CB-01）', onclick: () => openAliquot(list) }, icon('plus', 18), h('span', null, '分装')),
       h('button', { class: 'btn primary', type: 'button', onclick: () => editSolution(list, null) }, icon('plus', 18), h('span', null, '登记新溶液'))] }),
     demoBanner(),
     h('article', { class: 'sheet plain' },
       h('div', { class: 'search-row' }, filter, h('label', { class: 'check', for: 'sl-all' }, showAll, ' 显示已用完/废弃'),
         h('button', { class: 'btn', type: 'button', onclick: () => downloadText('solutions.csv', `\uFEFF${reagentsCSV(list, solutionFields(lib.notebook))}`, 'text/csv') }, '导出 CSV')),
       h('div', { class: 'table-wrap tall' }, h('table', { class: 'data lib-table sol-table' }, thead([...fields.map(([, l]) => l), '使用']), body)),
-      h('p', { class: 'muted' }, '每配一批就登记一条（新编号），瓶签写 S-编号。步骤里选这个编号，就能从实验追到这批溶液、再追到每瓶试剂的批号。')));
+      h('p', { class: 'muted' }, '分装的小瓶编号为 A-溶剂缩写-瓶号（例如 A-CB-01，A = aliquot 分装），点右上角“分装”一次登记多瓶。每配一批就登记一条（新编号），瓶签写 S-编号。步骤里选这个编号，就能从实验追到这批溶液、再追到每瓶试剂的批号。')));
+}
+
+// Aliquots: one source bottle → n small bottles A-CB-01, A-CB-02 …, each its own row so it can be cited and used up.
+export async function openAliquot(list, preset = {}) {
+  const reagents = await loadReagents(lib).catch(() => []);
+  const dl = h('datalist', { id: 'al-src' }, reagents.map((x) => h('option', { value: x.id }, `${x.name}${x.spec ? ` · ${x.spec}` : ''}${x.location ? ` · ${x.location}` : ''}`)));
+  const name = h('input', { id: 'al-name', value: preset.name || '', placeholder: '例如：氯苯 CB' });
+  const abbr = h('input', { id: 'al-abbr', value: preset.abbr || '', placeholder: '例如 CB、ODCB、CF', autocapitalize: 'characters' });
+  const src = h('input', { id: 'al-src-in', list: 'al-src', value: preset.src || '', placeholder: '原瓶 R-编号（可空，之后再填）' });
+  const n = h('input', { id: 'al-n', type: 'number', min: 1, max: 20, value: preset.n || 2 });
+  const vol = h('input', { id: 'al-vol', value: preset.volume || '5 mL', placeholder: '每瓶，例如 5 mL' });
+  const where = h('input', { id: 'al-loc', value: preset.location || '', placeholder: '例如：有机液体柜 1-1' });
+  const page = h('input', { id: 'al-page', value: preset.page || '', placeholder: '用于哪个实验（编号，可空）' });
+  const st = h('select', { id: 'al-st' }, ['待配', '在用'].map((x) => h('option', { selected: (preset.status || '在用') === x }, x)));
+  const out = h('p', { class: 'muted' });
+  const show = () => { const a = cleanAbbr(abbr.value); out.textContent = a ? `将登记：${nextAliquotIds(list, a, Math.max(1, +n.value || 1)).join('、')}` : '填写缩写后显示编号。'; };
+  for (const el of [abbr, n]) el.addEventListener('input', show); show();
+  const lbl = (f, t) => h('label', { for: f }, t);
+  modal({
+    title: '分装', body: h('div', { class: 'form' }, dl,
+      lbl('al-name', '名称'), name,
+      h('div', { class: 'pair' }, h('div', null, lbl('al-abbr', '缩写（编号中间那段）'), abbr), h('div', null, lbl('al-src-in', '原瓶'), src)),
+      h('div', { class: 'pair' }, h('div', null, lbl('al-n', '瓶数'), n), h('div', null, lbl('al-vol', '每瓶体积'), vol)),
+      h('div', { class: 'pair' }, h('div', null, lbl('al-loc', '存放位置'), where), h('div', null, lbl('al-st', '状态'), st)),
+      lbl('al-page', '用于实验'), page, out),
+    buttons: [{ label: '取消' }, { label: '登记', primary: true, run: async () => {
+      const a = cleanAbbr(abbr.value);
+      if (!a || !name.value.trim()) { toast('写名称和缩写。'); return false; }
+      const cur = await loadSolutions(lib).catch(() => []);
+      const ids = nextAliquotIds(cur, a, Math.max(1, +n.value || 1));
+      const s0 = src.value.trim().toUpperCase();
+      const rows = ids.map((id) => ({ id, name: `${name.value.trim()}（分装）`, recipe: new RegExp(`^(${CODE_SRC})$`).test(s0) ? `${s0} × ${vol.value.trim()}` : '', conc: '', volume: vol.value.trim(), prepared: st.value === '在用' ? todayISO() : '', by: st.value === '在用' ? signerName() : '', expires: '', location: where.value.trim(), page: page.value.trim(), status: st.value, notes: s0 && !/^R-/.test(s0) ? `原瓶 ${s0}` : '' }));
+      try {
+        await lib.commit(`Aliquot ${ids.join(', ')}`, async (l) => {
+          const now = l.tree.has(SOLUTIONS_PATH) ? await loadSolutions(l) : [];
+          const next = [...now.filter((x) => !ids.includes(x.id)), ...rows].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+          return { changes: [{ path: SOLUTIONS_PATH, data: `\uFEFF${reagentsCSV(next, solutionFields(lib.notebook))}` }] };
+        });
+        toast(`已登记 ${ids.join('、')}。瓶签写这些编号。`);
+        if (view.kind === 'library') route({ quiet: true });
+      } catch (e) { toast(saveError(e)); return false; }
+    } }],
+  });
 }
 
 export function editSolution(list, s, preset = {}) {
@@ -111,7 +155,7 @@ export function editSolution(list, s, preset = {}) {
   loadReagents(lib).then((rs) => { reagents.push(...rs); lists.replaceChildren(...rs.map((x) => h('option', { value: x.id }, `${x.name}${x.lot ? ` · 批号 ${x.lot}` : ''}`)), ...list.filter((x) => x.id !== r.id).map((x) => h('option', { value: x.id }, `${x.name}（自配，${x.prepared || ''}）`))); drawRows(); }).catch(() => {});
   // Components: from the record, or from the page's steps (substances with an R-/S- number and their amounts).
   let rows = parseRecipe(r.recipe);
-  if (!rows.length && preset.steps?.length) rows = preset.steps.map((st) => ({ id: (st.what.match(/[RS]-\d{4}/) || [''])[0], amount: st.amount })).filter((x) => x.id);
+  if (!rows.length && preset.steps?.length) rows = preset.steps.map((st) => ({ id: (st.what.match(new RegExp(CODE_SRC)) || [''])[0], amount: st.amount })).filter((x) => x.id);
   if (!rows.length) rows = [{ id: '', amount: '' }];
   const rowsBox = h('div', { class: 'recipe-rows' });
   const nameFor = (id) => reagents.find((x) => x.id === id)?.name || list.find((x) => x.id === id)?.name || '';

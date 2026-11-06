@@ -1,7 +1,7 @@
 // Markdown, math, page links, charts, data tables and Jupyter notebooks.
 import { esc, h, loadScript, icon } from './util.js';
 import { parseRef, parseFrontMatter } from './model.js';
-import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions, loadHypothesis, evidenceCounts, hypObservations, rationaleItems, predictionState, hypItem, parseMaterials, loadMethod } from './lab.js';
+import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions, loadHypothesis, evidenceCounts, hypObservations, rationaleItems, predictionState, CODE_SRC, hypItem, parseMaterials, loadMethod } from './lab.js';
 
 const CDN = 'https://cdn.jsdelivr.net/npm/';
 export const LIBS = {
@@ -619,7 +619,7 @@ async function nameReagents(root, ctx) {
   for (const el of root.querySelectorAll('.rg-id')) { const r = by.get(el.dataset.rid); if (r) el.title = [r.name, r.spec, r.vendor, r.lot && `批号 ${r.lot}`].filter(Boolean).join(' · '); }
   for (const el of root.querySelectorAll('.m-id')) loadMethod(ctx.lib, el.dataset.rid).then((m) => { el.title = `方法卡片：${m.title}`; }).catch(() => { el.classList.add('missing'); });
   for (const el of root.querySelectorAll('.st-what')) {
-    const m = el.textContent.match(/^(.*?)\s*([RS]-\d{4})\s*$/);
+    const m = el.textContent.match(new RegExp(`^(.*?)\\s*(${CODE_SRC})\\s*$`));
     if (!m) continue;
     const r = by.get(m[2]);
     el.replaceChildren(m[1] || r?.name || m[2], ' ', h('span', { class: 'rg-id', 'data-rid': m[2], title: r ? [r.name, r.spec, r.vendor, r.lot && `批号 ${r.lot}`].filter(Boolean).join(' · ') : '' }, m[2]));

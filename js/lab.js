@@ -128,7 +128,7 @@ export function parseReagents(text, fields = REAGENT_FIELDS) {
 }
 export const reagentsCSV = (list, fields = REAGENT_FIELDS) => toCSV([fields.map(([k]) => k), ...list.map((r) => fields.map(([k]) => r[k] ?? ''))]);
 export function nextReagentId(list) {
-  const max = Math.max(0, ...list.map((r) => parseInt(String(r.id).replace(/\D/g, ''), 10) || 0));
+  const max = Math.max(0, ...list.filter((r) => /^S-\d+$/.test(String(r.id))).map((r) => parseInt(String(r.id).replace(/\D/g, ''), 10) || 0));
   return `R-${String(max + 1).padStart(4, '0')}`;
 }
 
@@ -287,7 +287,18 @@ export const SOLUTION_FIELDS = [
   ['id', '编号'], ['name', '名称'], ['recipe', '组成（试剂/溶液 × 用量）'], ['conc', '浓度/配比'], ['volume', '总量'],
   ['prepared', '配制日期'], ['by', '配制人'], ['expires', '有效期至'], ['location', '存放位置'], ['page', '配制记录'], ['status', '状态'], ['notes', '备注'],
 ];
-export const SOLUTION_STATUS = ['在用', '用完', '废弃'];
+export const SOLUTION_STATUS = ['待配', '在用', '用完', '废弃'];
+// Library codes: reagents R-0001, solutions S-0001, aliquots A-CB-01 (A = aliquot, then the solvent's short name, then the bottle).
+export const CODE_SRC = '[RS]-\\d{4}|A-[A-Z][A-Z0-9]{0,5}-\\d{2}';
+export const CODE_RE = new RegExp(`\\b(${CODE_SRC})\\b`, 'g');
+export const cleanAbbr = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+// Next n bottle numbers for an aliquot family: A-CB-03, A-CB-04 … after the ones already in the library.
+export function nextAliquotIds(list, abbr, n) {
+  const a = cleanAbbr(abbr);
+  const used = list.map((r) => String(r.id).match(new RegExp(`^A-${a}-(\\d{2})$`))).filter(Boolean).map((m) => +m[1]);
+  const start = Math.max(0, ...used) + 1;
+  return Array.from({ length: n }, (_, i) => `A-${a}-${String(start + i).padStart(2, '0')}`);
+}
 // Columns can be renamed, added and removed like the reagent library's; kept in notebook.json as solutionColumns.
 export const solutionFields = (nb) => (Array.isArray(nb?.solutionColumns) && nb.solutionColumns.length ? nb.solutionColumns : SOLUTION_FIELDS);
 export const LOCKED_SOLUTION_KEYS = ['id', 'name', 'recipe', 'status'];
@@ -297,7 +308,7 @@ export function nextSolutionId(list) {
 }
 // "R-0001 × 1 mL; R-0002 × 10 µL" <-> [{ id, amount }]
 export const parseRecipe = (s) => String(s || '').split(/[;；]/).map((x) => x.trim()).filter(Boolean)
-  .map((x) => { const m = x.match(/^([RS]-\d{4})\s*(?:[×x*]\s*)?(.*)$/i); return m ? { id: m[1].toUpperCase(), amount: m[2].trim() } : { id: '', amount: x }; });
+  .map((x) => { const m = x.match(new RegExp(`^(${CODE_SRC})\\s*(?:[×x*]\\s*)?(.*)$`, 'i')); return m ? { id: m[1].toUpperCase(), amount: m[2].trim() } : { id: '', amount: x }; });
 export const recipeText = (rows) => rows.filter((r) => r.id || r.amount).map((r) => `${r.id}${r.amount ? ` × ${r.amount}` : ''}`.trim()).join('; ');
 export async function loadSolutions(lib) { return (await cached(lib, SOLUTIONS_PATH, (t) => parseReagents(t, solutionFields(lib.notebook)))) || []; }
 export function solutionAlerts(list, within = 14, today = todayISO()) {

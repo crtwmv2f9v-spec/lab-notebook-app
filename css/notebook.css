@@ -1861,3 +1861,42 @@ a.m-paper:hover { text-decoration: underline; }
 .methods .search-row .seg { --k: #af52de; }
 /* v37: home button next to back */
 .tb-home { margin-left: -4px; }
+
+/* ================= v38: bench sheet (实验操作单) — printed to carry to the lab ================= */
+.bench-sheet { font: 400 9pt/1.35 var(--font-ui); color: #111; }
+@media print {
+  #print-root > .print-frame .bench-sheet + .bench-sheet { break-before: page; }
+  .bench-sheet { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .bench-sheet h1 { margin: 1mm 0 2mm; font: 700 15pt/1.25 var(--font-ui); }
+  .bench-sheet h2 { display: flex; align-items: baseline; gap: 2.5mm; margin: 5mm 0 1.8mm; font: 700 10.5pt/1.2 var(--font-ui); color: var(--form, #22335a); break-after: avoid; }
+  .bench-sheet h2 small { font: 400 8pt/1 var(--font-ui); color: #777; }
+  .bn-no { font: 600 8pt/1 var(--font-code); color: #999; }
+  .bn-kicker { font: 600 7.5pt/1 var(--font-ui); letter-spacing: .2em; color: #8a6d1e; }
+  .bn-meta { display: flex; flex-wrap: wrap; gap: 2mm 8mm; padding-bottom: 2.5mm; border-bottom: 1.2pt solid #111; }
+  .bn-meta span { display: inline-flex; align-items: baseline; gap: 2mm; }
+  .bn-meta i { font-style: normal; font-size: 7.5pt; color: #777; letter-spacing: .08em; }
+  .bn-meta u { display: inline-block; width: 30mm; border-bottom: .6pt solid #555; text-decoration: none; }
+  .bn-mats { margin: 2mm 0 0; font-size: 8pt; color: #333; }
+  table.bn-t { width: 100%; border-collapse: collapse; border-top: 1.2pt solid #111; border-bottom: 1.2pt solid #111; font-size: 8.4pt; }
+  table.bn-t th { text-align: left; font-weight: 600; font-size: 7.6pt; color: #333; padding: 1.4mm 1.4mm; border-bottom: .7pt solid #111; vertical-align: bottom; }
+  table.bn-t td { padding: 2.2mm 1.4mm; border-bottom: .3pt solid #c9ced8; vertical-align: top; }
+  table.bn-t tr { break-inside: avoid; }
+  table.bn-t td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.bn-t .ck { width: 6mm; text-align: center; }
+  table.bn-t th.blank-h { background: #f4f1ea; color: #8a6d1e; min-width: 16mm; }
+  table.bn-t td.blank { background: #fbfaf6; border-left: .3pt solid #e4ddcc; min-width: 16mm; }
+  .bx { display: inline-block; width: 3.4mm; height: 3.4mm; border: .8pt solid #333; border-radius: .6mm; vertical-align: middle; }
+  .bn-notes p { margin: 0 0 1.2mm; font-size: 8.6pt; color: #222; }
+  .bn-line { height: 7mm; border-bottom: .4pt solid #c9ced8; }
+  .bn-labels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border-top: .6pt dashed #999; border-left: .6pt dashed #999; }
+  .bn-label { height: 26mm; padding: 2.5mm 3mm; border-right: .6pt dashed #999; border-bottom: .6pt dashed #999; break-inside: avoid; display: flex; flex-direction: column; gap: .6mm; }
+  .lb-code { font: 700 14pt/1.1 var(--font-code); letter-spacing: .02em; }
+  .lb-name { font: 600 9pt/1.25 var(--font-ui); }
+  .lb-sub { font-size: 8pt; color: #555; }
+  .lb-fill { margin-top: auto; display: flex; align-items: baseline; gap: 1.5mm; font-size: 7pt; color: #777; }
+  .lb-fill u { flex: 1; border-bottom: .5pt solid #777; text-decoration: none; }
+}
+@media print {
+  .bench-sheet section { break-inside: avoid; }
+  .bench-sheet section:first-of-type table.bn-t th.blank-h, .bench-sheet section:first-of-type table.bn-t td.blank { min-width: 32mm; }
+}
