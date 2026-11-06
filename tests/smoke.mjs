@@ -174,13 +174,14 @@ try {
   await check('bench-sheet', async () => {
     await go('#/v/oect/1', "document.querySelector('ol.steps')");
     const r = await evaluate(`window.print = () => { window.__printed = 3; }; const m = await import('./js/bench.js'); const c = await import('./js/core.js');
-      const { body } = (await import('./js/model.js')).parseFrontMatter(await c.lib.readPage('oect', 1)); const parts = m.benchParts(body);
-      await m.printBench('oect', 1, { title: 't' }, parts, { extra: ['备注'], steps: true, notes: true, labels: ['A-CB-01'], orient: 'auto', materials: [] });
-      return { steps: parts.steps.length, tables: parts.tables.length, boxes: document.querySelectorAll('#print-root .bench-sheet .bx').length, labels: document.querySelectorAll('#print-root .bn-label').length };`);
-    await waitFor('window.__printed === 3', 5000);
+      const { fm, body } = (await import('./js/model.js')).parseFrontMatter(await c.lib.readPage('oect', 1)); const secs = m.splitSections(body);
+      const bench = secs.filter((s) => s.kinds.includes('步骤') || s.kinds.includes('表格'));
+      await m.exportParts('oect', 1, fm, { record: secs.slice(0, 2).map((s) => s.md).join('\\n\\n'), bench, order: 'rb', extra: ['备注'], labels: true, orient: 'auto' });
+      return { secs: secs.length, bench: bench.length, frames: document.querySelectorAll('#print-root > .print-frame').length, boxes: document.querySelectorAll('#print-root .bench-sheet .bx').length, record: !!document.querySelector('#print-root .sheet.record') };`);
+    await waitFor('window.__printed === 3', 15000);
     await evaluate("document.body.classList.remove('print-volume', 'print-bench'); document.getElementById('bench-page')?.remove(); return 1;");
-    if (!r.steps || !r.boxes || r.labels !== 1) throw new Error(JSON.stringify(r));
-    return `${r.steps} steps, ${r.tables} tables, ${r.boxes} tick boxes`;
+    if (!r.bench || !r.boxes || r.frames !== 2 || !r.record) throw new Error(JSON.stringify(r));
+    return `${r.secs} sections, ${r.bench} to checklist, ${r.boxes} tick boxes`;
   });
   await check('editor', async () => {
     await go('#/v/oect/2/edit', "document.querySelector('.pdf-frame')?.contentDocument?.querySelector('.rh-title')");

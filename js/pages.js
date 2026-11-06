@@ -162,13 +162,13 @@ export function refLink(key, curVol) {
 // Older pages list reagents only in the front matter; they get the same 试剂 table at the foot.
 export const shownBody = (fm, body) => renameMaterialsHeading(readMaterials(body) || !(fm.reagents || []).length ? body : writeMaterials(body, fm.reagents.map((id) => ({ id }))));
 
-export async function buildPageSheet(vol, num, { forPrint = false } = {}) {
+export async function buildPageSheet(vol, num, { forPrint = false, body: only = null } = {}) {
   const v = lib.volume(vol);
   const entry = lib.page(vol, num);
   const md = await lib.readPage(vol, num);
   const { fm, body } = parseFrontMatter(md);
   const content = h('div', { class: 'sheet-body prose' });
-  const shown = shownBody(fm, body);
+  const shown = only ?? shownBody(fm, body);
   const ready = renderInto(content, shown, pageCtx(vol, num, null, { xid: fm.id || '' }));
   const panel = await expPanel(fm, vol, num, { forPrint }).catch(() => null);
   if (forPrint) return { el: recordSheet(vol, num, fm, panel, content), ready, fm, body };
@@ -253,7 +253,7 @@ export async function viewPage(vol, num, params) {
     fm.id ? null : { icon: 'flask', label: '设为实验（分配实验编号）…', run: () => makeExperiment(vol, num, fm) },
     { icon: 'flask', label: '导入试剂 / 溶液…', run: () => openMaterials(vol, num) },
     { icon: 'print', label: '打印 / 存为 PDF', run: () => exportPdf([lib.page(vol, num)], fm.date, fm.date, { cover: false }) },
-    { icon: 'print', label: '实验操作单（打印带去实验室）/ 导出表格…', run: () => import('./bench.js').then((m) => m.openBench(vol, num)) },
+    { icon: 'print', label: '选择导出：实验记录 + 操作清单…', run: () => import('./bench.js').then((m) => m.openExportPage(vol, num)) },
     { icon: 'history', label: '历史版本', run: () => openHistory(vol, num) },
     { icon: 'print', label: '打印纸质记录卡', run: () => printCard(vol, num) },
     fm.id ? { icon: 'copy', label: '命名助手（数据/照片文件名）', run: () => openNaming(fm, num) } : null,

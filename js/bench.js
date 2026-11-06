@@ -1,131 +1,196 @@
-// Bench sheet: a page's preparation steps and tables on A4, with tick boxes and blank columns to fill in by hand,
-// plus cut-out bottle labels for the aliquots and solutions it makes. Also exports the page's tables as CSV.
+// Export part of a page: each section (## / ### heading) can go into the archived record, into the bench checklist
+// (操作清单, printed to carry to the lab: tick boxes, blank columns to fill in by hand, bottle labels), or both.
+// The record keeps the notebook's own layout; the checklist turns steps blocks and tables into tick-box rows and
+// every line of plain text into one tick-box item, word for word.
 import { parseFrontMatter } from './model.js';
-import { CODE_RE, STEP_FIELDS, loadReagents, loadSolutions, parseSteps, readMaterials } from './lab.js';
+import { CODE_RE, STEP_FIELDS, loadReagents, loadSolutions, parseCSV, parseMaterials, parseSteps } from './lab.js';
 import { h } from './util.js';
 import { downloadText, lib, modal, toast } from './core.js';
-import { printSheets } from './printing.js';
+import { printFrame } from './printing.js';
+import { buildPageSheet, shownBody } from './pages.js';
 
 const plain = (s) => String(s || '')
   .replace(/\{[^{}|]+\|([^{}]*)\}/g, '$1').replace(/==([^=]+)==/g, '$1').replace(/\+\+([^+]+)\+\+/g, '$1').replace(/\{\{([^}]+)\}\}/g, '$1')
-  .replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/\[\[([^\]]+)\]\]/g, '$1').replace(/`([^`]+)`/g, '$1').trim();
+  .replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/\[\[([^\]]+)\]\]/g, '$1').replace(/`([^`]+)`/g, '$1')
+  .replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\$([^$]+)\$/g, '$1').trim();
 
-// Everything a bench sheet needs from the Markdown: steps blocks, pipe tables (with the heading above them), and the prose
-// of sections about procedure.
-export function benchParts(body) {
-  const lines = String(body || '').split('\n');
-  const steps = []; const tables = []; const notes = [];
-  let fence = null; let buf = []; let heading = ''; let section = ''; let tbl = null;
-  const flush = () => { if (tbl && tbl.rows.length) tables.push(tbl); tbl = null; };
-  for (const raw of lines) {
+// ----- sections: a page split at its headings; text before the first heading is its own section -----
+export function splitSections(md) {
+  const out = []; let cur = { title: '开头', level: 2, lines: [] }; let fence = false;
+  for (const line of String(md || '').split('\n')) {
+    if (/^```/.test(line.trim())) fence = !fence;
+    const hd = !fence && line.match(/^(#{1,4})\s+(.*)$/);
+    if (hd) { out.push(cur); cur = { title: plain(hd[2]) || '（无标题）', level: Math.max(2, hd[1].length), lines: [line] }; } else cur.lines.push(line);
+  }
+  out.push(cur);
+  const seen = {};
+  return out.map((s) => ({ ...s, md: s.lines.join('\n') })).filter((s) => s.md.trim()).map((s) => {
+    seen[s.title] = (seen[s.title] || 0) + 1;
+    const body = s.md.replace(/^#{1,4}\s+.*\n?/, '');
+    return { key: `${s.title}#${seen[s.title]}`, title: s.title, level: s.level, md: s.md, kinds: kindsOf(body) };
+  });
+}
+function kindsOf(md) {
+  const k = new Set();
+  if (/```steps/.test(md)) k.add('步骤');
+  if (/^\s*\|.*\|/m.test(md) || /```samples/.test(md)) k.add('表格');
+  if (/```materials/.test(md)) k.add('试剂');
+  if (/```hypothesis/.test(md)) k.add('假设');
+  if (md.replace(/```[\s\S]*?```/g, '').split('\n').some((l) => l.trim() && !/^\s*\|/.test(l))) k.add('文字');
+  return [...k];
+}
+
+// ----- one section → checklist items, in reading order -----
+export function checklistItems(md) {
+  const items = []; let fence = null; let buf = []; let tbl = null;
+  const flush = () => { if (tbl && tbl.rows.length) items.push(tbl); tbl = null; };
+  for (const raw of String(md || '').split('\n')) {
     const line = raw.trimEnd();
     if (fence) {
-      if (/^```/.test(line)) { if (fence === 'steps') steps.push(...parseSteps(buf.join('\n'))); fence = null; buf = []; } else buf.push(line);
+      if (/^```/.test(line.trim())) {
+        const src = buf.join('\n');
+        if (fence === 'steps') items.push({ type: 'steps', rows: parseSteps(src) });
+        else if (fence === 'samples') { const rows = parseCSV(src); if (rows.length > 1) items.push({ type: 'table', head: rows[0].map((c) => String(c).replace(/^结果[:：]\s*/, '')), rows: rows.slice(1) }); }
+        else if (fence === 'materials') items.push({ type: 'materials', rows: parseMaterials(src) });
+        else if (fence === 'reaction' || fence === 'code' || fence === 'python') buf.filter((l) => l.trim()).forEach((l) => items.push({ type: 'line', text: l.trim() }));
+        fence = null; buf = [];
+      } else buf.push(line);
       continue;
     }
-    const f = line.match(/^```\s*(\w+)?/);
+    const f = line.trim().match(/^```\s*(\w+)?/);
     if (f) { flush(); fence = f[1] || 'code'; buf = []; continue; }
-    const hd = line.match(/^(#{2,4})\s+(.*)$/);
-    if (hd) { flush(); heading = plain(hd[2]); if (hd[1] === '##') section = heading; continue; }
+    if (/^#{1,4}\s/.test(line)) { flush(); continue; }
     if (/^\s*\|/.test(line)) {
       const cells = line.trim().replace(/^\||\|$/g, '').split('|').map((c) => plain(c));
       if (cells.every((c) => /^:?-{2,}:?$/.test(c.trim()))) continue;
-      if (!tbl) tbl = { caption: heading, head: cells, rows: [] }; else tbl.rows.push(cells);
+      if (!tbl) tbl = { type: 'table', head: cells, rows: [] }; else tbl.rows.push(cells);
       continue;
     }
     flush();
-    if (line.trim() && /步骤|方法|操作|流程|准备|配制/.test(section)) notes.push(plain(line));
+    const t = plain(line.replace(/^\s*(?:[-*+]\s+(?:\[[ xX]\]\s+)?|>\s*)/, ''));
+    if (t) items.push({ type: 'line', text: t });
   }
   flush();
-  return { steps, tables, notes };
+  return items;
 }
 
-// Codes made on this page (aliquots A-…, solutions S-…) get a bottle label each.
-function madeCodes(steps, materials) {
+// Codes made in these sections (aliquots A-…, solutions S-…) get a bottle label each.
+function madeCodes(items) {
   const out = new Set();
-  for (const s of steps) for (const k of ['what', 'into', 'note']) for (const m of String(s[k] || '').matchAll(CODE_RE)) if (!m[1].startsWith('R-')) out.add(m[1]);
-  for (const m of materials || []) if (/^[AS]-/.test(m.id)) out.add(m.id);
+  for (const it of items) {
+    if (it.type === 'steps') for (const s of it.rows) for (const k of ['what', 'into', 'note']) for (const m of String(s[k] || '').matchAll(CODE_RE)) if (!m[1].startsWith('R-')) out.add(m[1]);
+    if (it.type === 'materials') for (const m of it.rows) if (/^[AS]-/.test(m.id)) out.add(m.id);
+  }
   return [...out];
 }
 
-const BLANK_KEY = 'labnote-bench-blanks';
-const recall = () => { try { return localStorage.getItem(BLANK_KEY) || '交联剂 (μL), 阈值功率 (mW), 气爆?, 备注'; } catch { return '交联剂 (μL), 阈值功率 (mW), 气爆?, 备注'; } };
-const remember = (v) => { try { localStorage.setItem(BLANK_KEY, v); } catch { /* private window */ } };
-const csvCell = (c) => (/[",\n]/.test(c) ? `"${String(c).replace(/"/g, '""')}"` : String(c ?? ''));
+// ----- remembered choices, per page, in this browser only -----
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private window */ } },
+};
+const DEFAULT_BLANKS = '交联剂 (μL), 阈值功率 (mW), 气爆?, 备注';
+const csvCell = (c) => (/[",\n]/.test(String(c ?? '')) ? `"${String(c).replace(/"/g, '""')}"` : String(c ?? ''));
+const isBenchy = (s) => s.kinds.includes('步骤') || s.kinds.includes('表格') || /步骤|操作|准备|配制|流程|分装|称量|混合/.test(s.title);
 
-export async function openBench(vol, num) {
+export async function openExportPage(vol, num) {
   const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
-  const parts = benchParts(body);
-  const materials = readMaterials(body) || [];
-  const codes = madeCodes(parts.steps, materials);
-  if (!parts.steps.length && !parts.tables.length) { toast('这一页没有“步骤”块或表格，没有可打印的操作单。'); return; }
-  const blanks = h('input', { id: 'bn-blanks', value: recall(), placeholder: '逗号分隔，例如 阈值功率 (mW), 备注' });
-  const withSteps = h('input', { type: 'checkbox', id: 'bn-steps', checked: parts.steps.length > 0, disabled: !parts.steps.length });
-  const withNotes = h('input', { type: 'checkbox', id: 'bn-notes', checked: parts.notes.length > 0, disabled: !parts.notes.length });
-  const withLabels = h('input', { type: 'checkbox', id: 'bn-labels', checked: codes.length > 0, disabled: !codes.length });
-  const orient = h('select', { id: 'bn-orient' }, h('option', { value: 'auto' }, '自动（列多时横向）'), h('option', { value: 'portrait' }, 'A4 纵向'), h('option', { value: 'landscape' }, 'A4 横向'));
+  const secs = splitSections(shownBody(fm, body));
+  const key = `labnote-export:${vol}/${num}`;
+  const saved = store.get(key, {});
+  const sel = Object.fromEntries(secs.map((s) => [s.key, saved.sel?.[s.key] ?? { r: true, b: isBenchy(s) }]));
+  const rows = h('tbody');
+  const draw = () => rows.replaceChildren(...secs.map((s, i) => {
+    const children = () => { const out = []; for (let j = i + 1; j < secs.length && secs[j].level > s.level; j++) out.push(secs[j]); return out; };
+    const ck = (k) => h('input', { type: 'checkbox', checked: sel[s.key][k], 'aria-label': `${s.title} ${k === 'r' ? '实验记录' : '操作清单'}`,
+      onchange: (e) => { sel[s.key][k] = e.target.checked; for (const c of children()) sel[c.key][k] = e.target.checked; draw(); } });
+    return h('tr', { class: `lv${s.level}` },
+      h('td', { class: 'ck' }, ck('r')), h('td', { class: 'ck' }, ck('b')),
+      h('td', { class: 'sec-t' }, h('span', { style: { paddingLeft: `${(s.level - 2) * 16}px` } }, s.title)),
+      h('td', { class: 'kinds' }, s.kinds.map((k) => h('span', { class: 'kind' }, k))));
+  }));
+  draw();
+  const all = (k) => { const v = !secs.every((s) => sel[s.key][k]); for (const s of secs) sel[s.key][k] = v; draw(); };
+  const order = h('select', { id: 'ex-order' }, h('option', { value: 'rb', selected: saved.order !== 'br' }, '实验记录在前，操作清单在后'), h('option', { value: 'br', selected: saved.order === 'br' }, '操作清单在前，实验记录在后'));
+  const blanks = h('input', { id: 'ex-blanks', value: saved.blanks ?? DEFAULT_BLANKS, placeholder: '逗号分隔，例如 阈值功率 (mW), 备注' });
+  const labels = h('input', { type: 'checkbox', id: 'ex-labels', checked: saved.labels ?? true });
+  const orient = h('select', { id: 'ex-orient' }, [['auto', '自动（列多时横向）'], ['portrait', 'A4 纵向'], ['landscape', 'A4 横向']].map(([v, l]) => h('option', { value: v, selected: (saved.orient || 'auto') === v }, l)));
+  const pick = (k) => secs.filter((s) => sel[s.key][k]);
+  const remember = () => store.set(key, { sel, order: order.value, blanks: blanks.value, labels: labels.checked, orient: orient.value });
   const csv = () => {
     const out = [];
-    if (parts.steps.length) out.push(['准备步骤'], STEP_FIELDS.map(([, l]) => l), ...parts.steps.map((s) => STEP_FIELDS.map(([k]) => s[k] || '')), []);
-    parts.tables.forEach((t, i) => out.push([t.caption || `表 ${i + 1}`], t.head, ...t.rows, []));
+    for (const s of pick('b')) for (const it of checklistItems(s.md)) {
+      if (it.type === 'steps') out.push([s.title], STEP_FIELDS.map(([, l]) => l), ...it.rows.map((r) => STEP_FIELDS.map(([k]) => r[k] || '')), []);
+      if (it.type === 'table') out.push([s.title], it.head, ...it.rows, []);
+    }
+    if (!out.length) { toast('勾进“操作清单”的小节里没有步骤块或表格。'); return; }
     downloadText(`${fm.id || `${vol}-${num}`}_表格.csv`, `﻿${out.map((r) => r.map(csvCell).join(',')).join('\n')}`, 'text/csv');
   };
   modal({
-    title: '实验操作单（打印带去实验室）',
-    body: h('div', { class: 'form' },
-      h('p', { class: 'muted' }, `本页有 ${parts.steps.length} 个准备步骤、${parts.tables.length} 张表${codes.length ? `、${codes.length} 个要贴瓶签的编号（${codes.join('、')}）` : ''}。每一行前面有勾选框，右侧留空白栏手写。`),
-      h('label', { for: 'bn-blanks' }, '表格右侧加的手写栏'), blanks,
-      h('label', { class: 'check', for: 'bn-steps' }, withSteps, ' 准备步骤（分装、称量、配母液）'),
-      h('label', { class: 'check', for: 'bn-notes' }, withNotes, ' 步骤说明文字'),
-      h('label', { class: 'check', for: 'bn-labels' }, withLabels, ' 瓶签（最后一页，剪下贴瓶）'),
-      h('label', { for: 'bn-orient' }, '纸张方向'), orient),
-    buttons: [{ label: '下载表格 CSV', run: () => { csv(); return false; } }, { label: '取消' }, { label: '打印 / 存为 PDF', primary: true, run: async () => {
-      remember(blanks.value);
-      const extra = blanks.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean);
-      await printBench(vol, num, fm, parts, { extra, steps: withSteps.checked, notes: withNotes.checked, labels: withLabels.checked ? codes : [], orient: orient.value, materials });
+    title: '选择导出：实验记录 + 操作清单', wide: true,
+    body: h('div', { class: 'form ex-form' },
+      h('p', { class: 'muted' }, '每一节可以放进“实验记录”（存档，排版同记录本）、“操作清单”（带去实验室：每行一个勾选框，右侧留手写栏），或两者都放。完整记录仍然全部保存在记录本里，这里只决定这次导出哪些。'),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'data ex-secs' },
+        h('thead', null, h('tr', null,
+          h('th', { class: 'ck' }, '实验记录', h('br'), h('button', { class: 'linkish', type: 'button', onclick: () => all('r') }, '全选')),
+          h('th', { class: 'ck' }, '操作清单', h('br'), h('button', { class: 'linkish', type: 'button', onclick: () => all('b') }, '全选')),
+          h('th', null, '小节'), h('th', null, '内容'))), rows)),
+      h('div', { class: 'pair' }, h('div', null, h('label', { for: 'ex-order' }, 'PDF 顺序'), order), h('div', null, h('label', { for: 'ex-orient' }, '操作清单纸张'), orient)),
+      h('label', { for: 'ex-blanks' }, '清单里表格右侧加的手写栏'), blanks,
+      h('label', { class: 'check', for: 'ex-labels' }, labels, ' 操作清单最后附瓶签（本次分装 / 配制的 A-、S- 编号，剪下贴瓶）')),
+    buttons: [{ label: '下载表格 CSV', run: () => { remember(); csv(); return false; } }, { label: '取消' }, { label: '打印 / 存为 PDF', primary: true, run: async () => {
+      remember();
+      const rec = pick('r'); const ben = pick('b');
+      if (!rec.length && !ben.length) { toast('至少勾一节。'); return false; }
+      await exportParts(vol, num, fm, { record: rec.map((s) => s.md).join('\n\n'), bench: ben, order: order.value, extra: blanks.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean), labels: labels.checked, orient: orient.value });
     } }],
   });
 }
 
-export async function printBench(vol, num, fm, parts, opt) {
+// ----- printing -----
+export async function benchSheets(vol, num, fm, sections, opt) {
   const [sols, reagents] = await Promise.all([loadSolutions(lib).catch(() => []), loadReagents(lib).catch(() => [])]);
   const by = new Map([...reagents, ...sols, ...(opt.refs || [])].map((r) => [r.id, r]));
   const box = () => h('span', { class: 'bx' });
-  const blankCells = (n) => Array.from({ length: n }, () => h('td', { class: 'blank' }));
-  const widest = Math.max(opt.steps && parts.steps.length ? 8 : 0, ...parts.tables.map((t) => t.head.length + 1 + opt.extra.length));
+  const parts = sections.map((s) => ({ title: s.title, items: checklistItems(s.md) })).filter((p) => p.items.length);
+  const items = parts.flatMap((p) => p.items);
+  const widest = Math.max(0, ...items.map((it) => (it.type === 'steps' ? 8 : it.type === 'table' ? it.head.length + 1 + opt.extra.length : 0)));
   const landscape = opt.orient === 'landscape' || (opt.orient === 'auto' && widest > 10);
-  let sec = 0;
-  const head = (t, sub) => h('h2', null, h('span', { class: 'bn-no' }, String(++sec).padStart(2, '0')), t, sub ? h('small', null, sub) : null);
+  let n = 0;
+  const head = (t, sub) => h('h2', null, h('span', { class: 'bn-no' }, String(++n).padStart(2, '0')), t, sub ? h('small', null, sub) : null);
   const v = lib.volume(vol);
+  const render = (it) => {
+    if (it.type === 'line') return h('div', { class: 'bn-item' }, box(), h('span', null, it.text));
+    if (it.type === 'steps') {
+      return h('table', { class: 'bn-t steps-t' },
+        h('thead', null, h('tr', null, h('th', { class: 'ck' }, '✓'), STEP_FIELDS.map(([, l]) => h('th', null, l)), h('th', { class: 'blank-h wide' }, '实际 / 备注'))),
+        h('tbody', null, it.rows.map((s) => h('tr', null, h('td', { class: 'ck' }, box()), STEP_FIELDS.map(([k]) => h('td', null, s[k] || '')), h('td', { class: 'blank' })))));
+    }
+    if (it.type === 'materials') {
+      return h('table', { class: 'bn-t' },
+        h('thead', null, h('tr', null, h('th', { class: 'ck' }, '✓'), ['编号', '名称', '来源 / 瓶号', '用量', '存放位置'].map((c) => h('th', null, c)))),
+        h('tbody', null, it.rows.map((m) => { const r = by.get(m.id) || {}; return h('tr', null, h('td', { class: 'ck' }, box()), [m.id, r.name || '', m.from, m.amount, r.location || ''].map((c) => h('td', null, c))); })));
+    }
+    return h('table', { class: 'bn-t' },
+      h('thead', null, h('tr', null, h('th', { class: 'ck' }, '✓'), it.head.map((c) => h('th', null, c)), opt.extra.map((c) => h('th', { class: 'blank-h' }, c)))),
+      h('tbody', null, it.rows.map((r) => h('tr', null, h('td', { class: 'ck' }, box()), it.head.map((_, j) => h('td', { class: /^\s*[-\d.:\s/]+\s*$/.test(r[j] || '') ? 'num' : null }, r[j] || '')), opt.extra.map(() => h('td', { class: 'blank' }))))));
+  };
   const nodes = [h('header', { class: 'bn-head' },
-    h('div', { class: 'bn-kicker' }, '实验操作单 · BENCH SHEET'),
+    h('div', { class: 'bn-kicker' }, '实验操作清单 · BENCH CHECKLIST'),
     h('h1', null, fm.title || `第 ${num} 页`),
     h('div', { class: 'bn-meta' },
       h('span', null, h('i', null, '实验编号'), fm.id || `${v?.title || vol} 第 ${num} 页`),
       h('span', null, h('i', null, '记录日期'), String(fm.date || '').slice(0, 10)),
       h('span', null, h('i', null, '实验日期'), h('u')),
       h('span', null, h('i', null, '操作人'), h('u'))))];
-  const mats = (opt.materials || []).filter((m) => /^R-/.test(m.id));
-  if (mats.length) nodes.push(h('p', { class: 'bn-mats' }, h('b', null, '原瓶试剂　'), mats.map((m) => `${m.id} ${by.get(m.id)?.name || ''}${by.get(m.id)?.location ? `（${by.get(m.id).location}）` : ''}`).join('；')));
-  if (opt.steps && parts.steps.length) {
-    nodes.push(h('section', null, head('准备', '分装 · 称量 · 配制'),
-      h('table', { class: 'bn-t' },
-        h('thead', null, h('tr', null, h('th', { class: 'ck' }, '✓'), STEP_FIELDS.map(([, l]) => h('th', null, l)), h('th', { class: 'blank-h' }, '实际 / 备注'))),
-        h('tbody', null, parts.steps.map((s) => h('tr', null, h('td', { class: 'ck' }, box()), STEP_FIELDS.map(([k]) => h('td', { class: `c-${k}` }, s[k] || '')), h('td', { class: 'blank' })))))));
-  }
-  if (opt.notes && parts.notes.length) nodes.push(h('section', { class: 'bn-notes' }, head('说明'), parts.notes.map((t) => h('p', null, t))));
-  parts.tables.forEach((t, i) => {
-    nodes.push(h('section', null, head(t.caption && !/步骤|方法/.test(t.caption) ? t.caption : `表 ${i + 1}`, `${t.rows.length} 行`),
-      h('table', { class: 'bn-t' },
-        h('thead', null, h('tr', null, h('th', { class: 'ck' }, '✓'), t.head.map((c) => h('th', null, c)), opt.extra.map((c) => h('th', { class: 'blank-h' }, c)))),
-        h('tbody', null, t.rows.map((r) => h('tr', null, h('td', { class: 'ck' }, box()), t.head.map((_, j) => h('td', { class: /^\s*[-\d.:\s/]+\s*$/.test(r[j] || '') ? 'num' : null }, r[j] || '')), blankCells(opt.extra.length)))))));
-  });
+  for (const p of parts) nodes.push(h('section', null, head(p.title), p.items.map(render)));
   nodes.push(h('section', { class: 'bn-obs' }, head('现象与备注'), Array.from({ length: 6 }, () => h('div', { class: 'bn-line' }))));
   const sheets = [h('article', { class: `bench-sheet${landscape ? ' landscape' : ''}` }, nodes)];
-  if (opt.labels.length) {
+  const codes = opt.labels ? madeCodes(items) : [];
+  if (codes.length) {
     sheets.push(h('article', { class: 'bench-sheet bn-labels-sheet' },
       h('h2', null, '瓶签', h('small', null, '沿虚线剪下，贴在瓶身；日期和姓名缩写现场手写')),
-      h('div', { class: 'bn-labels' }, opt.labels.map((c) => {
+      h('div', { class: 'bn-labels' }, codes.map((c) => {
         const r = by.get(c) || {};
         return h('div', { class: 'bn-label' },
           h('div', { class: 'lb-code' }, c),
@@ -134,14 +199,37 @@ export async function printBench(vol, num, fm, parts, opt) {
           h('div', { class: 'lb-fill' }, h('span', null, '日期'), h('u'), h('span', null, '人'), h('u')));
       }))));
   }
-  const pr = printSheets(sheets);
-  const style = h('style', { id: 'bench-page' }, `@page { size: A4 ${landscape ? 'landscape' : 'portrait'}; }`);
+  return { sheets, landscape };
+}
+
+export async function exportParts(vol, num, fm, opt) {
+  toast('正在准备 PDF…');
+  const frames = [];
+  let land = false;
+  if (opt.record.trim()) {
+    const { el, ready } = await buildPageSheet(vol, num, { forPrint: true, body: opt.record });
+    await Promise.race([ready, new Promise((r) => setTimeout(r, 15000))]).catch(() => {});
+    frames.push(printFrame([el]));
+  }
+  if (opt.bench.length) {
+    const { sheets, landscape } = await benchSheets(vol, num, fm, opt.bench, opt);
+    land = landscape;
+    const f = printFrame(sheets);
+    if (landscape) f.classList.add('pf-landscape');
+    frames.push(f);
+  }
+  if (opt.order === 'br') frames.reverse();
+  const pr = document.getElementById('print-root');
+  pr.replaceChildren(...frames);
+  await Promise.all([...pr.querySelectorAll('img')].map((i) => i.decode?.().catch(() => {})));
+  // A landscape checklist gets its own named page size; the record stays portrait.
+  document.getElementById('bench-page')?.remove();
+  const style = h('style', { id: 'bench-page' }, land ? '@page bench-land { size: A4 landscape; } .pf-landscape { page: bench-land; }' : '');
   document.head.append(style);
   document.body.classList.add('print-volume', 'print-bench');
   const title = document.title;
-  document.title = `操作单_${fm.id || `${vol}-${num}`}_${fm.title || ''}`;
+  document.title = `${fm.id || `${vol}-${num}`}_${fm.title || ''}${opt.record.trim() && opt.bench.length ? '_记录+清单' : opt.bench.length ? '_操作清单' : '_记录'}`;
   window.addEventListener('afterprint', () => { document.title = title; style.remove(); document.body.classList.remove('print-bench'); }, { once: true });
-  await Promise.all([...pr.querySelectorAll('img')].map((i) => i.decode?.().catch(() => {})));
   setTimeout(() => window.print(), 50);
   return pr;
 }

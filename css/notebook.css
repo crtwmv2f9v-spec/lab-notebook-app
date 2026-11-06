@@ -1900,3 +1900,14 @@ a.m-paper:hover { text-decoration: underline; }
   .bench-sheet section { break-inside: avoid; }
   .bench-sheet section:first-of-type table.bn-t th.blank-h, .bench-sheet section:first-of-type table.bn-t td.blank { min-width: 32mm; }
 }
+/* v39: choose sections for record / checklist */
+.ex-secs td.ck, .ex-secs th.ck { width: 5.5em; text-align: center; }
+.ex-secs tr.lv2 .sec-t { font-weight: 600; }
+.ex-secs .kind { display: inline-block; margin-right: 4px; padding: 1px 6px; border-radius: 6px; font-size: 11.5px; background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink-2); }
+@media print {
+  #print-root > .print-frame + .print-frame { break-before: page; }
+  .bn-item { display: flex; gap: 2.5mm; align-items: flex-start; padding: 1.6mm 0; border-bottom: .3pt solid #e3e7ef; font-size: 9pt; line-height: 1.45; break-inside: avoid; }
+  .bn-item .bx { flex: none; margin-top: .6mm; }
+  .bench-sheet section > table.bn-t + .bn-item, .bench-sheet section > .bn-item + table.bn-t { margin-top: 2mm; }
+  table.bn-t th.blank-h.wide, table.bn-t.steps-t td.blank { min-width: 32mm; }
+}
