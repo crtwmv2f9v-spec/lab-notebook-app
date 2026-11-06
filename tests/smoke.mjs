@@ -191,6 +191,14 @@ try {
     await evaluate("history.back(); return 1;");
   });
   await check('reagents', async () => { await go('#/lib/reagents', "document.querySelectorAll('.lib-table tbody tr').length > 0"); await evaluate(clean); await shot('reagents'); });
+  await check('clips', async () => {
+    await go('#/clips', "document.querySelectorAll('.clip-tile').length >= 2");
+    const r = await evaluate(`const m = await import('./js/clips.js'); const z = m.parseZotero('“Figure 2b. Device.” ([Liu et al., 2024, p. 5](zotero://select/library/items/AB12)) ([pdf](zotero://open-pdf/library/items/CD34?page=5))');
+      return { tiles: document.querySelectorAll('.clip-tile').length, hint: m.unitHints('框线 0.5 pt'), z, cats: document.querySelectorAll('.clip-cat').length };`);
+    if (r.z.page !== '5' || r.z.fig !== 'Fig. 2b' || !/open-pdf/.test(r.z.zotero) || r.z.cite !== 'Liu et al. 2024' || !r.hint.includes('0.18 mm')) throw new Error(JSON.stringify(r));
+    await evaluate(clean); await shot('clips');
+    return `${r.tiles} clips, ${r.cats} categories`;
+  });
   await check('solutions', async () => { await go('#/lib/solutions', "document.querySelectorAll('.sol-table tbody tr').length > 0"); await evaluate(clean); });
   await check('protocols', async () => { await go('#/lib/protocols', "document.querySelector('.view.library table, .view.library .tile, .view.library li')"); await evaluate(clean); });
   await check('methods', async () => { await go('#/v/oect/methods', "document.querySelectorAll('.m-card').length >= 2"); await evaluate(clean); await shot('methods'); });

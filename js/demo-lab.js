@@ -55,6 +55,8 @@ tags: [oect, transfer]
         { v: 2, at: `${day(-3)}T10:00:00+08:00`, since: x1, note: 'Default 阈值把银线算进沟道', params: [{ k: '比例尺', v: '0.1467 µm/px' }, { k: '对比度', v: 'Auto 后 +20%' }, { k: '阈值方法', v: 'Otsu' }] }],
       created: `${day(-10)}T10:00:00+08:00`, updated: `${day(-3)}T10:00:00+08:00` }, null, 1)}\n`,
     'methods/M-0002.json': `${JSON.stringify({ id: 'M-0002', vol: 'oect', papers: ['A1', 'A2'], title: '转移曲线统计：每组 n 与误差', cat: '统计分析', status: '已写入', tags: [], body: '每个条件至少 3 个器件；gm 取最大值；结果以 mean ± SD 表示，组间用 one-way ANOVA + Tukey。', params: [{ k: 'n', v: '≥ 3 devices' }, { k: '检验', v: 'one-way ANOVA, Tukey' }], versions: [{ v: 1, at: `${day(-8)}T10:00:00+08:00`, since: '', note: '初版', params: [{ k: 'n', v: '≥ 3 devices' }, { k: '检验', v: 'one-way ANOVA, Tukey' }] }], created: `${day(-8)}T10:00:00+08:00`, updated: `${day(-8)}T10:00:00+08:00` }, null, 1)}\n`,
+    'clips/F-0001.json': `${JSON.stringify({ id: 'F-0001', kind: 'note', title: 'Nature 作图 template', cats: ['画图/template'], note: '框线 0.5 pt，坐标轴字号 7 pt\n单栏图宽 89 mm，双栏 183 mm', src: {}, created: `${day(-2)}T10:00:00+08:00`, updated: `${day(-2)}T10:00:00+08:00` }, null, 1)}\n`,
+    'clips/F-0002.json': `${JSON.stringify({ id: 'F-0002', kind: 'img', title: '垂直 OECT 截面结构', cats: ['v-OECTs结构'], note: '', file: 'F-0002_v-OECTs结构_Rivnay2018_Fig._2a.png', src: { zotero: 'zotero://open-pdf/library/items/ABCD1234', page: '3', fig: 'Fig. 2a', cite: 'Rivnay et al. 2018', task: 'td5' }, created: `${day(-1)}T10:00:00+08:00`, updated: `${day(-1)}T10:00:00+08:00` }, null, 1)}\n`,
     'planner/tasks.json': `${JSON.stringify({
       tasks: [
         { id: 'td1', text: '双周报告', week: day(0), date: day(4), cat: '截止', done: false, created: `${day(-3)}T09:00:00+08:00` },

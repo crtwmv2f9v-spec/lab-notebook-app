@@ -5,6 +5,7 @@ import { addDays, cleanTopic, daysFrom, loadHypotheses, sectionOf, readSamples, 
 import { search } from './search.js';
 import { h, icon } from './util.js';
 import { S, demoBanner, lib, modal, toast, topbar, view, menu } from './core.js';
+import { clipCounts } from './clips.js';
 import {
   PAPER_STAGE, WEEKDAYS, addBox, allFollowups, changeTasks, editPaper, editProject, exportIcs,
   editable, isGoal, loadPlanner, memoCard, moveTask, newTask, reminderRow, ring, taskRow,
@@ -87,6 +88,7 @@ export function viewHome() {
     h('a', { class: 'btn ghost lib-link', href: '#/lib/solutions' }, '溶液库'),
     h('a', { class: 'btn ghost lib-link', href: '#/lib/protocols' }, '步骤库'),
     h('a', { class: 'btn ghost lib-link', href: '#/methods', title: '全部方法卡片：写论文 Experimental 用的细节' }, '方法细节'),
+    h('a', { class: 'btn ghost lib-link', href: '#/clips', title: '文献图和杂项（template 框线、作图参数…），按分类' }, '素材库'),
     h('button', { class: 'btn ghost lib-link', type: 'button', onclick: () => openExport('') }, '导出'),
     // Narrow screens: the same links folded into one menu, so the bar fits a phone.
     h('button', { class: 'btn ghost narrow-only', type: 'button', onclick: (e) => menu(e.currentTarget, [
@@ -94,6 +96,7 @@ export function viewHome() {
       { icon: 'flask', label: '溶液库', run: () => { location.hash = '#/lib/solutions'; } },
       { icon: 'list', label: '步骤库', run: () => { location.hash = '#/lib/protocols'; } },
       { icon: 'list', label: '方法细节', run: () => { location.hash = '#/methods'; } },
+      { icon: 'image', label: '素材库', run: () => { location.hash = '#/clips'; } },
       { icon: 'download', label: '导出', run: () => openExport('') },
     ]) }, '资料库'),
     h('button', { class: 'btn icon ghost', 'aria-label': '搜索', title: '搜索（/）', onclick: () => openSearch() }, icon('search')),
@@ -378,12 +381,13 @@ export function paperKeywords(title) {
   const pick = [...out.filter(strong), ...out.filter((w) => !strong(w))].slice(0, 5);
   return pick.join(' · ');
 }
+let clipN = new Map();
 function paperRow(x) {
   const href = x.ref?.doi ? `https://doi.org/${x.ref.doi}` : linkMeta(x.text)?.href;
   if (!x.ref) return taskRow(x, { redraw: redrawHome, showCat: false, meta: paperKey(x.text) ? h('span', { class: 'paper-meta' }, '正在查找题目…', linkMeta(x.text)) : linkMeta(x.text) });
   const first = String(x.ref.authors || '').split(/[ ,]/)[0];
   const li = taskRow(x, { redraw: redrawHome, showCat: false,
-    meta: h('span', { class: 'paper-meta' }, [[first, x.ref.year].filter(Boolean).join(' '), x.ref.journal].filter(Boolean).join(' · '), href ? h('a', { href, target: '_blank', rel: 'noopener' }, '打开') : null) });
+    meta: h('span', { class: 'paper-meta' }, [[first, x.ref.year].filter(Boolean).join(' '), x.ref.journal].filter(Boolean).join(' · '), href ? h('a', { href, target: '_blank', rel: 'noopener' }, '打开') : null, clipN.get(x.id) ? h('a', { href: `#/clips?paper=${x.id}`, title: '从这篇存下的图' }, `图 ${clipN.get(x.id)}`) : null) });
   // Keywords: generated from the title, click to rewrite them in your own words (kept as `keys`).
   const keys = x.keys || paperKeywords(x.ref.title) || x.ref.title;
   const main = li.querySelector('.task-main > .task-text');
@@ -420,6 +424,7 @@ export function homeRails() {
     const focused = document.activeElement?.closest?.('.rail') ? document.activeElement.dataset.k : null;
     const { tasks, projects, papers } = doc;
     const paperMethods = await loadMethods(lib).catch(() => []);
+    clipN = await clipCounts();
     // 课题与基金
     const active = projects.filter((x) => !['想法', '调研', '已结束'].includes(x.stage || '想法'));
     const early = (st) => projects.filter((x) => (x.stage || '想法') === st).length;

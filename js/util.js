@@ -75,6 +75,7 @@ const P = {
   copy: 'M9 9h10v10H9zM5 15V5h10',
   trash: 'M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13',
   eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  image: 'M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15.5 9.5h.01',
   write: 'M4 20h16M6 16l9.5-9.5a2 2 0 0 1 3 3L9 19H6z',
 };
 export function icon(name, size = 20) {
