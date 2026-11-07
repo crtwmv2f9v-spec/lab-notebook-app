@@ -104,14 +104,23 @@ const cslRef = (d) => (d && d.title ? {
   year: String(d.issued?.['date-parts']?.[0]?.[0] || ''),
   doi: d.DOI || '',
 } : null);
+const looksHtml = (t) => /<(?:p|div|span|img|html|body)\b/i.test(t);
+const htmlText = (t) => { try { return new DOMParser().parseFromString(t, 'text/html').body.textContent || ''; } catch { return t.replace(/<[^>]+>/g, ' '); } };
 export function parseZotero(text, html = '') {
-  const t = String(text || '');
+  let t = String(text || '');
+  // Some note formats (e.g. a custom Obsidian translator) put HTML in the plain-text slot and drop the links.
+  if (looksHtml(t)) { if (!html) html = t; t = htmlText(t); }
   const out = {};
+  if (/zotero-note|citation-item|data-attachment-key/.test(html)) out.zcopy = true;
+  const im = html.match(/<img\b[^>]*>/i);
+  if (im && out.zcopy) { out.image = true; const w = im[0].match(/width="(\d+)"/); const hh = im[0].match(/height="(\d+)"/); if (w && hh) out.ratio = +w[1] / +hh[1]; }
+  const pl = t.match(/,\s*(?:19|20)\d{2},\s*p\.\s*([\w-]+)/);
+  if (pl) out.plabel = pl[1];
   const pdf = t.match(/zotero:\/\/open-pdf\/[^\s)\]"'>]+/);
   const sel = t.match(/zotero:\/\/select\/[^\s)\]"'>]+/);
   if (pdf) out.zotero = pdf[0]; else if (sel) out.zotero = sel[0];
   if (sel) out.zselect = sel[0];
-  const pg = (pdf && pdf[0].match(/[?&]page=(\d+)/)) || t.match(/\bp\.\s*(\d+)/);
+  const pg = (pdf && pdf[0].match(/[?&]page=(\d+)/)) || (!pl && t.match(/\bp\.\s*(\d+)/));
   if (pg) out.page = pg[1];
   const ak = pdf && pdf[0].match(/[?&]annotation=([A-Z0-9]{8})/);
   if (ak) out.akey = ak[1];
@@ -183,6 +192,77 @@ async function zoteroImage(akey, zlib = 'library') {
   }
   return null;
 }
+// No annotation key on the clipboard: take the newest picture Zotero wrote (the box just drawn), preferring one
+// whose proportions match the copied <img width height>. Its file name is the annotation key.
+async function newestZoteroImage(ratio) {
+  const st = await zoteroState();
+  if (st.state !== 'ok') return null;
+  let lib;
+  try { lib = await (await st.dir.getDirectoryHandle('cache')).getDirectoryHandle('library'); } catch { return null; }
+  const found = [];
+  for await (const [name, hd] of lib.entries()) {
+    if (hd.kind !== 'file' || !/^[A-Z0-9]{8}\.png$/.test(name)) continue; // skips the "._" files exFAT disks add
+    const f = await hd.getFile();
+    if (Date.now() - f.lastModified < 30 * 60e3) found.push(f);
+  }
+  if (!found.length) return null;
+  const dims = async (f) => { try { const v = new DataView(await f.slice(16, 24).arrayBuffer()); return v.getUint32(0) / v.getUint32(4); } catch { return 0; } };
+  found.sort((a, b) => b.lastModified - a.lastModified);
+  for (const f of found.slice(0, 8)) if (!ratio || Math.abs((await dims(f)) / ratio - 1) < 0.03) return { file: f, akey: f.name.slice(0, 8) };
+  return null;
+}
+// Title, DOI and the PDF page come from the Zotero web API (Zotero's own local API refuses web pages).
+// A read-only key, kept only in this browser like the GitHub token.
+const ZAPI = 'labnote-zotero-api';
+export const zoteroApi = () => { try { return JSON.parse(localStorage.getItem(ZAPI) || 'null'); } catch { return null; } };
+async function zget(path) {
+  const a = zoteroApi(); if (!a) return null;
+  const r = await fetch(`https://api.zotero.org/users/${a.userID}/${path}`, { headers: { 'Zotero-API-Key': a.key, 'Zotero-API-Version': '3' } });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`Zotero ${r.status}`);
+  return (await r.json()).data;
+}
+// annotation key -> { zotero link, page, page label, ref }; null if the annotation has not synced yet.
+export async function resolveAnnotation(akey) {
+  const an = await zget(`items/${akey}`).catch(() => null);
+  if (!an?.parentItem) return null;
+  let pi = null; try { pi = JSON.parse(an.annotationPosition || '{}').pageIndex; } catch { /* no position */ }
+  const out = { akey, zotero: `zotero://open-pdf/library/items/${an.parentItem}${Number.isInteger(pi) ? `?page=${pi + 1}&` : '?'}annotation=${akey}` };
+  if (Number.isInteger(pi)) out.page = String(pi + 1);
+  if (an.annotationPageLabel) out.plabel = an.annotationPageLabel;
+  const att = await zget(`items/${an.parentItem}`).catch(() => null);
+  const it = att?.parentItem ? await zget(`items/${att.parentItem}`).catch(() => null) : null;
+  if (it) {
+    const n = (it.creators || []).filter((c) => c.creatorType === 'author' || !c.creatorType).map((c) => c.lastName || c.name || '').filter(Boolean);
+    out.ref = { title: it.title || '', authors: n.length > 2 ? `${n[0]} et al.` : n.join(', '), journal: it.journalAbbreviation || it.publicationTitle || '', year: String(it.date || '').match(/\d{4}/)?.[0] || '', doi: it.DOI || '' };
+  }
+  return out;
+}
+export function connectZoteroApi(after) {
+  const cur = zoteroApi();
+  const key = h('input', { id: 'za-key', type: 'password', autocomplete: 'off', placeholder: '粘贴 Zotero API key' });
+  modal({ title: '连接 Zotero 账号（只读）', body: h('div', { class: 'form' },
+    h('p', null, '用途：根据 Zotero 里的框，自动查出文章题目、期刊、DOI，以及“在 Zotero 打开第 N 页”的链接。只需做一次。'),
+    h('ol', { class: 'za-steps' },
+      h('li', null, '点这个链接打开 Zotero 网站（会要求登录你的 Zotero 账号 qianyuw）：', h('a', { href: 'https://www.zotero.org/settings/keys/new', target: '_blank', rel: 'noopener' }, 'zotero.org › 新建 API key')),
+      h('li', null, '「Key Description」随便写，例如 LabNotebook。'),
+      h('li', null, '「Personal Library」只勾 ', h('b', null, 'Allow library access'), '；其他都不勾（只读）。'),
+      h('li', null, '拉到最下面点「Save Key」，复制页面上显示的那串 key。'),
+      h('li', null, '回到这里，粘贴到下面的框，点「连接」。')),
+    h('label', { for: 'za-key' }, 'API key'), key,
+    h('p', { class: 'muted small' }, cur ? `已连接（用户 ${cur.userID}）。重新粘贴会替换。` : 'key 只存在这台电脑的浏览器里，不进 GitHub，不发给别处。')),
+  buttons: [cur ? { label: '断开', danger: true, run: () => { try { localStorage.removeItem(ZAPI); } catch { /* ignore */ } toast('已断开 Zotero 账号。'); } } : null, { label: '取消' }, { label: '连接', primary: true, run: async () => {
+    const k = key.value.trim(); if (!k) { toast('先粘贴 key。'); return false; }
+    try {
+      const r = await fetch('https://api.zotero.org/keys/current', { headers: { 'Zotero-API-Key': k, 'Zotero-API-Version': '3' } });
+      if (!r.ok) { toast('这个 key 无效，请检查是否复制完整。'); return false; }
+      const j = await r.json();
+      if (!j.access?.user?.library) { toast('这个 key 没有勾选 Allow library access。'); return false; }
+      localStorage.setItem(ZAPI, JSON.stringify({ key: k, userID: j.userID }));
+      toast('Zotero 账号已连接。'); after?.();
+    } catch { toast('连不上 Zotero 网站，请检查网络。'); return false; }
+  } }] });
+}
 // zotero://open-pdf with the page the figure is on.
 export function zoteroHref(src) {
   const z = src?.zotero; if (!z) return '';
@@ -193,7 +273,7 @@ export function srcLine(src) {
   if (!src) return '';
   const r = src.ref;
   const who = r ? [String(r.authors || '').split(/[ ,]/)[0], r.year].filter(Boolean).join(' ') : src.cite || '';
-  return [who, r?.journal, src.fig, src.page ? `第 ${src.page} 页` : ''].filter(Boolean).join(' · ');
+  return [who, r?.journal, src.fig, src.page ? `PDF 第 ${src.page} 页` : src.plabel ? `p. ${src.plabel}` : ''].filter(Boolean).join(' · ');
 }
 const readingList = async () => ((await loadPlanner().catch(() => ({ tasks: [] }))).tasks || []).filter((x) => x.cat === '文献');
 const taskLabel = (x) => (x.ref ? `${x.keys || paperKeywords(x.ref.title) || x.ref.title} — ${String(x.ref.authors || '').split(/[ ,]/)[0]} ${x.ref.year || ''}` : x.text).slice(0, 90);
@@ -260,18 +340,20 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
     if (!img && !text.trim()) return;
     e.preventDefault();
     if (img) return editClip(null, { image: img, cat: realCat(cat), task: paper });
-    if (/zotero:\/\/|data-annotation/.test(text + html)) return editClip(null, { text, html, cat: realCat(cat), task: paper });
+    if (/zotero:\/\/|data-annotation|zotero-note|citation-item/.test(text + html)) return editClip(null, { text, html, cat: realCat(cat), task: paper });
     editClip(null, { kind: 'note', noteText: text.trim(), cat: realCat(cat) });
   };
   document.removeEventListener('paste', window.__clipPaste || (() => {}));
   window.__clipPaste = onPaste;
   document.addEventListener('paste', onPaste);
+  completeSources(clips);
   const title = pTask ? `素材库 · ${pTask.ref ? (pTask.keys || paperKeywords(pTask.ref.title)) : pTask.text}` : cat === ALL ? '素材库' : cat === UNSORTED ? '素材库 · 未分类' : `素材库 · ${cat}`;
   return h('div', { class: 'view clips' },
     topbar({ back: cat !== ALL || paper ? '#/clips' : '#/', backLabel: cat !== ALL || paper ? '素材库' : '首页', title,
       sub: `${clips.filter((c) => c.kind === 'img').length} 张图 · ${clips.filter((c) => c.kind !== 'img').length} 条文字 · Zotero 里 ⌥5 框图 → ⌘C → 这里 ⌘V`,
       actions: [
         fs.state === 'ok' && !DEMO ? h('button', { class: 'btn ghost', type: 'button', title: '换一个存图片的文件夹', onclick: async () => { if (await connectFolder({ pickNew: true })) { urlCache.clear(); route({ quiet: true }); } } }, h('span', { class: 'wide-only' }, '图片文件夹')) : null,
+        h('button', { class: 'btn ghost', type: 'button', title: '连接 Zotero 账号：自动补全题目、DOI 和跳回原页的链接', onclick: () => connectZoteroApi(() => route({ quiet: true })) }, h('span', { class: 'wide-only' }, zoteroApi() ? 'Zotero ✓' : '连接 Zotero')),
         h('button', { class: 'btn', type: 'button', onclick: () => editClip(null, { kind: 'note', cat: realCat(cat) }) }, icon('note', 18), h('span', null, '记一条文字')),
         fs.state !== 'unsupported' ? h('button', { class: 'btn primary', type: 'button', onclick: () => fileIn.click() }, icon('plus', 18), h('span', null, '加图片')) : null].filter(Boolean) }),
     demoBanner(),
@@ -371,20 +453,22 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
       h('p', { class: 'muted small' }, '或者截图后 ⌘V，或把图片拖进来。'));
   }
   // An area annotation copied from Zotero: fetch its picture from the Zotero folder.
-  async function zoteroPic(akey, zlib) {
+  async function zoteroPic(akey, zlib, ratio) {
     if (pic || x.file) return;
     let st = await zoteroState();
     if (st.state === 'unsupported') return;
     const load = async () => {
       preview.replaceChildren(h('span', { class: 'muted' }, '正在从 Zotero 取图…'));
-      const f = await zoteroImage(akey, zlib);
-      if (f) showPic(new File([f], `${akey}.png`, { type: 'image/png' }));
-      else preview.replaceChildren(dropHint('Zotero 里没找到这条标注的图片——只有「选择区域」画出的框才有图（高亮、文字没有）。可以截图后 ⌘V。'));
+      let f = akey ? await zoteroImage(akey, zlib) : null;
+      if (!f && !akey) { const n = await newestZoteroImage(ratio); if (n) { f = n.file; akey = n.akey; } }
+      if (f) { showPic(new File([f], `${akey}.png`, { type: 'image/png' })); s.akey = akey; fillFromApi(akey); }
+      else preview.replaceChildren(dropHint(akey ? 'Zotero 里没找到这条标注的图片——只有「选择区域」(⌥5) 画出的框才有图（高亮、文字没有）。可以截图后 ⌘V。' : '在 Zotero 文件夹里没找到刚画的框。请确认：用的是 ⌥5 画的框，并且选的是 Zotero 的数据文件夹（Zotero 设置 › 高级 › 文件和文件夹 › 数据存储位置）。'));
     };
     if (st.state === 'ok') return load();
     preview.replaceChildren(h('div', { class: 'clip-drop-hint' },
       h('p', null, '这是 Zotero 的区域标注。第一次需要允许读取 Zotero 文件夹，之后自动取图：'),
-      h('button', { class: 'btn primary small', type: 'button', onclick: async () => { if (await connectZotero()) load(); } }, st.state === 'none' ? '选择 Zotero 文件夹（个人文件夹 › Zotero）' : '允许读取 Zotero 文件夹'),
+      h('button', { class: 'btn primary small', type: 'button', onclick: async () => { if (await connectZotero()) load(); } }, st.state === 'none' ? '选择 Zotero 数据文件夹' : '允许读取 Zotero 文件夹'),
+      st.state === 'none' ? h('p', { class: 'muted small' }, '就是 Zotero 设置 › 高级 › 文件和文件夹 › 「数据存储位置」写的那个文件夹（里面有 zotero.sqlite）。') : null,
       h('p', { class: 'muted small' }, '只读，不会改动 Zotero 里的任何东西。')));
   }
   const title = h('input', { id: 'cl-title', value: x.title || '', placeholder: x.kind === 'img' ? '一句话说明，例如：垂直 OECT 截面结构' : '例如：Template 框线粗细' });
@@ -415,14 +499,33 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
   const srcWarn = h('p', { class: 'clip-warn', hidden: true });
   const drawInfo = () => {
     const r = s.ref;
-    srcInfo.textContent = [r ? `✓ ${[String(r.authors || '').split(/[ ,]/)[0], r.year, r.journal].filter(Boolean).join(' ')}${r.title ? `：${r.title.slice(0, 70)}` : ''}` : s.cite ? `✓ ${s.cite}` : '', s.zotero ? '✓ Zotero 链接' : '', s.caption ? `“${s.caption.slice(0, 60)}”` : ''].filter(Boolean).join(' · ');
+    srcInfo.textContent = [r ? `✓ ${[String(r.authors || '').split(/[ ,]/)[0], r.year, r.journal].filter(Boolean).join(' ')}${r.title ? `：${r.title.slice(0, 70)}` : ''}` : s.cite ? `✓ ${s.cite}` : '', s.zotero ? '✓ Zotero 链接' : '', s.plabel ? `p. ${s.plabel}` : '', s.caption ? `“${s.caption.slice(0, 60)}”` : ''].filter(Boolean).join(' · ');
   };
+  // Fills title, DOI, PDF page and the Zotero link from the web API (if connected).
+  const apiInfo = h('p', { class: 'muted small' });
+  async function fillFromApi(akey) {
+    s.akey = akey;
+    if (!zoteroApi()) { apiInfo.replaceChildren('想自动补全题目、DOI 和「在 Zotero 打开」链接？', h('button', { class: 'btn small ghost', type: 'button', onclick: () => connectZoteroApi(() => fillFromApi(akey)) }, '连接 Zotero 账号（一次）')); return; }
+    apiInfo.textContent = '正在向 Zotero 查这篇文章…';
+    const r = await resolveAnnotation(akey).catch(() => null);
+    if (!r) { apiInfo.textContent = 'Zotero 还没同步这个框（通常 1 分钟内）。先保存也行，之后打开素材库会自动补全出处。'; return; }
+    apiInfo.textContent = '';
+    s.zotero = r.zotero; zbox.value = r.zotero; srcWarn.hidden = true;
+    if (r.page) page.value = r.page;
+    if (r.plabel) s.plabel = r.plabel;
+    if (r.ref) { s.ref = r.ref; if (r.ref.doi) doi.value = r.ref.doi; }
+    const m = matchTask(reading, { ...s, doi: doi.value });
+    if (m && !tsel.value) tsel.value = m.id;
+    drawInfo();
+  }
   const absorb = (t, html = '') => {
     const z = parseZotero(t, html);
     if (!Object.keys(z).length) return false;
     if (z.zotero) { s.zotero = z.zotero; zbox.value = z.zotero; srcWarn.hidden = true; }
     if (z.ref) { s.ref = z.ref; if (z.ref.doi) doi.value = z.ref.doi; }
-    if (z.akey && x.kind === 'img') zoteroPic(z.akey, z.zlib || 'library');
+    if ((z.akey || z.zcopy) && x.kind === 'img') zoteroPic(z.akey || '', z.zlib || 'library', z.ratio);
+    else if (z.akey && !z.ref) fillFromApi(z.akey);
+    if (z.plabel) s.plabel = z.plabel;
     if (z.page) page.value = z.page;
     if (z.fig && !fig.value) fig.value = z.fig;
     if (z.cite) s.cite = z.cite;
@@ -452,7 +555,7 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
     lbl('cl-note', x.kind === 'img' ? '备注' : '内容'), note, hint,
     h('details', { class: 'clip-src-box', open: x.kind === 'img' },
       h('summary', null, '出处（溯源回文献）'),
-      lbl('cl-z', 'Zotero 标注（点选标注 → ⌘C → 粘贴）'), zbox, srcWarn, srcInfo,
+      lbl('cl-z', 'Zotero 标注（点选标注 → ⌘C → 粘贴）'), zbox, srcWarn, srcInfo, apiInfo,
       h('div', { class: 'pair' }, h('div', null, lbl('cl-fig', '图号'), fig), h('div', null, lbl('cl-page', 'PDF 页码'), page)),
       lbl('cl-task', '对应「文献待读」里的哪篇'), tsel,
       lbl('cl-doi', 'DOI'), doi));
@@ -504,6 +607,29 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
     },
   }] });
   setTimeout(() => title.focus(), 60);
+}
+
+// Clips saved before Zotero synced the box get their article and link filled in later, in one commit.
+let completing = false;
+async function completeSources(clips) {
+  const todo = clips.filter((c) => c.src?.akey && !c.src.zotero);
+  if (completing || !todo.length || !zoteroApi()) return;
+  completing = true;
+  try {
+    const done = [];
+    for (const c of todo.slice(0, 12)) {
+      const r = await resolveAnnotation(c.src.akey).catch(() => null);
+      if (!r) continue;
+      const src = { ...c.src, zotero: r.zotero, ...(r.page ? { page: r.page } : {}), ...(r.plabel ? { plabel: r.plabel } : {}), ...(r.ref ? { ref: r.ref, doi: r.ref.doi || c.src.doi } : {}) };
+      if (!src.doi) delete src.doi;
+      done.push({ ...c, src, updated: nowISO() });
+    }
+    if (done.length) {
+      await lib.commit(`Clips: sources from Zotero (${done.length})`, async () => ({ changes: done.map((c) => ({ path: clipPath(c.id), data: `${JSON.stringify(c, null, 1)}\n` })) }));
+      toast(`已从 Zotero 补全 ${done.length} 张图的出处。`);
+      if (view.kind === 'clips') route({ quiet: true });
+    }
+  } finally { completing = false; }
 }
 
 // For the reading list: how many clips each entry has.

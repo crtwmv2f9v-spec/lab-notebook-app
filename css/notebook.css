@@ -1966,3 +1966,4 @@ a.m-paper:hover { text-decoration: underline; }
 .clip-wrap .search-row input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
 .clip-drop-hint { text-align: center; padding: 6px 10px; } .clip-drop-hint p { margin: 4px 0; }
 .clip-warn { margin: 4px 0; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, #ff9500 16%, transparent); color: var(--card-ink); font: 500 13px/1.45 var(--font-ui); }
+.za-steps { margin: 4px 0 6px 1.2em; padding: 0; } .za-steps li { margin: 4px 0; line-height: 1.5; }

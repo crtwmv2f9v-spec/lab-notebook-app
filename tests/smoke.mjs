@@ -197,7 +197,9 @@ try {
     const r = await evaluate(`const m = await import('./js/clips.js'); const z = m.parseZotero('“Figure 2b. Device.” ([Liu et al., 2024, p. 5](zotero://select/library/items/AB12)) ([pdf](zotero://open-pdf/library/items/CD34?page=5))');
       const ann = { attachmentURI: 'http://zotero.org/users/local/x/items/ATT11111', annotationKey: 'ANN22222', position: { pageIndex: 6 }, citationItem: { uris: ['http://zotero.org/users/local/x/items/PAR33333'], itemData: { title: 'Vertical OECTs', author: [{ family: 'Huang' }], 'container-title': 'Nature', issued: { 'date-parts': [[2023]] }, DOI: '10.1038/x1' } } };
       const zh = m.parseZotero('[image]', '<p><img data-attachment-key="none" data-annotation="' + encodeURIComponent(JSON.stringify(ann)) + '"></p>');
-      return { tiles: document.querySelectorAll('.clip-tile').length, hint: m.unitHints('框线 0.5 pt'), z, zh, cats: document.querySelectorAll('.clip-cat').length };`);
+      const zo = m.parseZotero('<html><body><div class="zotero-notes"><div class="zotero-note"><p><img data-attachment-key="none" width="609" height="709"><br><span class="citation">(<span class="citation-item">Wang 等, 2025, p. 19002</span>)</span></p></div></div></body></html>');
+      return { tiles: document.querySelectorAll('.clip-tile').length, hint: m.unitHints('框线 0.5 pt'), z, zh, zo, cats: document.querySelectorAll('.clip-cat').length };`);
+    if (!r.zo.zcopy || !r.zo.image || r.zo.plabel !== '19002' || r.zo.page || r.zo.cite !== 'Wang 等 2025' || Math.abs(r.zo.ratio - 609 / 709) > 1e-6) throw new Error('obsidian format ' + JSON.stringify(r.zo));
     if (zh_bad(r.zh)) throw new Error('html ' + JSON.stringify(r.zh));
     if (r.z.page !== '5' || r.z.fig !== 'Fig. 2b' || !/open-pdf/.test(r.z.zotero) || r.z.cite !== 'Liu et al. 2024' || !r.hint.includes('0.18 mm')) throw new Error(JSON.stringify(r));
     await evaluate(clean); await shot('clips');
