@@ -191,10 +191,14 @@ try {
     await evaluate("history.back(); return 1;");
   });
   await check('reagents', async () => { await go('#/lib/reagents', "document.querySelectorAll('.lib-table tbody tr').length > 0"); await evaluate(clean); await shot('reagents'); });
+  const zh_bad = (z) => z.akey !== 'ANN22222' || z.page !== '7' || z.ref?.doi !== '10.1038/x1' || z.zotero !== 'zotero://open-pdf/library/items/ATT11111?page=7&annotation=ANN22222' || !z.image;
   await check('clips', async () => {
     await go('#/clips', "document.querySelectorAll('.clip-tile').length >= 2");
     const r = await evaluate(`const m = await import('./js/clips.js'); const z = m.parseZotero('“Figure 2b. Device.” ([Liu et al., 2024, p. 5](zotero://select/library/items/AB12)) ([pdf](zotero://open-pdf/library/items/CD34?page=5))');
-      return { tiles: document.querySelectorAll('.clip-tile').length, hint: m.unitHints('框线 0.5 pt'), z, cats: document.querySelectorAll('.clip-cat').length };`);
+      const ann = { attachmentURI: 'http://zotero.org/users/local/x/items/ATT11111', annotationKey: 'ANN22222', position: { pageIndex: 6 }, citationItem: { uris: ['http://zotero.org/users/local/x/items/PAR33333'], itemData: { title: 'Vertical OECTs', author: [{ family: 'Huang' }], 'container-title': 'Nature', issued: { 'date-parts': [[2023]] }, DOI: '10.1038/x1' } } };
+      const zh = m.parseZotero('[image]', '<p><img data-attachment-key="none" data-annotation="' + encodeURIComponent(JSON.stringify(ann)) + '"></p>');
+      return { tiles: document.querySelectorAll('.clip-tile').length, hint: m.unitHints('框线 0.5 pt'), z, zh, cats: document.querySelectorAll('.clip-cat').length };`);
+    if (zh_bad(r.zh)) throw new Error('html ' + JSON.stringify(r.zh));
     if (r.z.page !== '5' || r.z.fig !== 'Fig. 2b' || !/open-pdf/.test(r.z.zotero) || r.z.cite !== 'Liu et al. 2024' || !r.hint.includes('0.18 mm')) throw new Error(JSON.stringify(r));
     await evaluate(clean); await shot('clips');
     return `${r.tiles} clips, ${r.cats} categories`;

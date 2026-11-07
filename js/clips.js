@@ -85,9 +85,26 @@ async function imageBlob(name) {
 const safe = (s) => String(s || '').replace(/[\\/:*?"<>|\s]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
 
 // ---------- sources ----------
-// Text copied from Zotero's PDF reader carries its links, e.g.
-//   “Figure 3. …” ([Liu et al., 2024, p. 5](zotero://select/library/items/AB12CD34)) ([pdf](zotero://open-pdf/library/items/EF56GH78?page=5&annotation=…))
-export function parseZotero(text) {
+// What Zotero (7–10) puts on the clipboard, checked in its source (reader.js, Note Markdown translator):
+//  - copying SELECTED TEXT in the PDF: plain text only, no link;
+//  - copying an ANNOTATION (highlight, or an area box made with 「选择区域」): Markdown with links, e.g.
+//      [image] ([Huang et al., 2023, p. 4](zotero://select/library/items/QWER1234)) ([pdf](zotero://open-pdf/library/items/ZXCV5678?page=4&annotation=AAAA1111))
+//    plus HTML whose data-annotation / data-citation attributes carry the article (title, authors, journal, year, DOI).
+//  - an area annotation's picture is kept at <Zotero data folder>/cache/library/<annotation key>.png
+const jsonAttr = (html, sel, attr) => {
+  try {
+    const el = new DOMParser().parseFromString(html, 'text/html').querySelector(sel);
+    return el ? JSON.parse(decodeURIComponent(el.getAttribute(attr))) : null;
+  } catch { return null; }
+};
+const cslRef = (d) => (d && d.title ? {
+  title: String(d.title).replace(/<[^>]+>/g, '').trim(),
+  authors: ((n) => (n.length > 2 ? `${n[0]} et al.` : n.join(', ')))((d.author || []).map((x) => x.family || x.literal || '').filter(Boolean)),
+  journal: d['container-title-short'] || d['journal-abbreviation'] || d['container-title'] || '',
+  year: String(d.issued?.['date-parts']?.[0]?.[0] || ''),
+  doi: d.DOI || '',
+} : null);
+export function parseZotero(text, html = '') {
   const t = String(text || '');
   const out = {};
   const pdf = t.match(/zotero:\/\/open-pdf\/[^\s)\]"'>]+/);
@@ -96,14 +113,75 @@ export function parseZotero(text) {
   if (sel) out.zselect = sel[0];
   const pg = (pdf && pdf[0].match(/[?&]page=(\d+)/)) || t.match(/\bp\.\s*(\d+)/);
   if (pg) out.page = pg[1];
-  const cite = t.match(/\(\[?([A-Z][^()[\]]*?(?:et al\.)?),\s*((?:19|20)\d{2})/) || t.match(/\b([A-Z][A-Za-z'-]+(?: et al\.| and [A-Z][A-Za-z'-]+)?),?\s+((?:19|20)\d{2})\b/);
+  const ak = pdf && pdf[0].match(/[?&]annotation=([A-Z0-9]{8})/);
+  if (ak) out.akey = ak[1];
+  const lb = pdf && pdf[0].match(/open-pdf\/(library|groups\/\d+)\//);
+  if (lb) out.zlib = lb[1];
+  const cite = t.match(/\(\[?([^()[\]\n]+?),\s*((?:19|20)\d{2})/) || t.match(/\b([A-Z][A-Za-z'-]+(?: et al\.| and [A-Z][A-Za-z'-]+)?),?\s+((?:19|20)\d{2})\b/);
   if (cite) out.cite = `${cite[1].trim()} ${cite[2]}`;
   const fig = t.match(/\b(?:Fig(?:ure)?\.?|Scheme|Table)\s*S?\d+[a-z]?(?:[,–-]\s*[a-z])?/i);
   if (fig) out.fig = fig[0].replace(/^Figure/i, 'Fig.').replace(/^Fig\s/i, 'Fig. ');
   const quote = t.match(/[“"]([^”"]{4,})[”"]/);
   if (quote) out.caption = quote[1].trim();
   const doi = paperKey(t)?.doi; if (doi) out.doi = doi;
+  if (/\[image\]/.test(t)) out.image = true;
+  if (html && /data-annotation|data-citation/.test(html)) {
+    const ann = jsonAttr(html, '[data-annotation]', 'data-annotation');
+    if (ann) {
+      if (/<img\b[^>]*data-annotation/.test(html)) out.image = true;
+      if (ann.annotationKey) out.akey = ann.annotationKey;
+      const m = String(ann.attachmentURI || ann.uri || '').match(/\/(users|groups)\/(?:local\/)?(\w+)\/items\/(\w+)$/);
+      const pi = ann.position?.pageIndex;
+      if (m) {
+        out.zlib = m[1] === 'users' ? 'library' : `groups/${m[2]}`;
+        if (!out.zotero || !/open-pdf/.test(out.zotero)) out.zotero = `zotero://open-pdf/${out.zlib}/items/${m[3]}${Number.isInteger(pi) ? `?page=${pi + 1}` : ''}${out.akey ? `${Number.isInteger(pi) ? '&' : '?'}annotation=${out.akey}` : ''}`;
+      }
+      if (Number.isInteger(pi) && !out.page) out.page = String(pi + 1);
+      const ci = ann.citationItem;
+      const ref = cslRef(ci?.itemData);
+      if (ref) { out.ref = ref; if (ref.doi) out.doi = ref.doi; }
+    }
+    if (!out.ref) { const c = jsonAttr(html, '[data-citation]', 'data-citation'); const ref = cslRef(c?.citationItems?.[0]?.itemData); if (ref) { out.ref = ref; if (ref.doi) out.doi = ref.doi; } }
+  }
   return out;
+}
+
+// ---------- the Zotero data folder (read only): pictures of area annotations ----------
+const ZKEY = 'zotero-dir';
+let zdirCache = null;
+export async function zoteroState() {
+  if (zdirCache) return { state: 'ok', dir: zdirCache };
+  if (DEMO || !('showDirectoryPicker' in window)) return { state: 'unsupported' };
+  const d = await kv.get(ZKEY).catch(() => null);
+  if (!d) return { state: 'none' };
+  const p = await d.queryPermission({ mode: 'read' }).catch(() => 'prompt');
+  if (p === 'granted') { zdirCache = d; return { state: 'ok', dir: d }; }
+  return { state: 'ask', dir: d };
+}
+export async function connectZotero() {
+  let d = await kv.get(ZKEY).catch(() => null);
+  if (d) { if ((await d.requestPermission({ mode: 'read' }).catch(() => 'denied')) === 'granted') { zdirCache = d; return d; } d = null; }
+  try { d = await window.showDirectoryPicker({ id: 'zotero-data', mode: 'read' }); } catch { return null; }
+  const has = async (n) => { try { await d.getFileHandle(n); return true; } catch { try { await d.getDirectoryHandle(n); return true; } catch { return false; } } };
+  if (!(await has('zotero.sqlite')) && !(await has('cache'))) { toast('这不是 Zotero 数据文件夹：请选“个人文件夹 › Zotero”（里面有 zotero.sqlite）。'); return null; }
+  await kv.set(ZKEY, d);
+  zdirCache = d;
+  return d;
+}
+// Tests stand in a folder from the browser's private storage.
+export const useZoteroDirForTest = (d) => { zdirCache = d; };
+// Zotero writes the picture a moment after the box is drawn, so look a few times.
+async function zoteroImage(akey, zlib = 'library') {
+  const st = await zoteroState();
+  if (st.state !== 'ok' || !akey) return null;
+  for (let i = 0; i < 6; i++) {
+    try {
+      let dir = await st.dir.getDirectoryHandle('cache');
+      for (const part of zlib.split('/')) dir = await dir.getDirectoryHandle(part);
+      return await (await dir.getFileHandle(`${akey}.png`)).getFile();
+    } catch { await new Promise((r) => setTimeout(r, 700)); }
+  }
+  return null;
 }
 // zotero://open-pdf with the page the figure is on.
 export function zoteroHref(src) {
@@ -158,7 +236,7 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
       .sort((a, b) => String(b.created).localeCompare(String(a.created)));
     grid.replaceChildren(...(hit.length ? hit.map((c) => clipTile(c, fs)) : [h('div', { class: 'tile clip-empty' },
       h('p', null, clips.length ? '这里没有符合条件的素材。' : '素材库还是空的。'),
-      h('p', { class: 'muted' }, '在 Zotero 里截图（⌃⇧⌘4 截到剪贴板），回到这里按 ⌘V；或点“记一条文字”记下 template 框线、作图参数这类杂项。'))]));
+      h('p', { class: 'muted' }, '在 Zotero 的 PDF 里按 ⌥5（选择区域）框住一张图 → ⌘C → 回到这里按 ⌘V，图片和出处一起进来。也可以点“记一条文字”记下 template 框线、作图参数这类杂项。'))]));
   };
   q.addEventListener('input', draw);
   draw();
@@ -178,9 +256,12 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
     if (e.target.closest?.('input, textarea, [contenteditable="true"]')) return;
     const img = [...(e.clipboardData?.files || [])].find((f) => f.type.startsWith('image/'));
     const text = e.clipboardData?.getData('text/plain') || '';
+    const html = e.clipboardData?.getData('text/html') || '';
     if (!img && !text.trim()) return;
     e.preventDefault();
-    editClip(null, { image: img || null, text: img ? '' : text, cat: realCat(cat), task: paper });
+    if (img) return editClip(null, { image: img, cat: realCat(cat), task: paper });
+    if (/zotero:\/\/|data-annotation/.test(text + html)) return editClip(null, { text, html, cat: realCat(cat), task: paper });
+    editClip(null, { kind: 'note', noteText: text.trim(), cat: realCat(cat) });
   };
   document.removeEventListener('paste', window.__clipPaste || (() => {}));
   window.__clipPaste = onPaste;
@@ -188,7 +269,7 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
   const title = pTask ? `素材库 · ${pTask.ref ? (pTask.keys || paperKeywords(pTask.ref.title)) : pTask.text}` : cat === ALL ? '素材库' : cat === UNSORTED ? '素材库 · 未分类' : `素材库 · ${cat}`;
   return h('div', { class: 'view clips' },
     topbar({ back: cat !== ALL || paper ? '#/clips' : '#/', backLabel: cat !== ALL || paper ? '素材库' : '首页', title,
-      sub: `${clips.filter((c) => c.kind === 'img').length} 张图 · ${clips.filter((c) => c.kind !== 'img').length} 条文字 · 在 Zotero 截图后按 ⌘V`,
+      sub: `${clips.filter((c) => c.kind === 'img').length} 张图 · ${clips.filter((c) => c.kind !== 'img').length} 条文字 · Zotero 里 ⌥5 框图 → ⌘C → 这里 ⌘V`,
       actions: [
         fs.state === 'ok' && !DEMO ? h('button', { class: 'btn ghost', type: 'button', title: '换一个存图片的文件夹', onclick: async () => { if (await connectFolder({ pickNew: true })) { urlCache.clear(); route({ quiet: true }); } } }, h('span', { class: 'wide-only' }, '图片文件夹')) : null,
         h('button', { class: 'btn', type: 'button', onclick: () => editClip(null, { kind: 'note', cat: realCat(cat) }) }, icon('note', 18), h('span', null, '记一条文字')),
@@ -267,7 +348,7 @@ async function deleteClip(c) {
 // ---------- add / edit ----------
 const LAST_SRC = 'labnote-clip-src';
 const lastSrc = () => { try { return JSON.parse(localStorage.getItem(LAST_SRC) || 'null'); } catch { return null; } };
-export async function editClip(c, { image = null, text = '', kind = 'img', cat = '', task = '' } = {}) {
+export async function editClip(c, { image = null, text = '', html = '', noteText = '', kind = 'img', cat = '', task = '' } = {}) {
   const isNew = !c;
   const x = c ? structuredClone(c) : { kind: image ? 'img' : kind, cats: cat ? [cat] : [], src: {} };
   const [all, reading] = await Promise.all([loadClips(), readingList()]);
@@ -281,7 +362,30 @@ export async function editClip(c, { image = null, text = '', kind = 'img', cat =
   if (x.kind === 'img') {
     if (pic) showPic(pic);
     else if (x.file) imageUrl(x.file).then((u) => preview.replaceChildren(u ? h('img', { src: u, alt: '' }) : h('span', { class: 'muted' }, x.file)));
-    else preview.append(h('span', { class: 'muted' }, '在这里按 ⌘V 粘贴截图，或把图片拖进来'));
+    else preview.append(dropHint());
+  }
+  function dropHint(msg) {
+    return h('div', { class: 'clip-drop-hint' },
+      msg ? h('p', { class: 'clip-warn' }, msg) : null,
+      h('p', null, h('b', null, '最简单：'), '在 Zotero 按 ⌥5（选择区域）框住这张图 → ⌘C → 在这里 ⌘V，图片和出处一起进来'),
+      h('p', { class: 'muted small' }, '或者截图后 ⌘V，或把图片拖进来。'));
+  }
+  // An area annotation copied from Zotero: fetch its picture from the Zotero folder.
+  async function zoteroPic(akey, zlib) {
+    if (pic || x.file) return;
+    let st = await zoteroState();
+    if (st.state === 'unsupported') return;
+    const load = async () => {
+      preview.replaceChildren(h('span', { class: 'muted' }, '正在从 Zotero 取图…'));
+      const f = await zoteroImage(akey, zlib);
+      if (f) showPic(new File([f], `${akey}.png`, { type: 'image/png' }));
+      else preview.replaceChildren(dropHint('Zotero 里没找到这条标注的图片——只有「选择区域」画出的框才有图（高亮、文字没有）。可以截图后 ⌘V。'));
+    };
+    if (st.state === 'ok') return load();
+    preview.replaceChildren(h('div', { class: 'clip-drop-hint' },
+      h('p', null, '这是 Zotero 的区域标注。第一次需要允许读取 Zotero 文件夹，之后自动取图：'),
+      h('button', { class: 'btn primary small', type: 'button', onclick: async () => { if (await connectZotero()) load(); } }, st.state === 'none' ? '选择 Zotero 文件夹（个人文件夹 › Zotero）' : '允许读取 Zotero 文件夹'),
+      h('p', { class: 'muted small' }, '只读，不会改动 Zotero 里的任何东西。')));
   }
   const title = h('input', { id: 'cl-title', value: x.title || '', placeholder: x.kind === 'img' ? '一句话说明，例如：垂直 OECT 截面结构' : '例如：Template 框线粗细' });
   // categories: chips of existing ones (click to toggle) + a free box for new ones
@@ -294,7 +398,7 @@ export async function editClip(c, { image = null, text = '', kind = 'img', cat =
   newCat.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addCats(); } });
   newCat.addEventListener('blur', addCats);
   drawChips();
-  const note = h('textarea', { id: 'cl-note', rows: x.kind === 'img' ? 3 : 6, placeholder: x.kind === 'img' ? '可选：为什么存这张，打算怎么用' : '例如：Nature 模板：框线 0.5 pt，坐标字号 7 pt，图宽单栏 89 mm / 双栏 183 mm' }, x.note || '');
+  const note = h('textarea', { id: 'cl-note', rows: x.kind === 'img' ? 3 : 6, placeholder: x.kind === 'img' ? '可选：为什么存这张，打算怎么用' : '例如：Nature 模板：框线 0.5 pt，坐标字号 7 pt，图宽单栏 89 mm / 双栏 183 mm' }, x.note || noteText || '');
   const hint = h('p', { class: 'muted small clip-hint' });
   const drawHint = () => { const t = unitHints(note.value); hint.textContent = t !== note.value ? `换算：${(t.match(/\d+(?:\.\d+)?\s*(?:pt|mm)（≈[^）]+）/g) || []).join('；')}` : ''; };
   note.addEventListener('input', drawHint); drawHint();
@@ -302,17 +406,23 @@ export async function editClip(c, { image = null, text = '', kind = 'img', cat =
   const s = { ...(x.src || {}) };
   if (isNew && !text) { const l = lastSrc(); if (l && Date.now() - (l.at || 0) < 6 * 3600e3) Object.assign(s, { ...l.src, fig: '', page: '', caption: '' }); }
   if (isNew && task) s.task = task;
-  const zbox = h('textarea', { id: 'cl-z', rows: 2, class: 'mono-area', placeholder: '在 Zotero PDF 里选中图注（如 “Figure 3.”）→ ⌘C → 粘贴到这里；自动认出文章、页码、Fig. 号和 Zotero 链接' }, s.zotero || '');
+  const zbox = h('textarea', { id: 'cl-z', rows: 2, class: 'mono-area', placeholder: '在 Zotero 里点选这张图的标注（框或高亮）→ ⌘C → 粘贴到这里' }, s.zotero || '');
   const fig = h('input', { id: 'cl-fig', value: s.fig || '', placeholder: 'Fig. 3b' });
   const page = h('input', { id: 'cl-page', value: s.page || '', placeholder: '5', inputmode: 'numeric' });
   const doi = h('input', { id: 'cl-doi', value: s.ref?.doi || s.doi || '', placeholder: 'DOI 或文章链接（可选，用来查题目和期刊）' });
   const tsel = h('select', { id: 'cl-task' }, h('option', { value: '' }, '（不关联）'), reading.map((t) => h('option', { value: t.id, selected: t.id === s.task }, `${t.done ? '✓ ' : ''}${taskLabel(t)}`)));
   const srcInfo = h('p', { class: 'muted small' });
-  const drawInfo = () => { srcInfo.textContent = [s.cite || (s.ref ? srcLine({ ref: s.ref }) : ''), s.caption ? `“${s.caption.slice(0, 60)}”` : ''].filter(Boolean).join(' · '); };
-  const absorb = (t) => {
-    const z = parseZotero(t);
+  const srcWarn = h('p', { class: 'clip-warn', hidden: true });
+  const drawInfo = () => {
+    const r = s.ref;
+    srcInfo.textContent = [r ? `✓ ${[String(r.authors || '').split(/[ ,]/)[0], r.year, r.journal].filter(Boolean).join(' ')}${r.title ? `：${r.title.slice(0, 70)}` : ''}` : s.cite ? `✓ ${s.cite}` : '', s.zotero ? '✓ Zotero 链接' : '', s.caption ? `“${s.caption.slice(0, 60)}”` : ''].filter(Boolean).join(' · ');
+  };
+  const absorb = (t, html = '') => {
+    const z = parseZotero(t, html);
     if (!Object.keys(z).length) return false;
-    if (z.zotero) { s.zotero = z.zotero; zbox.value = z.zotero; }
+    if (z.zotero) { s.zotero = z.zotero; zbox.value = z.zotero; srcWarn.hidden = true; }
+    if (z.ref) { s.ref = z.ref; if (z.ref.doi) doi.value = z.ref.doi; }
+    if (z.akey && x.kind === 'img') zoteroPic(z.akey, z.zlib || 'library');
     if (z.page) page.value = z.page;
     if (z.fig && !fig.value) fig.value = z.fig;
     if (z.cite) s.cite = z.cite;
@@ -323,10 +433,16 @@ export async function editClip(c, { image = null, text = '', kind = 'img', cat =
     drawInfo();
     return true;
   };
-  zbox.addEventListener('paste', (e) => { const t = e.clipboardData?.getData('text/plain') || ''; if (t && absorb(t)) e.preventDefault(); });
-  zbox.addEventListener('change', () => absorb(zbox.value));
+  // Only a Zotero link replaces what is in the box; any other text is pasted as it is (and kept as the caption).
+  const NO_LINK = '这段文字里没有 Zotero 链接：在 Zotero 里复制“选中的文字”时，Zotero 不附带链接。请改为点选那条标注（框或高亮）再 ⌘C。';
+  zbox.addEventListener('paste', (e) => {
+    const t = e.clipboardData?.getData('text/plain') || ''; const hm = e.clipboardData?.getData('text/html') || '';
+    if (/zotero:\/\/|data-annotation/.test(t + hm)) { e.preventDefault(); absorb(t, hm); return; }
+    if (t.trim()) { srcWarn.textContent = NO_LINK; srcWarn.hidden = false; const z = parseZotero(t); if (z.fig && !fig.value) fig.value = z.fig; if (!s.caption) s.caption = t.trim().slice(0, 200); drawInfo(); }
+  });
+  zbox.addEventListener('change', () => { if (/zotero:\/\//.test(zbox.value)) absorb(zbox.value); });
   tsel.addEventListener('change', () => { const t = reading.find((y) => y.id === tsel.value); if (t?.ref?.doi) doi.value = t.ref.doi; });
-  if (text) absorb(text);
+  if (text || html) absorb(text, html);
   drawInfo();
   const lbl = (f, t) => h('label', { for: f }, t);
   const form = h('div', { class: 'form clip-form' },
@@ -336,7 +452,7 @@ export async function editClip(c, { image = null, text = '', kind = 'img', cat =
     lbl('cl-note', x.kind === 'img' ? '备注' : '内容'), note, hint,
     h('details', { class: 'clip-src-box', open: x.kind === 'img' },
       h('summary', null, '出处（溯源回文献）'),
-      lbl('cl-z', 'Zotero 链接 / 从 Zotero 复制的图注'), zbox, srcInfo,
+      lbl('cl-z', 'Zotero 标注（点选标注 → ⌘C → 粘贴）'), zbox, srcWarn, srcInfo,
       h('div', { class: 'pair' }, h('div', null, lbl('cl-fig', '图号'), fig), h('div', null, lbl('cl-page', 'PDF 页码'), page)),
       lbl('cl-task', '对应「文献待读」里的哪篇'), tsel,
       lbl('cl-doi', 'DOI'), doi));
@@ -345,8 +461,8 @@ export async function editClip(c, { image = null, text = '', kind = 'img', cat =
     if (e.defaultPrevented) return;
     const f = [...(e.clipboardData?.files || [])].find((y) => y.type.startsWith('image/'));
     if (f) { e.preventDefault(); showPic(f); return; }
-    const t = e.clipboardData?.getData('text/plain') || '';
-    if (/zotero:\/\//.test(t) && e.target !== note && e.target !== title) { e.preventDefault(); absorb(t); }
+    const t = e.clipboardData?.getData('text/plain') || ''; const hm = e.clipboardData?.getData('text/html') || '';
+    if (/zotero:\/\/|data-annotation/.test(t + hm) && e.target !== note && e.target !== title) { e.preventDefault(); absorb(t, hm); }
   };
   document.addEventListener('paste', onP);
   form.addEventListener('dragover', (e) => e.preventDefault());
@@ -356,7 +472,8 @@ export async function editClip(c, { image = null, text = '', kind = 'img', cat =
       addCats();
       if (x.kind === 'img' && !pic && !x.file) { toast('先粘贴一张图（⌘V）。'); return false; }
       if (x.kind !== 'img' && !note.value.trim() && !title.value.trim()) { toast('写点内容。'); return false; }
-      const src = { ...s, zotero: zbox.value.trim() && /^zotero:/.test(zbox.value.trim()) ? zbox.value.trim() : s.zotero || '', fig: fig.value.trim(), page: page.value.trim().replace(/\D/g, ''), task: tsel.value };
+      const zv = zbox.value.trim();
+      const src = { ...s, zotero: /^zotero:\/\//.test(zv) ? zv : '', caption: s.caption || (zv && !/^zotero:/.test(zv) ? zv.slice(0, 200) : ''), fig: fig.value.trim(), page: page.value.trim().replace(/\D/g, ''), task: tsel.value };
       const d = doi.value.trim(); const key = paperKey(d)?.doi || '';
       if (key && key.toLowerCase() !== String(src.ref?.doi || '').toLowerCase()) {
         const t = reading.find((y) => y.id === src.task);
