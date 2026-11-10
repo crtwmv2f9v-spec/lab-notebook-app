@@ -10,6 +10,7 @@ import { choose, demoBanner, downloadText, field, lib, modal, saveError, show, t
 import { hero, redrawHome, uid, cardHead, foldList } from './home.js';
 import { toggleFollowup } from './pages.js';
 import { route } from './app.js';
+import { weekBoard } from './weekboard.js';
 
 // ----- projects (课题): one list from a first idea to a finished grant; kept with the planner -----
 // Mark a project as reviewed: one line of current thinking, then the next review is scheduled.
@@ -299,49 +300,34 @@ export function editPaper(p) {
 export async function viewPlan(param) {
   const t = todayISO();
   const wk = weekStart(/^\d{4}-\d{2}-\d{2}$/.test(param || '') ? param : t);
-  const body = h('div', { class: 'plan-body' });
+  const hooks = new Set();
+  const redraw = () => hooks.forEach((f) => f());
+  const stats = h('div', { class: 'plan-stats' });
+  const hist = h('div');
   const draw = async () => {
     const tasks = await loadTasks();
     const goals = tasks.filter((x) => isGoal(x, wk));
-    const dayCols = WEEKDAYS.map((w, k) => {
-      const day = addDays(wk, k);
-      const list = tasks.filter((x) => x.date === day).sort((a, b) => Number(a.done) - Number(b.done));
-      const dn = list.filter((x) => x.done).length;
-      const add = addBox('添加', (text) => changeTasks((l) => l.push(newTask(text, wk, day)), 'Planner: add to-do', draw));
-      add.querySelector('input').dataset.k = day;
-      return h('div', { class: `tile day-col${day === t ? ' is-today' : ''}` },
-        h('div', { class: 'dc-head' }, h('span', { class: 'dc-w' }, `周${w}`), h('span', { class: 'dc-d' }, day.slice(5)), h('span', { class: 'dc-n' }, list.length ? `${dn}/${list.length}` : '')),
-        h('ul', { class: 'tasks' }, list.map((x) => taskRow(x, { redraw: draw }))), add);
-    });
     const allDay = tasks.filter((x) => x.week === wk && x.date);
     const gd = goals.filter((x) => x.done).length; const dd = allDay.filter((x) => x.done).length;
-    const goalAdd = addBox('添加本周计划', (text) => changeTasks((l) => l.push(newTask(text, wk)), 'Planner: add weekly goal', draw));
-    goalAdd.querySelector('input').dataset.k = 'goal';
+    stats.replaceChildren(
+      h('div', { class: 'tile stat' }, ring(gd, goals.length, 56), h('div', null, h('b', null, `${gd} / ${goals.length}`), h('span', null, '本周计划（待安排）完成'))),
+      h('div', { class: 'tile stat' }, ring(dd, allDay.length, 56), h('div', null, h('b', null, `${dd} / ${allDay.length}`), h('span', null, '每日待办完成'))),
+      h('div', { class: 'tile stat' }, h('div', null, h('b', null, `${goals.length - gd + allDay.length - dd}`), h('span', null, '尚未完成'))));
     const weeks = [...new Set(tasks.map((x) => x.week))].filter((w) => w < wk).sort().reverse().slice(0, 12);
-    const focused = body.querySelector('input:focus')?.dataset.k;
-    body.replaceChildren(...[
-      h('div', { class: 'plan-stats' },
-        h('div', { class: 'tile stat' }, ring(gd, goals.length, 56), h('div', null, h('b', null, `${gd} / ${goals.length}`), h('span', null, '本周计划完成'))),
-        h('div', { class: 'tile stat' }, ring(dd, allDay.length, 56), h('div', null, h('b', null, `${dd} / ${allDay.length}`), h('span', null, '每日待办完成'))),
-        h('div', { class: 'tile stat' }, h('div', null, h('b', null, `${goals.length - gd + allDay.length - dd}`), h('span', null, '尚未完成')))),
-      h('h2', { class: 'section-title' }, '本周计划'),
-      h('div', { class: 'tile' }, goalAdd, h('ul', { class: 'tasks' }, goals.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: draw })))),
-      h('h2', { class: 'section-title' }, '每日待办'),
-      h('div', { class: 'day-grid' }, dayCols),
-      weeks.length ? h('h2', { class: 'section-title' }, '往周') : null,
-      weeks.length ? h('div', { class: 'tile' }, h('ul', { class: 'history' }, weeks.map((w) => {
-        const all = tasks.filter((x) => x.week === w && (x.date || !x.cat)); const dn = all.filter((x) => x.done).length;
-        return h('li', null, h('a', { href: `#/plan/${w}` }, h('span', { class: 'hw' }, `${w} 至 ${addDays(w, 6).slice(5)}`),
-          h('span', { class: 'hbar' }, h('span', { style: { width: `${all.length ? (dn / all.length) * 100 : 0}%` } })),
-          h('span', { class: 'hn' }, `${dn} / ${all.length}`)));
-      }))) : null].filter(Boolean));
-    if (focused) body.querySelector(`input[data-k="${focused}"]`)?.focus();
+    hist.replaceChildren(...(weeks.length ? [h('h2', { class: 'section-title' }, '往周'), h('div', { class: 'tile' }, h('ul', { class: 'history' }, weeks.map((w) => {
+      const all = tasks.filter((x) => x.week === w && (x.date || !x.cat)); const dn = all.filter((x) => x.done).length;
+      return h('li', null, h('a', { href: `#/plan/${w}` }, h('span', { class: 'hw' }, `${w} 至 ${addDays(w, 6).slice(5)}`),
+        h('span', { class: 'hbar' }, h('span', { style: { width: `${all.length ? (dn / all.length) * 100 : 0}%` } })),
+        h('span', { class: 'hn' }, `${dn} / ${all.length}`)));
+    })))] : []));
   };
-  await draw().catch((e) => body.replaceChildren(h('p', { class: 'warn' }, e.message)));
+  hooks.add(() => draw().catch((e) => stats.replaceChildren(h('p', { class: 'warn' }, e.message))));
+  await draw().catch((e) => stats.replaceChildren(h('p', { class: 'warn' }, e.message)));
+  const board = weekBoard({ week: wk, standalone: true, hooks, redraw });
   return h('div', { class: 'view plan' },
     topbar({ back: '#/', backLabel: '首页', title: '周计划', sub: `${wk} 至 ${addDays(wk, 6)}`, actions: [
       h('a', { class: 'btn ghost', href: `#/plan/${addDays(wk, -7)}` }, '‹ 上一周'),
       wk !== weekStart(t) ? h('a', { class: 'btn ghost', href: '#/plan' }, '本周') : null,
       h('a', { class: 'btn ghost', href: `#/plan/${addDays(wk, 7)}` }, '下一周 ›')] }),
-    demoBanner(), h('div', { class: 'plan-wrap' }, body));
+    demoBanner(), h('div', { class: 'plan-wrap' }, stats, board, hist));
 }

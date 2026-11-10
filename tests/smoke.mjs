@@ -205,6 +205,30 @@ try {
     await evaluate(clean); await shot('clips');
     return `${r.tiles} clips, ${r.cats} categories`;
   });
+  await check('weekboard', async () => {
+    await go('#/', "document.querySelectorAll('.wb .wb-col').length === 8 && document.querySelector('.wb-col.is-today .wb-card')");
+    const r = await evaluate(`const p = await import('./js/planner.js');
+      const today = document.querySelector('.wb-col.is-today'); const cols = [...document.querySelectorAll('.wb .wb-col[data-day]')];
+      const target = cols.find((c) => c !== today);
+      const ptasks = (await p.loadPlanner()).tasks; const li = [...today.querySelectorAll('.wb-card')].find((e) => { const x = ptasks.find((y) => y.text === e.querySelector('.task-text').textContent); return x && (!x.cat || ['杂事', '生活'].includes(x.cat)); }); const text = li.querySelector('.task-text').textContent;
+      const id = (await p.loadPlanner()).tasks.find((x) => x.text === text).id;
+      const dt = new DataTransfer(); li.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true }));
+      target.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true }));
+      target.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 600));
+      const movedDate = (await p.loadPlanner()).tasks.find((x) => x.id === id).date;
+      const shown = [...document.querySelectorAll('.wb .wb-col[data-day="' + target.dataset.day + '"] .task-text')].some((e) => e.textContent === text);
+      // back to 待安排
+      const plan = document.querySelector('.wb-plan'); const li2 = [...document.querySelectorAll('.wb .wb-card')].find((e) => e.querySelector('.task-text').textContent === text);
+      const dt2 = new DataTransfer(); li2.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt2, bubbles: true }));
+      plan.dispatchEvent(new DragEvent('drop', { dataTransfer: dt2, bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 600));
+      const back = (await p.loadPlanner()).tasks.find((x) => x.id === id);
+      return { to: target.dataset.day, date: movedDate, shown, backDate: back.date || null, inPlan: [...document.querySelectorAll('.wb-plan .task-text')].some((e) => e.textContent === text) };`);
+    if (r.date !== r.to || !r.shown || r.backDate || !r.inPlan) throw new Error(JSON.stringify(r));
+    await evaluate(clean);
+    return `moved to ${r.to}, then back to 待安排`;
+  });
   await check('finds', async () => {
     await go('#/', "document.querySelectorAll('.finds-card .find').length >= 2");
     const r = await evaluate(`const f = await import('./js/finds.js'); const p = await import('./js/planner.js'); const c = await import('./js/core.js'); const lab = await import('./js/lab.js'); const m = await import('./js/model.js');
@@ -230,7 +254,7 @@ try {
   await check('method-card', async () => { await go('#/m/M-0001', "document.querySelectorAll('.m-vers li').length >= 2"); await evaluate(clean); await shot('method-card'); });
   await check('think', async () => { await go('#/think', "document.querySelector('.hyp-card')"); await evaluate(clean); });
   await check('hypothesis', async () => { await go('#/think/H-0001', "document.querySelector('.ev-chain')"); await evaluate(clean); });
-  await check('plan', async () => { await go('#/plan', "document.querySelector('.day-grid')"); await evaluate(clean); await shot('plan'); });
+  await check('plan', async () => { await go('#/plan', "document.querySelectorAll('.wb-page .wb-col').length === 8"); await evaluate(clean); await shot('plan'); });
   await check('series', async () => { await go(`#/series/${encodeURIComponent('PEDOT:PSS 配方优化')}`, "document.querySelector('.series-table tbody tr')"); await evaluate(clean); });
   await check('settings', async () => { await go('#/settings', "document.querySelector('#s-font')"); await evaluate(clean); });
   await check('search', async () => {

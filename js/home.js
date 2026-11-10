@@ -7,6 +7,7 @@ import { h, icon } from './util.js';
 import { S, demoBanner, lib, modal, toast, topbar, view, menu } from './core.js';
 import { clipCounts } from './clips.js';
 import { autoFileFinds, findsCard } from './finds.js';
+import { weekBoard } from './weekboard.js';
 import {
   PAPER_STAGE, WEEKDAYS, addBox, allFollowups, changeTasks, editPaper, editProject, exportIcs,
   editable, isGoal, loadPlanner, memoCard, moveTask, newTask, reminderRow, ring, taskRow,
@@ -125,7 +126,9 @@ export function viewHome() {
   }
 
   homeHooks.clear();
-  const center = h('div', { class: 'home-center' }, hero(), dashboard(), continueCard());
+  // Greeting and today's cards on top, then the week board across the full width, then the rest with the side rails.
+  root.append(h('div', { class: 'home-top' }, hero(), dashboard()), weekBoard({ hooks: homeHooks, redraw: redrawHome }));
+  const center = h('div', { class: 'home-center' }, continueCard());
   center.append(h('h2', { class: 'section-title' }, '记录本', h('span', null, `${vols.length} 卷 · ${lib.allPages().length} 页`)));
   const shelf = h('section', { class: 'shelf', 'aria-label': '卷' });
   for (const v of vols) shelf.append(cover(v));
