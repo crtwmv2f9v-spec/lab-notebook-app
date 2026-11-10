@@ -165,7 +165,7 @@ export function dateChip(t, redraw) {
   const input = h('input', { type: 'date', class: 'date-input', value: t.date || '', 'aria-label': '改日期' });
   input.addEventListener('change', () => moveTask(t.id, input.value || null, redraw));
   const late = t.date && !t.done && t.date < todayISO();
-  return h('label', { class: `date-chip${late ? ' late' : ''}`, title: t.date ? (t.cat ? '改日期（可清空）' : '改日期（清空则变为本周计划）') : '指定到某一天' }, t.date ? dayLabel(t.date) : t.cat ? '无日期' : '本周', input);
+  return h('label', { class: `date-chip${late ? ' late' : ''}`, title: t.date ? (t.cat ? '改日期（可清空）' : '改日期（清空则变为本周计划）') : '指定到某一天' }, t.date ? dayLabel(t.date) : t.cat === '催办' ? '排日期' : t.cat ? '无日期' : '本周', input);
 }
 
 export function ring(done, total, size = 64) {

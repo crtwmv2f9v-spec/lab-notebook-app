@@ -229,6 +229,30 @@ try {
     await evaluate(clean);
     return `moved to ${r.to}, then back to 待安排`;
   });
+  await check('nag-strip', async () => {
+    await go('#/', "document.querySelector('.wb-nag .add-input') && document.querySelector('.wb-col.is-today')");
+    const r = await evaluate(`const p = await import('./js/planner.js'); const m = await import('./js/model.js');
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const before = document.querySelectorAll('.wb-nagcard').length;
+      const ages = [...document.querySelectorAll('.wb-nagcard .wb-age')].map((e) => e.textContent);
+      const hot = !!document.querySelector('.wb-nagcard.hot');
+      const input = document.querySelector('.wb-nag .add-input'); input.value = '测试催办事项';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(500);
+      const x = (await p.loadPlanner()).tasks.find((y) => y.text === '测试催办事项');
+      const find = () => [...document.querySelectorAll('.wb .wb-card')].find((e) => e.querySelector('.task-text').textContent === '测试催办事项');
+      const added = { cat: x.cat, date: x.date || null, age: find()?.querySelector('.wb-age')?.textContent, inStrip: !!find()?.closest('.wb-nag') };
+      const drag = async (li, to) => { const dt = new DataTransfer(); li.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true })); to.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); li.dispatchEvent(new DragEvent('dragend', { bubbles: true })); await wait(500); };
+      await drag(find(), document.querySelector('.wb-col.is-today'));
+      const y1 = (await p.loadPlanner()).tasks.find((y) => y.id === x.id); const sched = { date: y1.date === m.todayISO(), inDay: !!find()?.closest('.wb-col.is-today') };
+      await drag(find(), document.querySelector('.wb-nag'));
+      const y2 = (await p.loadPlanner()).tasks.find((y) => y.id === x.id); const back = { date: y2.date || null, cat: y2.cat, inStrip: !!find()?.closest('.wb-nag') };
+      find().querySelector('.tick').click(); await wait(500);
+      const ticked = { done: find()?.classList.contains('done'), age: find()?.querySelector('.wb-age')?.textContent };
+      await p.removeTask(x.id); await wait(300);
+      return { before, ages, hot, added, sched, back, ticked, nullText: document.querySelector('.wb-nag').innerText.includes('null') };`);
+    if (r.before < 3 || !r.hot || r.ages[0] !== '挂了 9 天' || r.added.cat !== '催办' || r.added.date || r.added.age !== '今天记下' || !r.added.inStrip || !r.sched.date || !r.sched.inDay || r.back.date || r.back.cat !== '催办' || !r.back.inStrip || !r.ticked.done || r.ticked.age !== '已办完' || r.nullText) throw new Error(JSON.stringify(r));
+    return `${r.before} waiting, oldest ${r.ages[0]}; added, scheduled to today, dragged back, ticked`;
+  });
   await check('time-zone-and-times', async () => {
     await go('#/', "document.querySelector('.wb-col.is-today .wb-add-btn')");
     const r = await evaluate(`const m = await import('./js/model.js'); const w = await import('./js/weekboard.js'); const p = await import('./js/planner.js');
