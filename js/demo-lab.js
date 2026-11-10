@@ -69,6 +69,10 @@ tags: [oect, transfer]
         { id: 'td8', text: '跑步 5 km', week: day(0), date: day(0), cat: '生活', done: false, created: `${day(-1)}T09:00:00+08:00` },
       ],
       memos: [],
+      finds: [
+        { id: 'fd1', text: '银在盖玻片上可以打印，但碰到溶剂会溶解。可能是多孔、附着不好。', at: `${day(0)}T09:41:00+08:00` },
+        { id: 'fd2', text: 'PEDOT:PSS 墨水放置 2 h 后粘度明显上升，出丝变细。', at: `${day(0)}T14:20:00+08:00` },
+      ],
       projects: [
         { id: 'P1', title: '唾液 MMP-8 OECT 牙周炎早筛', kind: '课题', stage: '进行中', next: '完成 7 天稳定性', due: day(12), vols: ['oect'], why: 'MMP-8 是牙周炎活动期的标志物；现有床旁检测灵敏度不足。', priority: '高', every: 14, nextReview: day(0), reviews: [{ at: `${day(-14)}T09:00:00+08:00`, note: '读了 2 篇综述，抗体修饰栅极可行。' }] },
         { id: 'P3', title: '打印 PEDOT:PSS 器件的批间一致性', kind: '课题', stage: '想法', why: '为后续量产与临床样本测试打基础。', priority: '中', every: 30, nextReview: day(12), vols: [] },

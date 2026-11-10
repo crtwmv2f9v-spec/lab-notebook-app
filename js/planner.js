@@ -105,23 +105,34 @@ export const weekStart = (iso) => addDays(iso, -((new Date(`${iso}T12:00:00`).ge
 export let planLocal = null; // { sha, doc: { tasks, memos }, dirty } — shown at once; commits follow in order
 export let planQueue = Promise.resolve();
 export const arr = (x) => (Array.isArray(x) ? x : []);
-export const planDoc = (d) => ({ tasks: arr(d?.tasks), memos: arr(d?.memos), projects: arr(d?.projects), papers: arr(d?.papers) });
+export const planDoc = (d) => ({ tasks: arr(d?.tasks), memos: arr(d?.memos), projects: arr(d?.projects), papers: arr(d?.papers), finds: arr(d?.finds) });
+// Other writers of planner/tasks.json (the weekly filing of 碎片发现) wait their turn in the same queue.
+export function queuePlanner(job) {
+  const p = planQueue.then(job);
+  planQueue = p.catch(() => {}).then(() => { if (planLocal && !planLocal.dirty) planLocal = null; }); // a failed job must not block later saves
+  return p.finally(() => planQueue);
+}
 export async function loadPlanner() {
+  const fresh = () => planLocal && (planLocal.sha === (lib.tree.get(TASKS_PATH) || null) || planLocal.dirty > 0);
+  if (fresh()) return planLocal.doc;
   const sha = lib.tree.get(TASKS_PATH) || null;
-  if (planLocal && (planLocal.sha === sha || planLocal.dirty)) return planLocal.doc;
-  planLocal = { sha, doc: planDoc(await lib.readJSON(TASKS_PATH, {})), dirty: 0 };
+  const doc = planDoc(await lib.readJSON(TASKS_PATH, {}));
+  // Two callers may read at once: the first one to finish installs the copy, the other uses it (an edit may already sit on it).
+  if (fresh()) return planLocal.doc;
+  planLocal = { sha, doc, dirty: 0 };
   return planLocal.doc;
 }
 export const loadTasks = async () => (await loadPlanner()).tasks;
 export function changePlanner(mutate, message, redraw) {
-  mutate(planLocal.doc); planLocal.dirty += 1;
+  const mine = planLocal; // the count of unsaved edits belongs to this copy, whatever replaces it later
+  mutate(mine.doc); mine.dirty += 1;
   redraw?.(); refreshDueBar();
   planQueue = planQueue.then(() => lib.commit(message, async (l) => {
     const doc = planDoc(await l.readJSON(TASKS_PATH, {}));
     mutate(doc);
-    return { changes: [{ path: TASKS_PATH, data: `${JSON.stringify(doc, null, 1)}\n` }], after: () => { planLocal.dirty -= 1; if (!planLocal.dirty) planLocal.doc = doc; } };
-  })).then(() => { if (!planLocal.dirty) planLocal.sha = lib.tree.get(TASKS_PATH); })
-    .catch((e) => { toast(e instanceof NetworkError ? '离线中：没有同步，联网后请再操作一次。' : `没有保存：${e.message}`); planLocal = null; redraw?.(); refreshDueBar(); });
+    return { changes: [{ path: TASKS_PATH, data: `${JSON.stringify(doc, null, 1)}\n` }], after: () => { mine.dirty -= 1; if (!mine.dirty) mine.doc = doc; } };
+  })).then(() => { if (planLocal === mine && !mine.dirty) mine.sha = lib.tree.get(TASKS_PATH); })
+    .catch((e) => { toast(e instanceof NetworkError ? '离线中：没有同步，联网后请再操作一次。' : `没有保存：${e.message}`); mine.dirty = 0; if (planLocal === mine) planLocal = null; redraw?.(); refreshDueBar(); });
   return planQueue;
 }
 export const changeTasks = (mutate, message, redraw) => changePlanner((d) => mutate(d.tasks), message, redraw);

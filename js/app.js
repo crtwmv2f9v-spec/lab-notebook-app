@@ -12,6 +12,7 @@ import { viewMethod, viewMethods } from './methods.js';
 import { viewProtocol, viewProtocols, viewReagents, viewSolutions } from './libraries.js';
 import { openSearch } from './searchui.js';
 import { viewClips } from './clips.js';
+import { mountFindButton, openQuickFind } from './finds.js';
 
 export async function boot() {
   applyTheme();
@@ -61,6 +62,10 @@ export function globalKeys(e) {
     if (!lib || document.querySelector('.modal-root')) return;
     e.preventDefault(); openSearch();
   }
+  // N (or ⌘J / Ctrl+J from anywhere, even while typing): jot down a small finding.
+  if (lib && !e.isComposing && !e.altKey && !e.shiftKey && (((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') || (!typing && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === 'n' && !document.querySelector('.modal-root')))) {
+    e.preventDefault(); openQuickFind(); return;
+  }
   if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'h' && !document.querySelector('.modal-root') && location.hash.replace(/^#\/?/, '')) {
     e.preventDefault(); location.hash = '#/'; return;
   }
@@ -82,6 +87,7 @@ export async function route(opts = {}) {
   if (!DEMO && !S.token && parts[0] !== 'settings') return show('setup', viewSetup);
   if (!lib) return show('setup', viewSetup);
   const [a, b, c, d] = parts;
+  mountFindButton();
   if (!a) return show('home', viewHome, opts);
   if (a === 'settings') return show('settings', viewSettings);
   if (a === 'lib' && b === 'reagents') return show('library', () => viewReagents(params.get('q') || ''));

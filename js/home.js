@@ -6,6 +6,7 @@ import { search } from './search.js';
 import { h, icon } from './util.js';
 import { S, demoBanner, lib, modal, toast, topbar, view, menu } from './core.js';
 import { clipCounts } from './clips.js';
+import { autoFileFinds, findsCard } from './finds.js';
 import {
   PAPER_STAGE, WEEKDAYS, addBox, allFollowups, changeTasks, editPaper, editProject, exportIcs,
   editable, isGoal, loadPlanner, memoCard, moveTask, newTask, reminderRow, ring, taskRow,
@@ -245,7 +246,7 @@ export function addDated(placeholder, onAdd, { dateRequired = false } = {}) {
 }
 // ----- card chrome: a coloured mark, a bold title, a quiet subtitle; add boxes stay folded behind a ＋ -----
 const CARD_LOOK = {
-  今日待办: ['done', '#0a84ff'], 本周计划: ['calendar', '#5e5ce6'], 备忘录: ['note', '#f5a400'], 接着做: ['go', '#34c759'],
+  碎片发现: ['pen', '#ff9f0a'], 今日待办: ['done', '#0a84ff'], 本周计划: ['calendar', '#5e5ce6'], 备忘录: ['note', '#f5a400'], 接着做: ['go', '#34c759'],
   课题与基金: ['bulb', '#30b0c7'], 论文与投稿: ['doc', '#af52de'], 文献待读: ['book', '#a2845e'], 仪器预约与实验队列: ['flask', '#32ade6'],
   截止日倒计时: ['flag', '#ff3b30'], 杂事: ['case', '#ff9500'], 生活: ['heart', '#ff2d55'], 本周科研数据: ['bars', '#00b8a9'],
 };
@@ -491,7 +492,7 @@ export function homeRails() {
     if (focused) document.querySelector(`.rail input[data-k="${focused}"]`)?.focus();
   };
   homeHooks.add(draw);
-  draw();
+  draw().then(() => autoFileFinds());
   return { left, right };
 }
 
@@ -541,7 +542,7 @@ export function dashboard() {
       foldList(h('ul', { class: 'tasks' }, goals.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: redrawHome }))), 'goals'),
       h('div', { class: 'week-days', 'aria-label': '本周每天的待办完成情况' }, days),
       h('a', { class: 'more-link', href: `#/plan/${wk}` }, '查看周计划与历史 ›'));
-    box.replaceChildren(todayCard, weekCard, memoCard(doc, redrawHome));
+    box.replaceChildren(todayCard, findsCard(doc, redrawHome), weekCard, memoCard(doc, redrawHome));
     if (focused) box.querySelector(`input[data-k="${focused}"]`)?.focus();
   };
   homeHooks.add(draw);

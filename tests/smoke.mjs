@@ -205,6 +205,25 @@ try {
     await evaluate(clean); await shot('clips');
     return `${r.tiles} clips, ${r.cats} categories`;
   });
+  await check('finds', async () => {
+    await go('#/', "document.querySelectorAll('.finds-card .find').length >= 2");
+    const r = await evaluate(`const f = await import('./js/finds.js'); const p = await import('./js/planner.js'); const c = await import('./js/core.js'); const lab = await import('./js/lab.js'); const m = await import('./js/model.js');
+      const t = m.todayISO(); const old = lab.addDays(t, -8); const old2 = lab.addDays(t, -9);
+      const rule = [f.dueForFiling('2026-11-09', '2026-11-13'), f.dueForFiling('2026-11-09', '2026-11-14'), f.dueForFiling('2026-11-14', '2026-11-14'), f.dueForFiling('2026-11-14', '2026-11-15'), f.dueForFiling('2026-11-15', '2026-11-16')].join();
+      await p.changePlanner((d) => { d.finds.push({ id: 'o1', text: '旧发现一', at: old + 'T10:05:00+08:00' }, { id: 'o2', text: '旧发现二\\n第二行', at: old + 'T16:30:00+08:00' }, { id: 'o3', text: '更早的', at: old2 + 'T08:00:00+08:00' }); }, 'test');
+      await f.autoFileFinds();
+      const vol = f.dailyVolume(); const pages = c.lib.allPages().filter((x) => x.vol === vol?.id).sort((a, b) => a.date.localeCompare(b.date));
+      const body = pages.length ? await c.lib.readPage(vol.id, pages[pages.length - 1].num) : '';
+      const left = (await p.loadPlanner()).finds.length;
+      // a later fragment for a day that already has a page is appended to it
+      await p.changePlanner((d) => { d.finds.push({ id: 'o4', text: '补记', at: old + 'T18:00:00+08:00' }); }, 'test');
+      await f.autoFileFinds();
+      const pages2 = c.lib.allPages().filter((x) => x.vol === vol?.id);
+      const body2 = await c.lib.readPage(vol.id, pages[pages.length - 1].num);
+      return { rule, vol: vol?.title, titles: pages.map((x) => x.title), dates: pages.map((x) => x.date), ok: body.includes('**10:05** 旧发现一') && body.includes('**16:30** 旧发现二'), left, n2: pages2.length, appended: body2.includes('**18:00** 补记') && body2.includes('旧发现一'), old };`);
+    if (r.rule !== 'false,true,false,true,true' || r.vol !== '每日发现' || r.titles.length !== 2 || !r.titles[1].startsWith(r.old) || !r.ok || r.left !== 2 || r.n2 !== 2 || !r.appended) throw new Error(JSON.stringify(r));
+    return `${r.titles.join(' / ')}; today's 2 stay`;
+  });
   await check('solutions', async () => { await go('#/lib/solutions', "document.querySelectorAll('.sol-table tbody tr').length > 0"); await evaluate(clean); });
   await check('protocols', async () => { await go('#/lib/protocols', "document.querySelector('.view.library table, .view.library .tile, .view.library li')"); await evaluate(clean); });
   await check('methods', async () => { await go('#/v/oect/methods', "document.querySelectorAll('.m-card').length >= 2"); await evaluate(clean); await shot('methods'); });
