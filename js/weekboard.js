@@ -7,6 +7,12 @@ import { toast } from './core.js';
 import { WEEKDAYS, allFollowups, changeTasks, editPaper, editProject, exportIcs, isGoal, loadPlanner, moveTask, newTask, reminderRow, ring, taskRow, weekStart } from './planner.js';
 
 const FLOAT = ['杂事', '生活']; // side-list items that may wait without a day
+// 催办: no deadline, but it must not be forgotten and the sooner the better. Kept as undated tasks of this kind,
+// shown in a strip above the days whatever week is on screen, oldest first, with how long each has waited.
+export const NAG = '催办';
+const NAG_SHOW = 8;
+let nagAll = false;
+const waited = (x, today) => Math.max(0, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${zoned(x.created || `${today}T00:00:00+08:00`).day}T00:00:00Z`)) / 864e5));
 // Every item on a day sits under its kind, in this order, each with its own colour.
 const KINDS = [['截止', '#e5484d'], ['科研', '#0a84ff'], ['待办', '#5e5ce6'], ['杂事', '#c77c02'], ['生活', '#30a46c'], ['提醒', '#8e8e93']];
 // Items filed as 仪器 before the kind was renamed are 科研.
@@ -50,6 +56,10 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
     const dated = tasks.filter((x) => x.date && x.date >= wk && x.date <= days[6] && x.cat !== '文献');
     // 待安排: this week's plans with no day yet, and (this week) the open 杂事 / 生活 that have no date.
     const goals = tasks.filter((x) => isGoal(x, wk) || (isThis && !x.date && !x.done && FLOAT.includes(x.cat)));
+    // Open ones, longest-waiting first; one ticked today stays (struck through) until tomorrow so it can be unticked.
+    const nags = tasks.filter((x) => x.cat === NAG && !x.date && (!x.done || zoned(x.doneAt || '').day === t))
+      .sort((a, b) => Number(a.done) - Number(b.done) || String(a.created).localeCompare(String(b.created)));
+    const nagOpen = nags.filter((x) => !x.done);
     const overdue = isThis ? tasks.filter((x) => x.date && x.date < wk && !x.done && x.cat !== '文献') : [];
     const done = dated.filter((x) => x.done).length + goals.filter((x) => x.done).length;
     const total = dated.length + goals.length;
@@ -122,6 +132,7 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
         const id = e.dataTransfer.getData('text/x-task'); if (!id) return;
         const x = tasks.find((y) => y.id === id); if (!x) return;
         if ((x.date || null) === (day || null) && (day || x.week === wk)) return;
+        if (!day && x.cat === NAG) { move(id, null); return; }
         if (!day && x.cat && !FLOAT.includes(x.cat)) { toast(`「${x.cat}」事项需要一个日期，不能取消日期。`); return; }
         move(id, day);
       });
@@ -139,6 +150,40 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
       float.length ? h('div', { class: 'wb-group', style: { '--k': '#c77c02' } }, h('div', { class: 'wb-glabel' }, '未排期 · 杂事 / 生活'), h('ul', { class: 'tasks' }, float.map((x) => card(x)))) : null,
       h('p', { class: 'wb-hint' }, '拖到某一天即可排期'));
     dropZone(planCol, null);
+
+    // 催办 strip
+    const nagCard = (x) => {
+      const n = waited(x, t);
+      const li = card(x);
+      li.classList.add('wb-nagcard', n >= 7 ? 'hot' : n >= 3 ? 'warm' : 'new');
+      li.querySelector('.task-main')?.append(h('span', { class: 'wb-age', title: `${zoned(x.created).day} 记下` }, x.done ? '已办完' : n ? `挂了 ${n} 天` : '今天记下'));
+      return li;
+    };
+    const nagInput = h('input', { class: 'add-input', placeholder: '加一条催办：没有截止日，但要尽早办完。回车保存', enterkeyhint: 'done', 'data-k': 'nag', 'aria-label': '添加催办事项' });
+    nagInput.addEventListener('keydown', (e) => {
+      if (e.isComposing) return;
+      if (e.key === 'Enter') { e.preventDefault(); const v = nagInput.value.trim(); if (!v) return; nagInput.value = ''; changeTasks((l) => l.push(newTask(v, weekStart(t), null, NAG)), 'Planner: add nag', again); }
+      if (e.key === 'Escape') { nagInput.value = ''; nagInput.blur(); }
+    });
+    const nagShown = nagAll ? nags : nags.slice(0, NAG_SHOW);
+    const oldest = nagOpen.length ? waited(nagOpen[0], t) : 0;
+    const nagBox = h('div', { class: `wb-nag${oldest >= 7 ? ' hot' : ''}` },
+      h('div', { class: 'wb-nag-head' },
+        h('span', { class: 'wb-nag-t' }, icon('flag', 15), '催办'),
+        h('span', { class: 'wb-nag-s' }, '没有截止日 · 越早办完越好'),
+        h('span', { class: 'wb-nag-n' }, nagOpen.length ? `${nagOpen.length} 项待办${oldest ? ` · 最久 ${oldest} 天` : ''}` : '都办完了')),
+      h('div', { class: 'wb-nag-body' },
+        nags.length ? h('ul', { class: 'tasks wb-nag-list' }, nagShown.map(nagCard)) : null,
+        h('div', { class: 'wb-nag-add' }, nagInput,
+          nags.length > NAG_SHOW ? h('button', { class: 'btn small ghost', type: 'button', onclick: () => { nagAll = !nagAll; draw(); } }, nagAll ? '收起' : `还有 ${nags.length - NAG_SHOW} 项`) : null)));
+    nagBox.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('text/x-task')) { e.preventDefault(); nagBox.classList.add('over'); } });
+    nagBox.addEventListener('dragleave', (e) => { if (!nagBox.contains(e.relatedTarget)) nagBox.classList.remove('over'); });
+    nagBox.addEventListener('drop', (e) => {
+      e.preventDefault(); nagBox.classList.remove('over');
+      const id = e.dataTransfer.getData('text/x-task'); const x = tasks.find((y) => y.id === id);
+      if (!x || (x.cat === NAG && !x.date)) return;
+      changeTasks((l) => { const y = l.find((z) => z.id === id); if (!y) return; y.cat = NAG; delete y.date; delete y.time; delete y.end; }, 'Planner: move to nag list', again);
+    });
 
     const lateRem = isThis ? fus.filter((x) => !x.done && x.date < t) : [];
     const cols = days.map((day, k) => {
@@ -172,7 +217,7 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
       h('div', { class: 'wb-top' },
         h('div', null,
           h('h2', { class: 'wb-title' }, standalone ? '一周日程' : '本周日程'),
-          h('p', { class: 'wb-sub' }, `${fmtMD(wk)} – ${fmtMD(days[6])} · 东八区 ${zoned(new Date().toISOString()).time}${total ? ` · 完成 ${done}/${total}` : ''}${overdue.length ? ` · 之前没做完 ${overdue.length}` : ''}`)),
+          h('p', { class: 'wb-sub' }, `${fmtMD(wk)} – ${fmtMD(days[6])} · 东八区 ${zoned(new Date().toISOString()).time}${total ? ` · 完成 ${done}/${total}` : ''}${overdue.length ? ` · 之前没做完 ${overdue.length}` : ''}${nagOpen.length ? ` · 催办 ${nagOpen.length}` : ''}`)),
         h('div', { class: 'wb-legend', 'aria-hidden': 'true' }, KINDS.map(([k, c]) => h('span', { style: { '--k': c } }, k))),
         h('div', { class: 'wb-nav' },
           h('button', { class: 'btn small ghost', type: 'button', 'aria-label': '上一周', onclick: () => go(addDays(wk, -7)) }, '‹'),
@@ -180,8 +225,9 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
           h('button', { class: 'btn small ghost', type: 'button', 'aria-label': '下一周', onclick: () => go(addDays(wk, 7)) }, '›'),
           fus.some((x) => !x.done) ? h('button', { class: 'btn small ghost wide-only', type: 'button', title: '把实验提醒导出到手机日历', onclick: () => exportIcs(fus.filter((x) => !x.done)) }, '导出提醒') : null,
           standalone ? null : h('a', { class: 'btn small', href: `#/plan/${wk}` }, '周计划与历史 ›'))),
+      nagBox,
       h('div', { class: 'wb-grid' }, planCol, cols),
-      h('p', { class: 'wb-foot muted small' }, '拖动卡片换到别的日子；点文字修改；拖到「本周目标」即取消日期。手机上点卡片右侧的日期改天。'));
+      h('p', { class: 'wb-foot muted small' }, '拖动卡片换到别的日子；点文字修改；拖到「本周目标」即取消日期；拖进「催办」就变成不设截止日的催办事项。手机上点卡片右侧的日期改天。'));
     // Narrow screens scroll sideways: start at today.
     if (!scrolled && isThis) {
       scrolled = true;
