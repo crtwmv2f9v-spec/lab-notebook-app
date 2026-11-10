@@ -3,8 +3,10 @@
 import { todayISO, zoned } from './model.js';
 import { addDays } from './lab.js';
 import { h, icon } from './util.js';
-import { toast } from './core.js';
-import { WEEKDAYS, allFollowups, changeTasks, editPaper, editProject, exportIcs, isGoal, loadPlanner, moveTask, newTask, reminderRow, ring, taskRow, weekStart } from './planner.js';
+import { downloadText, menu, toast } from './core.js';
+import { icsFor } from './lab.js';
+import { LOOSE_COLOR, pinTopicsIn, topicsOf } from './finds.js';
+import { WEEKDAYS, allFollowups, changePlanner, changeTasks, editPaper, editProject, isGoal, loadPlanner, moveTask, newTask, reminderRow, ring, taskRow, weekStart } from './planner.js';
 
 const FLOAT = ['杂事', '生活']; // side-list items that may wait without a day
 // 催办: no deadline, but it must not be forgotten and the sooner the better. Kept as undated tasks of this kind,
@@ -16,6 +18,7 @@ const waited = (x, today) => Math.max(0, Math.round((Date.parse(`${today}T00:00:
 // Every item on a day sits under its kind, in this order, each with its own colour.
 const KINDS = [['截止', '#e5484d'], ['科研', '#0a84ff'], ['待办', '#5e5ce6'], ['杂事', '#c77c02'], ['生活', '#30a46c'], ['提醒', '#8e8e93']];
 // Items filed as 仪器 before the kind was renamed are 科研.
+const ADD_KINDS = ['待办', '科研', '截止', '杂事', '生活'];
 const kindOf = (x) => (x.cat === '仪器' ? '科研' : KINDS.some(([k]) => k === x.cat) ? x.cat : '待办');
 // "9" → 09:00, "930" / "9:30" → 09:30, "14-17" / "14:00~17:30" → a span. 24-hour clock only.
 export function parseTime(text) {
@@ -33,6 +36,7 @@ export function parseTime(text) {
 const timeLabel = (x) => (x.time ? `${x.time}${x.end ? `–${x.end}` : ''}` : '');
 const fmtMD = (iso) => `${+iso.slice(5, 7)}/${+iso.slice(8, 10)}`;
 const openKind = new Map(); // the kind last picked in each column's add box
+let goalTopic = ''; // the topic last picked when adding a weekly goal
 let shownWeek = null; // the home board remembers the week you paged to until reload
 
 export function weekBoard({ week = null, redraw = null, hooks = null, standalone = false } = {}) {
@@ -64,8 +68,23 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
     const done = dated.filter((x) => x.done).length + goals.filter((x) => x.done).length;
     const total = dated.length + goals.length;
 
+    const topics = topicsOf(doc);
+    const topicOf = (x) => topics.find((y) => y.id === x.topic) || null;
+    // Every card can be refiled: a dated item under another kind, a weekly goal under another topic.
+    const refile = (x) => {
+      if (x.cat === NAG && !x.date) return null;
+      const goal = !x.date && !x.cat;
+      if (!goal && !x.date) return null;
+      const b = h('button', { class: 'wb-refile', type: 'button', title: goal ? '改到别的课题' : '改类别' }, goal ? '课题' : kindOf(x));
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (goal) menu(b, [...topics, { id: '', name: '未分类' }].filter((o) => o.id !== (topicOf(x)?.id || '')).map((o) => ({ icon: 'go', label: o.name, run: () => changePlanner((d) => { if (o.id) pinTopicsIn(d); const y = d.tasks.find((z) => z.id === x.id); if (!y) return; if (o.id) y.topic = o.id; else delete y.topic; }, 'Planner: goal topic', again) })));
+        else menu(b, ADD_KINDS.filter((k) => k !== kindOf(x)).map((k) => ({ icon: 'go', label: `改为「${k}」`, run: () => changeTasks((l) => { const y = l.find((z) => z.id === x.id); if (!y) return; if (k === '待办') delete y.cat; else y.cat = k; }, 'Planner: kind', again) })));
+      });
+      return b;
+    };
     const card = (x, opt = {}) => {
-      const li = taskRow(x, { redraw: again, showCat: false, extra: opt.toToday ? h('button', { class: 'btn small ghost wb-totoday', type: 'button', onclick: () => moveTask(x.id, t, again) }, '移到今天') : null });
+      const li = taskRow(x, { redraw: again, showCat: false, extra: h('span', { class: 'wb-extra' }, opt.toToday ? h('button', { class: 'btn small ghost wb-totoday', type: 'button', onclick: () => moveTask(x.id, t, again) }, '移到今天') : null, refile(x)) });
       li.classList.add('wb-card');
       if (x.date) {
         const chip = h('button', { class: `wb-time${x.time ? '' : ' none'}`, type: 'button', title: x.time ? '改时间（清空则不定时）' : '加时间（24 小时制，如 14:00 或 14-17）' }, x.time ? timeLabel(x) : '＋时间');
@@ -99,7 +118,9 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
       const box = h('div', { class: 'wb-add' });
       const open = (focus) => {
         const input = h('input', { class: 'add-input', placeholder: day ? (day === t ? '添加今天要做的事' : '添加到这一天') : '添加本周目标', enterkeyhint: 'done', 'data-k': key });
-        const sel = day ? h('select', { class: 'wb-kind', 'aria-label': '分类', title: '分类' }, ['待办', '科研', '截止', '杂事', '生活'].map((k) => h('option', { selected: (openKind.get(key) || '待办') === k }, k))) : null;
+        const sel = day ? h('select', { class: 'wb-kind', 'aria-label': '分类', title: '分类' }, ADD_KINDS.map((k) => h('option', { selected: (openKind.get(key) || '待办') === k }, k))) : null;
+        const tsel = day ? null : h('select', { class: 'wb-kind', 'aria-label': '课题', title: '这个目标属于哪个课题' }, [{ id: '', name: '未分类' }, ...topics].map((o) => h('option', { value: o.id, selected: goalTopic === o.id }, o.name)));
+        tsel?.addEventListener('change', () => { goalTopic = tsel.value; input.focus(); });
         sel?.addEventListener('change', () => { openKind.set(key, sel.value); input.focus(); });
         const tm = day ? h('input', { class: 'wb-time-add', placeholder: '时间', title: '可选。24 小时制：14:00、9:30，或 14-17 表示一段', inputmode: 'numeric', 'aria-label': '时间（24 小时制，可不填）' }) : null;
         const submit = () => {
@@ -108,7 +129,8 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
           if (!tv) { toast('时间写成 24 小时制：14:00、9:30，或 14-17 表示一段。'); tm.focus(); tm.select(); return; }
           input.value = ''; if (tm) tm.value = '';
           const cat = sel && sel.value !== '待办' ? sel.value : null;
-          changeTasks((l) => l.push({ ...newTask(v, day ? weekStart(day) : wk, day || null, cat), ...(tv.time ? { time: tv.time } : {}), ...(tv.end ? { end: tv.end } : {}) }), day ? 'Planner: add to-do' : 'Planner: add weekly goal', again);
+          const tp = tsel && topics.some((o) => o.id === tsel.value) ? tsel.value : '';
+          changePlanner((d) => { if (tp) pinTopicsIn(d); d.tasks.push({ ...newTask(v, day ? weekStart(day) : wk, day || null, cat), ...(tv.time ? { time: tv.time } : {}), ...(tv.end ? { end: tv.end } : {}), ...(tp ? { topic: tp } : {}) }); }, day ? 'Planner: add to-do' : 'Planner: add weekly goal', again);
         };
         tm?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (input.value.trim()) submit(); else input.focus(); } if (e.key === 'Escape') { tm.value = ''; input.focus(); } });
         input.addEventListener('keydown', (e) => {
@@ -117,8 +139,8 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
           if (e.key === 'Escape') { input.value = ''; input.blur(); }
         });
         const leave = () => { if (!input.value.trim() && !(tm && tm.value.trim())) setTimeout(close, 150); };
-        input.addEventListener('blur', leave); sel?.addEventListener('blur', leave); tm?.addEventListener('blur', leave);
-        box.replaceChildren(h('div', { class: 'wb-add-row' }, input), ...(day ? [h('div', { class: 'wb-add-row wb-add-opts' }, tm, sel)] : [])); if (focus) input.focus();
+        input.addEventListener('blur', leave); sel?.addEventListener('blur', leave); tm?.addEventListener('blur', leave); tsel?.addEventListener('blur', leave);
+        box.replaceChildren(h('div', { class: 'wb-add-row' }, input), ...(day ? [h('div', { class: 'wb-add-row wb-add-opts' }, tm, sel)] : [h('div', { class: 'wb-add-row wb-add-opts' }, tsel)])); if (focus) input.focus();
       };
       const close = () => { if (!box.contains(document.activeElement)) box.replaceChildren(h('button', { class: 'wb-add-btn', type: 'button', onclick: () => open(true) }, icon('plus', 14), '添加')); };
       if (focused === key || (cats && day === t && !standalone && false)) open(false); else close();
@@ -145,7 +167,10 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
       h('div', { class: 'wb-head wb-head-plan' },
         h('div', null, h('span', { class: 'wb-w' }, '本周目标'), h('span', { class: 'wb-d' }, aims.length ? `完成 ${aimsDone}/${aims.length}` : '这周要完成什么')),
         ring(aimsDone, aims.length, 38)),
-      h('ul', { class: 'tasks' }, aims.map((x) => card(x))),
+      [...topics, { id: '', name: '未分类', color: LOOSE_COLOR }].map((tp) => {
+        const mine = aims.filter((x) => (topicOf(x)?.id || '') === tp.id);
+        return mine.length ? h('div', { class: 'wb-group wb-topic', style: { '--k': tp.color } }, h('div', { class: 'wb-glabel' }, tp.name, h('span', null, `${mine.filter((x) => x.done).length}/${mine.length}`)), h('ul', { class: 'tasks' }, mine.map((x) => card(x)))) : null;
+      }),
       adder(null),
       float.length ? h('div', { class: 'wb-group', style: { '--k': '#c77c02' } }, h('div', { class: 'wb-glabel' }, '未排期 · 杂事 / 生活'), h('ul', { class: 'tasks' }, float.map((x) => card(x)))) : null,
       h('p', { class: 'wb-hint' }, '拖到某一天即可排期'));
@@ -223,7 +248,15 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
           h('button', { class: 'btn small ghost', type: 'button', 'aria-label': '上一周', onclick: () => go(addDays(wk, -7)) }, '‹'),
           h('button', { class: 'btn small ghost', type: 'button', disabled: isThis, onclick: () => go(weekStart(t)) }, '本周'),
           h('button', { class: 'btn small ghost', type: 'button', 'aria-label': '下一周', onclick: () => go(addDays(wk, 7)) }, '›'),
-          fus.some((x) => !x.done) ? h('button', { class: 'btn small ghost wide-only', type: 'button', title: '把实验提醒导出到手机日历', onclick: () => exportIcs(fus.filter((x) => !x.done)) }, '导出提醒') : null,
+          h('button', { class: 'btn small ghost wide-only', type: 'button', title: '把这一周还没做完的日程和实验提醒存成日历文件（.ics）。打开它加进 Mac 日历，iPhone 和 Apple Watch 会同步并按时提醒', onclick: () => {
+            const items = [
+              ...dated.filter((x) => !x.done).map((x) => ({ date: x.date, time: x.time, end: x.end, allDay: !x.time, summary: `${kindOf(x) === '待办' ? '' : `【${kindOf(x)}】`}${x.text}`, uid: `task-${x.id}` })),
+              ...fus.filter((x) => !x.done && x.date >= wk && x.date <= days[6]).map((it) => ({ date: it.date, allDay: true, summary: it.xid ? `${it.xid} ${it.text}` : it.text, uid: `${it.xid || it.reagent || 'x'}-${it.date}-${it.text}`.replace(/[^\w-]+/g, '') })),
+            ];
+            if (!items.length) { toast('这一周没有未完成的日程。'); return; }
+            downloadText(`lab-week-${wk}.ics`, icsFor(items), 'text/calendar');
+            toast(`已导出 ${items.length} 项。打开下载的文件即可加进日历；带时间的提前 10 分钟提醒，不带时间的当天 9:00 提醒。`);
+          } }, '加到日历'),
           standalone ? null : h('a', { class: 'btn small', href: `#/plan/${wk}` }, '周计划与历史 ›'))),
       nagBox,
       h('div', { class: 'wb-grid' }, planCol, cols),

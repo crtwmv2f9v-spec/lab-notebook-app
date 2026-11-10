@@ -6,7 +6,7 @@ import {
   addDays, cleanTopic, colLabel, daysFrom, expId, formatFollowup, isResultCol, loadHypotheses,
   loadProtocol, loadProtocols, loadReagents, loadSolutions, nextSeq, parseFollowup, parseNumbers, readMaterials,
   readSamples, readSteps, renameMaterialsHeading, sampleId, sampleNo, samplesTemplate, stepsText, toCSV,
-  writeMaterials,
+  writeMaterials, putSection, sectionOf,
 } from './lab.js';
 import { search } from './search.js';
 import { h, icon } from './util.js';
@@ -23,6 +23,60 @@ import { methodsBtn } from './methods.js';
 import { editSolution } from './libraries.js';
 import { openSearch } from './searchui.js';
 import { route } from './app.js';
+
+// ----- 可行 / 行不通: the verdict on a record, shown wherever the page is listed -----
+export const OUTCOME = { ok: ['可重复', '这条路可行，条件可以继续用'], fail: ['行不通', '这个条件不可行，以后不再用'] };
+export const outcomeTag = (p) => (OUTCOME[p?.outcome] ? h('span', { class: `oc-tag ${p.outcome}`, title: OUTCOME[p.outcome][1] }, OUTCOME[p.outcome][0]) : null);
+const outcomeBanner = (fm) => (OUTCOME[fm.outcome] ? h('div', { class: `oc-banner ${fm.outcome}` }, h('strong', null, fm.outcome === 'ok' ? '✓ 可重复' : '✕ 行不通'), ` ${fm.outcome_note || OUTCOME[fm.outcome][1]}`) : null);
+const TAIL = ['下一步', '照片', '自动挂接', '原始数据'];
+// 收尾: the short results, discussion and conclusion that close a record, and whether the route works.
+export async function openWrapUp(vol, num) {
+  const { fm, body } = parseFrontMatter(await lib.readPage(vol, num));
+  const discName = sectionOf(body, '讨论') == null && sectionOf(body, '现象与讨论') != null ? '现象与讨论' : '讨论';
+  const names = { res: '结果', disc: discName, concl: '结论' };
+  const clean = (s) => (s || '').replace(/^\s*-\s*$/gm, '').trim();
+  const ta = (k, ph) => h('textarea', { id: `wu-${k}`, rows: k === 'disc' ? 4 : 3, placeholder: ph }, clean(sectionOf(body, names[k])));
+  const res = ta('res', '看到了什么（一两句，带关键数字）');
+  const disc = ta('disc', '为什么会这样；和预期、和以前的实验比');
+  const concl = ta('concl', '一句话：得到了什么，下次怎么做');
+  let oc = OUTCOME[fm.outcome] ? fm.outcome : '';
+  const note = h('input', { id: 'wu-note', value: fm.outcome_note || '', placeholder: '一句话原因（可不填），例如：氯仿挥发太快，打印中途气爆' });
+  const seg = h('div', { class: 'seg oc-seg', role: 'radiogroup', 'aria-label': '这条路' });
+  const drawSeg = () => seg.replaceChildren(...[['', '未判定'], ['ok', '✓ 可重复'], ['fail', '✕ 行不通']].map(([k, l]) => h('button', { type: 'button', class: `seg-btn oc-${k || 'none'}${oc === k ? ' on' : ''}`, 'aria-pressed': String(oc === k), onclick: () => { oc = k; drawSeg(); } }, l)));
+  drawSeg();
+  modal({
+    title: `收尾：${fm.id || fm.title || `p. ${num}`}`, wide: true,
+    body: h('div', { class: 'form wrapup' },
+      h('label', { for: 'wu-res' }, '结果'), res, h('label', { for: 'wu-disc' }, '讨论'), disc, h('label', { for: 'wu-concl' }, '结论'), concl,
+      h('span', { class: 'label' }, '这条路'), seg, h('label', { for: 'wu-note' }, '原因 / 备注'), note,
+      fm.signed ? h('p', { class: 'muted' }, '这一页已签名：保存会记为一次修订。') : null),
+    buttons: [{ label: '取消' }, { label: '保存', primary: true, run: async () => {
+      try {
+        await updatePage(vol, num, ({ fm: f, body: b }) => {
+          for (const [k, el] of [['res', res], ['disc', disc], ['concl', concl]]) {
+            const v = el.value.trim();
+            if (v || sectionOf(b, names[k]) != null) b = putSection(b, names[k], v, k === 'res' ? [names.disc, '结论', ...TAIL] : k === 'disc' ? ['结论', ...TAIL] : TAIL);
+          }
+          if (oc) f.outcome = oc; else delete f.outcome;
+          if (oc && note.value.trim()) f.outcome_note = note.value.trim(); else delete f.outcome_note;
+          return { fm: f, body: b };
+        }, `Wrap up p. ${num}`, '补充结果、讨论、结论与可行性标记');
+        toast(oc === 'fail' ? '已保存，标为「行不通」。' : oc === 'ok' ? '已保存，标为「可重复」。' : '已保存。');
+      } catch (e) { toast(saveError(e)); return false; }
+    } }],
+  });
+}
+// A strip at the end of an experiment page: what is still missing, and the button that opens 收尾.
+function wrapUpBar(sheet, vol, num, fm, body) {
+  if (!fm.id || fm.void) return;
+  const has = (n) => !!(sectionOf(body, n) || '').replace(/^\s*-\s*$/gm, '').trim();
+  const miss = [['结果', has('结果') || has('条件与结果')], ['讨论', has('讨论') || has('现象与讨论')], ['结论', has('结论')]].filter(([, ok]) => !ok).map(([n]) => n);
+  const bar = h('div', { class: `wrap-bar no-print ${fm.outcome || 'none'}` },
+    h('span', { class: 'wrap-txt' }, miss.length ? `还缺：${miss.join('、')}` : '结果、讨论、结论已写', OUTCOME[fm.outcome] ? null : ' · 未判定可行性'),
+    outcomeTag(fm),
+    h('button', { class: 'btn small', type: 'button', onclick: () => openWrapUp(vol, num) }, miss.length || !fm.outcome ? '收尾' : '修改收尾'));
+  sheet.querySelector('.sheet-foot')?.before(bar);
+}
 
 // ---------- volume contents ----------
 export function viewVolume(id) {
@@ -59,11 +113,11 @@ export function viewVolume(id) {
       h('tbody', null, tocRows(pages).map((p) => (p.seriesRow ? h('tr', { class: 'series-row', onclick: () => { location.hash = `#/series/${encodeURIComponent(p.name)}`; } },
         h('td', { class: 'c-no' }, p.nums),
         h('td', { class: 'c-date' }, p.range),
-        h('td', null, h('span', { class: 'series-tag' }, '系列'), h('a', { href: `#/series/${encodeURIComponent(p.name)}` }, p.name), h('span', { class: 'toc-tags' }, `${p.count} 次实验`)),
-        h('td', { class: 'c-sig' })) : h('tr', { class: p.void ? 'voided' : null, onclick: (e) => { if (!e.target.closest('a')) location.hash = `#/v/${id}/${p.num}`; } },
+        h('td', null, h('span', { class: 'series-tag' }, '系列'), h('a', { href: `#/series/${encodeURIComponent(p.name)}` }, p.name), h('span', { class: 'toc-tags' }, `${p.count} 次实验`), p.ok ? h('span', { class: 'oc-tag ok' }, `可重复 ${p.ok}`) : null, p.fail ? h('span', { class: 'oc-tag fail' }, `行不通 ${p.fail}`) : null),
+        h('td', { class: 'c-sig' })) : h('tr', { class: `${p.void ? 'voided' : ''}${p.outcome ? ` oc-${p.outcome}` : ''}` || null, onclick: (e) => { if (!e.target.closest('a')) location.hash = `#/v/${id}/${p.num}`; } },
         h('td', { class: 'c-no' }, p.num),
         h('td', { class: 'c-date' }, fmtDate(p.date)),
-        h('td', null, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, h('a', { href: `#/v/${id}/${p.num}` }, p.title), p.void ? h('span', { class: 'void-tag' }, '已作废') : null,
+        h('td', null, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, h('a', { href: `#/v/${id}/${p.num}` }, p.title), p.void ? h('span', { class: 'void-tag' }, '已作废') : null, outcomeTag(p),
           p.pending ? h('span', { class: 'pending-tag' }, '待同步') : null,
           p.tags.length ? h('span', { class: 'toc-tags' }, p.tags.map((t) => `#${t}`).join(' ')) : null),
         h('td', { class: 'c-sig' }, p.signed ? h('span', { class: 'initials', title: `Signed ${fmtDate(p.signed)}` }, initials(p.signer || signerName())) : h('span', { class: 'sr' }, '未签名'))))))));
@@ -193,6 +247,7 @@ export async function buildPageSheet(vol, num, { forPrint = false, body: only = 
           h('button', { class: 'btn small', type: 'button', title: '分配编号后可以挂接原始数据、记录数据指纹、给样品编号、加入系列', onclick: () => makeExperiment(vol, num, fm) }, '设为实验')), 'grow')),
       entry?.series ? seriesRow(entry) : null),
     fm.void ? h('div', { class: 'void-banner' }, h('strong', null, '已作废'), ` ${fm.void}`) : null,
+    outcomeBanner(fm),
     body.includes('原始数据与首次记录不一致') ? h('div', { class: 'void-banner data-alert' }, h('strong', null, '⚠ 原始数据已变动'), ' 有数据文件与首次记录的指纹不一致或已缺失，详见页末“自动挂接”。') : null,
     panel,
     cont ? h('p', { class: 'cont from' }, '接上页 ', refLink(entry.continues, vol)) : null,
@@ -207,6 +262,7 @@ export async function buildPageSheet(vol, num, { forPrint = false, body: only = 
       entry?.pending ? h('p', { class: 'pending-note no-print' }, '已存在本机，联网后提交到 GitHub。') : null));
   if (forPrint) sheet.classList.add('for-print');
   if (fm.void) sheet.classList.add('voided');
+  if (OUTCOME[fm.outcome]) sheet.classList.add(`oc-${fm.outcome}`);
   return { el: sheet, ready, fm, body };
 }
 
@@ -225,6 +281,7 @@ export function recordSheet(vol, num, fm, panel, content) {
         fm.series ? h('span', null, h('span', { class: 'rh-lbl' }, '系列'), h('span', { class: 'rh-series' }, `${fm.series}${k >= 0 ? `　第 ${k + 1} / ${ps.length} 次` : ''}`)) : null,
         fm.protocol ? h('span', null, h('span', { class: 'rh-lbl' }, 'SOP'), h('span', { class: 'rh-id' }, fm.protocol)) : null) : null),
     fm.void ? h('div', { class: 'void-banner' }, h('strong', null, '已作废'), ` ${fm.void}`) : null,
+    outcomeBanner(fm),
     panel,
     content,
     (fm.amended || []).length ? h('div', { class: 'rec-amend' }, h('span', { class: 'rh-lbl' }, '修订记录'),
@@ -241,7 +298,8 @@ export async function viewPage(vol, num, params) {
   if (!lib.page(vol, num)) {
     return viewMissing(`${v.title} 第 ${num} 页还没写。`, h('a', { class: 'btn primary', href: `#/v/${vol}/new` }, '写新页'));
   }
-  const { el: sheet, fm } = await buildPageSheet(vol, num);
+  const { el: sheet, fm, body: pageBody } = await buildPageSheet(vol, num);
+  wrapUpBar(sheet, vol, num, fm, pageBody);
   nextStepButtons(sheet, vol, num, fm);
   conclusionEvidenceButton(sheet, vol, num, fm);
   const pages = lib.pages(vol);
@@ -261,6 +319,7 @@ export async function viewPage(vol, num, params) {
     { icon: 'list', label: '录入操作步骤（用量、容器、条件）', run: () => openStepsEditor(vol, num) },
     { icon: 'link', label: '引用另一次实验（步骤完全相同时）…', run: () => openQuoteDialog(vol, num, null) },
     { icon: 'book', label: '引用假设（本实验要检验的）…', run: () => openCiteHypothesis(vol, num, null) },
+    { icon: 'edit', label: '收尾：结果 · 讨论 · 结论，标记可重复 / 行不通…', run: () => openWrapUp(vol, num) },
     { icon: 'edit', label: '交给 Claude Code（润色 / 推断结论 / 建议）…', run: () => askClaude(vol, num, fm) },
     { icon: 'plus', label: '登记本页配制的溶液（S-编号）…', run: async () => editSolution(await loadSolutions(lib), null, { page: fm.id || `${vol}/${num}`, prepared: fm.date, steps: readSteps(raw) || [] }) },
     fm.void ? { icon: 'history', label: '取消作废', run: () => setVoid(vol, num, null) } : { icon: 'close', label: '作废这一页…', run: () => setVoid(vol, num, fm) },
@@ -565,7 +624,7 @@ export function tocRows(pages) {
     if (seen.has(p.series)) continue;
     seen.add(p.series);
     const ps = pages.filter((x) => x.series === p.series);
-    out.push({ seriesRow: true, name: p.series, count: ps.length, range: dateRange([...ps].sort((a, b) => String(a.date).localeCompare(String(b.date)))), nums: ps.length <= 4 ? ps.map((x) => x.num).join(', ') : `${ps[0].num}, ${ps[1].num} … ${ps[ps.length - 1].num}` });
+    out.push({ seriesRow: true, name: p.series, count: ps.length, ok: ps.filter((x) => x.outcome === 'ok').length, fail: ps.filter((x) => x.outcome === 'fail').length, range: dateRange([...ps].sort((a, b) => String(a.date).localeCompare(String(b.date)))), nums: ps.length <= 4 ? ps.map((x) => x.num).join(', ') : `${ps[0].num}, ${ps[1].num} … ${ps[ps.length - 1].num}` });
   }
   return out;
 }
@@ -607,7 +666,7 @@ export async function viewSeries(raw) {
     let last = null;
     body.replaceChildren(...list.map((r) => {
       const start = last !== r.p; last = r.p;
-      return h('tr', { class: `${start ? 'exp-start' : ''}${r.p.void ? ' voided' : ''}`, onclick: (e) => { if (!e.target.closest('a')) location.hash = `#/v/${r.p.vol}/${r.p.num}`; } },
+      return h('tr', { class: `${start ? 'exp-start' : ''}${r.p.void ? ' voided' : ''}${r.p.outcome ? ` oc-${r.p.outcome}` : ''}`, onclick: (e) => { if (!e.target.closest('a')) location.hash = `#/v/${r.p.vol}/${r.p.num}`; } },
         h('td', { class: 'c-date' }, start ? r.p.date : ''),
         h('td', { class: 'mono' }, start ? h('a', { href: `#/v/${r.p.vol}/${r.p.num}`, title: r.p.title }, r.p.xid || `p. ${r.p.num}`) : '', r.no ? h('span', { class: 'sno' }, r.no) : null),
         cols.map((c) => h('td', { class: isResultCol(c) ? 'res' : null }, r.vals[c] ?? '')),
@@ -637,7 +696,7 @@ export async function viewSeries(raw) {
       h('h2', null, '各次实验'),
       h('ol', { class: 'ledger-rows series-list' }, [...ps].reverse().map((p) => h('li', null, h('a', { href: `#/v/${p.vol}/${p.num}` },
         h('span', { class: 'l-date' }, p.date),
-        h('span', { class: 'l-title' }, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, p.title, p.void ? h('span', { class: 'void-tag' }, '已作废') : null),
+        h('span', { class: 'l-title' }, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, p.title, p.void ? h('span', { class: 'void-tag' }, '已作废') : null, outcomeTag(p)),
         h('span', { class: 'l-where' }, `${(p.samples || []).length} 个样品`)))))));
 }
 
@@ -925,18 +984,15 @@ export async function openNewExperiment(volId, { series: presetSeries = '' } = {
     const bodyText = [
       '## 目的', '', ...(hypSel.value ? [hypBlock(hypSel.value, ''), ''] : []), purpose.value.trim() || '', '',
       '## 条件与结果', '',
-      '> 编号与纸质记录卡一一对应。结果可用“录入表格”填写；Keithley 数据同步后自动填入空着的结果格。', '',
       `\`\`\`samples\n${toCSV([t.cols, ...t.rows]).trimEnd()}\n\`\`\``, '',
       ...(() => {
         // Steps carried over from the last run of the series, or from the SOP, so only what changed needs editing.
         const st = seriesSteps || (p && readSteps(p.body));
         return st?.length ? ['## 操作步骤', '', `\`\`\`steps\n${stepsText(st)}\n\`\`\``, ''] : [];
       })(),
-      '## 与 SOP 的偏离', '', '- ', '',
-      '## 现象与讨论', '', '',
+      '## 结果', '', '',
+      '## 讨论', '', '',
       '## 结论', '', '',
-      '## 下一步', '', '- ', '',
-      '## 照片', '',
     ].join('\n');
     try {
       const r = await lib.savePage({ vol, isNew: true, fm, body: bodyText, attachments: [], message: `New experiment ${xid}` });

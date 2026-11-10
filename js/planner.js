@@ -11,6 +11,14 @@ import { hero, redrawHome, uid, cardHead, foldList } from './home.js';
 import { toggleFollowup } from './pages.js';
 import { route } from './app.js';
 import { weekBoard } from './weekboard.js';
+import { LOOSE_COLOR, pinTopicsIn, topicsOf } from './finds.js';
+
+// Which research direction (课题) a project belongs to: the one picked, else the one of its first linked volume.
+export function projectTopic(p, topics) {
+  return topics.find((t) => t.id === p.topic) || (p.topic === '' ? null : topics.find((t) => (p.vols || []).some((v) => t.id === `v:${v}`))) || null;
+}
+export const topicChip = (tp) => h('span', { class: 'tp-chip', style: { '--k': tp ? tp.color : LOOSE_COLOR } }, tp ? tp.name : '未归类');
+let boardTopic = '*';
 
 // ----- projects (课题): one list from a first idea to a finished grant; kept with the planner -----
 // Mark a project as reviewed: one line of current thinking, then the next review is scheduled.
@@ -38,21 +46,32 @@ const reviewText = (p) => (p.every ? (p.nextReview ? (daysFrom(p.nextReview) <= 
 export async function viewProjects() {
   const board = h('div', { class: 'pj-board' });
   const ended = h('div', { class: 'pj-ended' });
+  const filter = h('div', { class: 'clip-chips tp-filters', role: 'group', 'aria-label': '按方向筛选' });
   const draw = async () => {
-    const { projects } = await loadPlanner();
-    const card = (p) => h('div', { class: `tile pj-card pr-${p.priority || '中'}`, onclick: (e) => { if (!e.target.closest('a, button')) editProject(p); } },
+    const doc = await loadPlanner();
+    const topics = topicsOf(doc);
+    const tOf = (p) => projectTopic(p, topics);
+    const all = doc.projects;
+    const projects = boardTopic === '*' ? all : all.filter((p) => (tOf(p)?.id || '') === boardTopic);
+    const order = (p) => { const k = topics.findIndex((t) => t.id === tOf(p)?.id); return k < 0 ? 99 : k; };
+    const n = (id) => all.filter((p) => p.stage !== '已结束' && (tOf(p)?.id || '') === id).length;
+    filter.replaceChildren(...[['*', '全部方向', null, all.filter((p) => p.stage !== '已结束').length], ...topics.map((t) => [t.id, t.name, t.color, n(t.id)]), ['', '未归类', LOOSE_COLOR, n('')]]
+      .filter(([id, , , k]) => id === '*' || k || boardTopic === id)
+      .map(([id, label, color, k]) => h('button', { type: 'button', class: `chip tp-filter${boardTopic === id ? ' on' : ''}`, style: color ? { '--k': color } : null, 'aria-pressed': String(boardTopic === id), onclick: () => { boardTopic = id; draw(); } }, label, h('b', null, String(k)))));
+    const card = (p) => h('div', { class: `tile pj-card pr-${p.priority || '中'}`, style: { '--k': tOf(p)?.color || LOOSE_COLOR }, onclick: (e) => { if (!e.target.closest('a, button')) editProject(p); } },
       h('div', { class: 'pj-top' }, h('span', { class: 'bi-kind' }, p.kind || '课题'), p.priority === '高' ? h('span', { class: 'pj-hi' }, '高优先') : null,
         h('span', { class: 'pj-move' },
           h('button', { class: 'btn icon small ghost', type: 'button', title: '移到上一阶段', 'aria-label': '移到上一阶段', disabled: PROJECT_STAGE.indexOf(p.stage) <= 0, onclick: () => moveStage(p.id, -1) }, '‹'),
           h('button', { class: 'btn icon small ghost', type: 'button', title: '移到下一阶段', 'aria-label': '移到下一阶段', disabled: PROJECT_STAGE.indexOf(p.stage) >= PROJECT_STAGE.length - 1, onclick: () => moveStage(p.id, 1) }, '›'))),
       h('h3', null, p.title),
+      h('div', null, topicChip(tOf(p))),
       p.why ? h('p', { class: 'pj-why' }, p.why) : null,
       p.next || p.due ? h('div', { class: 'bi-meta' }, p.next ? h('span', null, `下一步：${p.next}`) : null, p.due ? h('span', { class: 'due-tag' }, `截止 ${p.due}`) : null) : null,
       (p.vols || []).length ? h('div', { class: 'bi-vols' }, p.vols.map((id) => lib.volume(id)).filter(Boolean).flatMap((v) => [h('a', { href: `#/v/${v.id}` }, v.title), h('a', { class: 'bi-m', href: `#/v/${v.id}/methods` }, '方法细节')])) : null,
       p.every ? h('div', { class: 'pj-review' }, h('span', { class: daysFrom(p.nextReview || '9999-12-31') <= 0 ? 'due' : null }, reviewText(p)),
         h('button', { class: 'btn small', type: 'button', onclick: () => reviewProject(p.id) }, '回顾')) : null);
     board.replaceChildren(...PROJECT_STAGE.slice(0, -1).map((st) => {
-      const list = projects.filter((p) => (p.stage || '想法') === st);
+      const list = projects.filter((p) => (p.stage || '想法') === st).sort((a, b) => order(a) - order(b));
       return h('section', { class: 'pj-col' }, h('h2', null, st, h('span', null, String(list.length))), list.map(card),
         h('button', { class: 'btn small ghost pj-add', type: 'button', onclick: () => editProject(null, { stage: st }) }, icon('plus', 14), st === '想法' ? '记一个想法' : '新建'));
     }));
@@ -65,7 +84,7 @@ export async function viewProjects() {
     topbar({ back: '#/', backLabel: '首页', title: '课题看板', sub: '想法 → 调研 → 申请 → 进行 → 结题', actions: [
       h('button', { class: 'btn primary', type: 'button', onclick: () => editProject(null, { stage: '想法' }) }, icon('plus', 18), h('span', null, '新建课题'))] }),
     demoBanner(),
-    h('div', { class: 'pj-wrap' }, h('p', { class: 'muted pj-lead' }, '潜在研究课题就是“想法 / 调研”阶段的课题：点 ‹ › 推进阶段，点卡片修改；设了回顾周期的，到期会出现在今日待办。'), board, ended));
+    h('div', { class: 'pj-wrap' }, h('p', { class: 'muted pj-lead' }, '点 ‹ › 推进阶段，点卡片修改。每张卡片归到一个研究方向，颜色与课题手记一致。'), filter, board, ended));
 }
 
 // ----- calendar export -----
@@ -253,9 +272,13 @@ export function editProject(p, preset = {}) {
   const isNew = !p; const x = p ? { ...p } : { id: uid('P'), kind: '课题', stage: '想法', priority: '中', every: 0, vols: [], created: nowISO(), ...preset };
   const f = (k, label, attrs = {}) => { const el = h('input', { id: `pj-${k}`, value: x[k] || '', ...attrs }); return [h('label', { for: `pj-${k}` }, label), el]; };
   const sel = (k, label, opts) => [h('label', { for: `pj-${k}` }, label), h('select', { id: `pj-${k}` }, opts.map((o) => h('option', { selected: x[k] === o }, o)))];
+  const topics = topicsOf(planLocal?.doc);
+  const cur = isNew && boardTopic !== '*' ? boardTopic : projectTopic(x, topics)?.id || '';
+  const dir = h('select', { id: 'pj-topic' }, [{ id: '', name: '未归类' }, ...topics].map((o) => h('option', { value: o.id, selected: cur === o.id }, o.name)));
   const vols = h('div', { class: 'check-list' }, lib.volumes().map((v) => h('label', { class: 'check' }, h('input', { type: 'checkbox', value: v.id, checked: (x.vols || []).includes(v.id) }), ` ${v.title}`)));
   const body = h('div', { class: 'form' }, ...f('title', '名称', { placeholder: '例如：国自然青年基金 · 唾液 OECT 早筛' }),
     h('div', { class: 'pair' }, h('div', null, ...sel('kind', '类型', PROJECT_KIND)), h('div', null, ...sel('stage', '阶段', PROJECT_STAGE))),
+    h('label', { for: 'pj-topic' }, '所属方向（和哪个大课题最相关）'), dir,
     ...f('next', '下一个节点', { placeholder: '例如：提交申请书 / 中期报告 / 完成预实验' }), ...f('due', '截止日期', { type: 'date' }),
     h('label', { for: 'pj-why' }, '为什么值得做'), h('textarea', { id: 'pj-why', rows: 3, placeholder: '动机、科学问题、和现有课题的关系…' }, x.why || ''),
     h('div', { class: 'pair' }, h('div', null, ...sel('priority', '优先级', PROJECT_PRIORITY)),
@@ -273,8 +296,9 @@ export function editProject(p, preset = {}) {
         if (every !== Number(x.every || 0) || (every && !x.nextReview)) x.nextReview = every ? addDays(todayISO(), every) : undefined;
         x.every = every;
         x.vols = [...vols.querySelectorAll('input:checked')].map((c) => c.value);
+        x.topic = dir.value;
         if (!x.title) { toast('写一个名称。'); return false; }
-        changePlanner((d) => { const k = d.projects.findIndex((y) => y.id === x.id); if (k >= 0) d.projects[k] = x; else d.projects.push(x); }, `Board: ${isNew ? 'add' : 'edit'} project`, redrawAll);
+        changePlanner((d) => { if (x.topic) pinTopicsIn(d); const k = d.projects.findIndex((y) => y.id === x.id); if (k >= 0) d.projects[k] = x; else d.projects.push(x); }, `Board: ${isNew ? 'add' : 'edit'} project`, redrawAll);
       } }],
   });
 }

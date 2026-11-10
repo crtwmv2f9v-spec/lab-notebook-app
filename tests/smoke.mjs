@@ -253,6 +253,43 @@ try {
     if (r.before < 3 || !r.hot || r.ages[0] !== '挂了 9 天' || r.added.cat !== '催办' || r.added.date || r.added.age !== '今天记下' || !r.added.inStrip || !r.sched.date || !r.sched.inDay || r.back.date || r.back.cat !== '催办' || !r.back.inStrip || !r.ticked.done || r.ticked.age !== '已办完' || r.nullText) throw new Error(JSON.stringify(r));
     return `${r.before} waiting, oldest ${r.ages[0]}; added, scheduled to today, dragged back, ticked`;
   });
+  await check('refile-topics-outcome', async () => {
+    await go('#/', "document.querySelector('.wb-plan .wb-topic') && document.querySelector('.wb-col.is-today .wb-refile')");
+    const r = await evaluate(`const p = await import('./js/planner.js'); const f = await import('./js/finds.js'); const lab = await import('./js/lab.js'); const hm = await import('./js/home.js');
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const doc = await p.loadPlanner(); const topics = f.topicsOf(doc);
+      const groups = [...document.querySelectorAll('.wb-plan .wb-topic .wb-glabel')].map((e) => e.firstChild.textContent);
+      const colours = new Set(topics.map((t) => t.color)).size === topics.length;
+      // change a dated item's kind through its menu
+      const li = [...document.querySelectorAll('.wb-col.is-today .wb-card')].find((e) => e.textContent.includes('Keithley'));
+      li.querySelector('.wb-refile').click(); await wait(100);
+      [...document.querySelectorAll('.menu .menu-item')].find((b) => b.textContent.includes('杂事')).click(); await wait(500);
+      const x = (await p.loadPlanner()).tasks.find((y) => y.text.includes('Keithley')); const kind = x.cat;
+      await p.changeTasks((l) => { l.find((y) => y.id === x.id).cat = '仪器'; }, 'test'); await wait(300);
+      // a weekly goal moved to another topic
+      const g = [...document.querySelectorAll('.wb-plan .wb-card')].find((e) => e.textContent.includes('整理试剂库'));
+      g.querySelector('.wb-refile').click(); await wait(100);
+      [...document.querySelectorAll('.menu .menu-item')].find((b) => b.textContent.includes(topics[0].name)).click(); await wait(500);
+      const gt = (await p.loadPlanner()).tasks.find((y) => y.text === '整理试剂库'); const goalTopic = gt.topic === topics[0].id;
+      await p.changePlanner((d) => { delete d.tasks.find((y) => y.id === gt.id).topic; delete d.topics; }, 'test'); await wait(300);
+      const ics = lab.icsFor([{ date: '2026-11-10', time: '14:00', end: '17:00', summary: 'a', uid: 'u1' }, { date: '2026-11-11', allDay: true, summary: 'b', uid: 'u2' }]);
+      const wx = hm.wechat('一篇关于 OECT 的推送 https://mp.weixin.qq.com/s/AbCd123');
+      const put = lab.putSection('## 目的\\n\\nx\\n\\n## 下一步\\n\\n- y\\n', '结论', 'z', ['下一步']);
+      return { groups, colours, kind, goalTopic, ics: ics.includes('DTSTART:20261110T060000Z') && ics.includes('DTEND:20261110T090000Z') && ics.includes('DTSTART;VALUE=DATE:20261111') && ics.includes('TRIGGER:-PT10M'), wx, put: put.indexOf('## 结论') < put.indexOf('## 下一步') && put.includes('z') };`);
+    if (r.groups.length < 2 || !r.colours || r.kind !== '杂事' || !r.goalTopic || !r.ics || r.wx.wx !== 'https://mp.weixin.qq.com/s/AbCd123' || r.wx.text !== '一篇关于 OECT 的推送' || !r.put) throw new Error(JSON.stringify(r));
+    await go('#/v/oect', "document.querySelector('.toc-table .series-row .oc-tag.fail') && document.querySelector('.toc-table .series-row .oc-tag.ok')");
+    await go('#/v/oect/3', "document.querySelector('.oc-banner.fail') && document.querySelector('.wrap-bar.fail')");
+    await go('#/v/oect/2', "document.querySelector('.wrap-bar .btn')");
+    const w = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const pg = await import('./js/pages.js'); const core = await import('./js/core.js'); const m = await import('./js/model.js');
+      document.querySelector('.wrap-bar .btn').click(); await wait(400);
+      document.querySelector('#wu-res').value = '测试结果'; document.querySelector('#wu-disc').value = '测试讨论'; document.querySelector('.oc-seg .oc-fail').click(); document.querySelector('#wu-note').value = '测试原因';
+      [...document.querySelectorAll('.modal-root .btn')].find((b) => b.textContent.trim() === '保存').click(); await wait(1500);
+      const { fm, body } = m.parseFrontMatter(await core.lib.readPage('oect', 2));
+      const banner = document.querySelector('.oc-banner.fail')?.textContent || '';
+      return { outcome: fm.outcome, note: fm.outcome_note, res: body.includes('## 结果\\n\\n测试结果'), disc: /## (现象与)?讨论\\n\\n测试讨论/.test(body), order: body.indexOf('测试结果') < body.indexOf('测试讨论') && body.indexOf('测试讨论') < body.indexOf('## 结论'), banner, entry: core.lib.page('oect', 2).outcome };`);
+    if (w.outcome !== 'fail' || w.note !== '测试原因' || !w.res || !w.disc || !w.order || !w.banner.includes('测试原因') || w.entry !== 'fail') throw new Error(JSON.stringify(w));
+    return `goal groups ${r.groups.join(' / ')}; kind and topic changed by menu; page 2 wrapped up as 行不通`;
+  });
   await check('time-zone-and-times', async () => {
     await go('#/', "document.querySelector('.wb-col.is-today .wb-add-btn')");
     const r = await evaluate(`const m = await import('./js/model.js'); const w = await import('./js/weekboard.js'); const p = await import('./js/planner.js');

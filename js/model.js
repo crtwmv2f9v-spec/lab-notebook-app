@@ -81,7 +81,7 @@ function q(s) {
   const plain = /^[A-Za-z0-9][\w .\-/+()]*$/.test(s) && s.trim() === s && !/^(true|false|null|yes|no|on|off)$/i.test(s);
   return plain ? s : JSON.stringify(s);
 }
-const KEY_ORDER = ['title', 'date', 'id', 'series', 'hypotheses', 'void', 'tags', 'protocol', 'reagents', 'data', 'followups', 'continues', 'signed', 'signer', 'amended'];
+const KEY_ORDER = ['title', 'date', 'id', 'series', 'hypotheses', 'void', 'outcome', 'outcome_note', 'tags', 'protocol', 'reagents', 'data', 'followups', 'continues', 'signed', 'signer', 'amended'];
 export function serializePage(fm, body) {
   const keys = [...KEY_ORDER.filter((k) => k in fm), ...Object.keys(fm).filter((k) => !KEY_ORDER.includes(k))];
   const lines = [];
@@ -142,6 +142,7 @@ export function makeEntry(vol, num, md, sha) {
     links: extractLinks(body, vol),
     xid: xid || null,
     void: fm.void || null,
+    outcome: ['ok', 'fail'].includes(fm.outcome) ? fm.outcome : null,
     series: String(fm.series || '').trim() || null,
     protocol: fm.protocol || null,
     reagents: fm.reagents || [],

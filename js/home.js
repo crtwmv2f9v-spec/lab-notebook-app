@@ -6,12 +6,12 @@ import { search } from './search.js';
 import { h, icon } from './util.js';
 import { S, demoBanner, lib, modal, toast, topbar, view, menu } from './core.js';
 import { clipCounts, loadClips } from './clips.js';
-import { autoFileFinds, findsCard } from './finds.js';
+import { autoFileFinds, findsCard, topicsOf } from './finds.js';
 import { weekBoard } from './weekboard.js';
 import {
   PAPER_STAGE, WEEKDAYS, addBox, allFollowups, changeTasks, editPaper, editProject, exportIcs,
   editable, isGoal, loadPlanner, moveTask, newTask, reminderRow, ring, taskRow,
-  toggleTask, weekStart,
+  toggleTask, weekStart, projectTopic, topicChip,
 } from './planner.js';
 import { openNewExperiment } from './pages.js';
 import { openExport } from './printing.js';
@@ -33,7 +33,7 @@ export function continueCard() {
   const box = h('section', { class: 'cont-wrap' }, h('div', { class: 'tile cont-card' }, cardHead('接着做', sub), cols));
   const item = (x) => h('li', null, h('a', { class: 'cont-item', href: x.href },
     h('span', { class: 'ci-title' }, x.tag ? h('span', { class: 'xid-tag' }, x.tag) : null, x.title),
-    h('span', { class: 'ci-meta' }, x.where ? h('span', null, x.where) : null, x.chips.map((c) => h('span', { class: `ci-chip${/草稿|冲突|缺|空/.test(c) ? ' warn' : ''}` }, c)))));
+    h('span', { class: 'ci-meta' }, x.where ? h('span', null, x.where) : null, x.chips.map((c) => h('span', { class: `ci-chip${/草稿|冲突|缺|空/.test(c) ? ' warn' : ''}${c === '可重复' ? ' oc-ok' : c === '行不通' ? ' oc-fail' : ''}` }, c)))));
   const col = (title, list, empty) => h('div', { class: 'cont-col' }, h('h3', null, title, list.length ? h('span', null, String(list.length)) : null),
     list.length ? foldList(h('ul', null, list.map(item)), `cont-${title}`) : h('p', { class: 'muted small' }, empty));
   (async () => {
@@ -52,6 +52,7 @@ export function continueCard() {
     const pages = lib.allPages().filter((p) => !p.void && !p.pending).sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.num - a.num).slice(0, 25);
     for (const p of pages) {
       const chips = [];
+      if (p.outcome) chips.push(p.outcome === 'ok' ? '可重复' : '行不通');
       if (!p.signed) chips.push('未签名');
       if (p.xid) {
         try {
@@ -292,7 +293,7 @@ export function catList(tasks, cat, { placeholder, dated = false, dateRequired =
   const wk = weekStart(todayISO());
   const add = dated
     ? addDated(placeholder, (text, date) => changeTasks((l) => l.push(newTask(text, date ? weekStart(date) : wk, date, cat)), `Planner: add ${cat}`, redrawHome), { dateRequired })
-    : addBox(placeholder, (text) => changeTasks((l) => l.push(newTask(text, wk, null, cat)), `Planner: add ${cat}`, redrawHome).then(() => { if (cat === '文献') fillPaperRefs(); }));
+    : addBox(placeholder, (text) => changeTasks((l) => l.push({ ...newTask(text, wk, null, cat), ...(cat === '文献' ? wechat(text) : {}) }), `Planner: add ${cat}`, redrawHome).then(() => { if (cat === '文献') fillPaperRefs(); }));
   add.querySelector('input').dataset.k = `cat-${cat}`;
   const row = (x) => (cat === '文献' ? paperRow(x) : taskRow(x, { redraw: redrawHome, showCat: false, meta: linkMeta(x.text) }));
   const rows = [...open.map(row), ...done.map(row)];
@@ -389,12 +390,23 @@ export function paperKeywords(title) {
   return pick.join(' · ');
 }
 let clipN = new Map();
+// A WeChat official-account article pasted into the reading list ("标题 https://mp.weixin.qq.com/s/…", or the link alone):
+// the link is kept apart from the title, so the title stays readable and can be rewritten. A DOI typed into the title
+// later still gets looked up, and the entry then shows the paper with the article link beside it.
+export function wechat(text) {
+  const m = String(text).match(/https?:\/\/mp\.weixin\.qq\.com\/\S+/);
+  if (!m) return {};
+  const title = String(text).replace(m[0], '').replace(/[\s|｜·:：-]+$/, '').trim();
+  return { text: title || '公众号文章（点这里写题目）', wx: m[0] };
+}
+const wxLink = (x) => (x.wx ? h('a', { class: 'wx-link', href: x.wx, target: '_blank', rel: 'noopener', title: '打开微信公众号原文' }, '公众号') : null);
 function paperRow(x) {
   const href = x.ref?.doi ? `https://doi.org/${x.ref.doi}` : linkMeta(x.text)?.href;
+  if (!x.ref && x.wx) { const li = taskRow(x, { redraw: redrawHome, showCat: false, meta: h('span', { class: 'paper-meta' }, wxLink(x), paperKey(x.text) ? '正在查找原文…' : '题目里加上原文 DOI 可自动补全') }); if (!x.date) li.querySelector('.date-chip')?.remove(); return li; }
   if (!x.ref) return taskRow(x, { redraw: redrawHome, showCat: false, meta: paperKey(x.text) ? h('span', { class: 'paper-meta' }, '正在查找题目…', linkMeta(x.text)) : linkMeta(x.text) });
   const first = String(x.ref.authors || '').split(/[ ,]/)[0];
   const li = taskRow(x, { redraw: redrawHome, showCat: false,
-    meta: h('span', { class: 'paper-meta' }, [[first, x.ref.year].filter(Boolean).join(' '), x.ref.journal].filter(Boolean).join(' · '), href ? h('a', { href, target: '_blank', rel: 'noopener' }, '打开') : null, clipN.get(x.id) ? h('a', { href: `#/clips?paper=${x.id}`, title: '从这篇存下的图' }, `图 ${clipN.get(x.id)}`) : null) });
+    meta: h('span', { class: 'paper-meta' }, [[first, x.ref.year].filter(Boolean).join(' '), x.ref.journal].filter(Boolean).join(' · '), href ? h('a', { href, target: '_blank', rel: 'noopener' }, '打开') : null, wxLink(x), clipN.get(x.id) ? h('a', { href: `#/clips?paper=${x.id}`, title: '从这篇存下的图' }, `图 ${clipN.get(x.id)}`) : null) });
   // Keywords: generated from the title, click to rewrite them in your own words (kept as `keys`).
   const keys = x.keys || paperKeywords(x.ref.title) || x.ref.title;
   const main = li.querySelector('.task-main > .task-text');
@@ -433,19 +445,21 @@ export function homeRails() {
     const paperMethods = await loadMethods(lib).catch(() => []);
     clipN = await clipCounts();
     // 课题与基金
+    const topics = topicsOf(doc); const tOf = (x) => projectTopic(x, topics);
+    const byTopic = (a, b) => { const k = (x) => { const i = topics.findIndex((t) => t.id === tOf(x)?.id); return i < 0 ? 99 : i; }; return k(a) - k(b); };
     const active = projects.filter((x) => !['想法', '调研', '已结束'].includes(x.stage || '想法'));
     const early = (st) => projects.filter((x) => (x.stage || '想法') === st).length;
     const pj = railCard('课题与基金', `${active.length} 个在推进 · 想法 ${early('想法')} · 调研 ${early('调研')}`,
       active.length ? h('ul', { class: 'board-list' }, [...active].sort((a, b) => String(a.due || '9').localeCompare(String(b.due || '9'))).map((x) => h('li', { class: 'board-item', onclick: (e) => { if (!e.target.closest('a')) editProject(x); } },
-        h('div', { class: 'bi-top' }, h('span', { class: 'bi-kind' }, x.kind || '课题'), h('b', null, x.title)),
+        h('div', { class: 'bi-top' }, h('span', { class: 'bi-kind' }, x.kind || '课题'), h('b', null, x.title), topicChip(tOf(x))),
         h('div', { class: 'bi-meta' }, h('span', { class: 'bi-stage' }, x.stage), x.next ? h('span', null, `下一步：${x.next}`) : null, dueTag(x.due)),
         (x.vols || []).length ? h('div', { class: 'bi-vols' }, x.vols.map((id) => lib.volume(id)).filter(Boolean).flatMap((v) => [h('a', { href: `#/v/${v.id}` }, v.title), h('a', { class: 'bi-m', href: `#/v/${v.id}/methods` }, '方法细节')])) : null)))
         : h('p', { class: 'muted small' }, '还没有在推进的课题。'),
       ...['调研', '想法'].map((st) => {
-        const list = projects.filter((x) => (x.stage || '想法') === st);
+        const list = projects.filter((x) => (x.stage || '想法') === st).sort(byTopic);
         return list.length ? h('div', { class: 'pj-early' }, h('h4', null, `${st} ${list.length}`),
           h('ul', { class: 'idea-list' }, list.map((x) => h('li', { onclick: () => editProject(x), title: x.why || '点击修改' },
-            h('b', null, x.title), x.why ? h('span', { class: 'idea-why' }, x.why) : null, x.next ? h('span', { class: 'idea-why' }, `下一步：${x.next}`) : null)))) : null;
+            h('b', null, x.title), topicChip(tOf(x)), x.why ? h('span', { class: 'idea-why' }, x.why) : null, x.next ? h('span', { class: 'idea-why' }, `下一步：${x.next}`) : null)))) : null;
       }),
       h('div', { class: 'rail-actions' },
         h('a', { class: 'btn small', href: '#/projects' }, '课题看板 ›'),
@@ -460,7 +474,7 @@ export function homeRails() {
           h('a', { class: 'bi-m', href: `#/methods/a/${x.id}`, title: '这篇文章的方法卡片' }, `方法卡片 ${paperMethods.filter((m) => (m.papers || []).includes(x.id)).length}`))))),
       h('button', { class: 'btn small rail-add', type: 'button', onclick: () => editPaper(null) }, icon('plus', 14), '新建论文'));
     for (const [card, key] of [[pj, 'pj'], [pp, 'pp']]) { const ul = card.querySelector('ul.board-list'); if (ul) foldList(ul, key); }
-    const rd = catList(tasks, '文献', { placeholder: '粘贴 DOI、链接或题目' });
+    const rd = catList(tasks, '文献', { placeholder: '粘贴 DOI、链接、题目或公众号文章链接' });
     setTimeout(fillPaperRefs, 300);
     left.replaceChildren(
       h('p', { class: 'rail-title' }, '科研主线'), pj, pp,

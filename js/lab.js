@@ -93,6 +93,8 @@ export function daysFrom(iso, today = todayISO()) {
 }
 
 // Calendar file so reminders reach the phone's own calendar app.
+// A UTC+8 wall-clock day and time as a UTC stamp, so every calendar shows it at the right moment.
+const utcStamp = (date, time, plusMin = 0) => new Date(Date.parse(`${date}T${time === '24:00' ? '23:59' : time}:00+08:00`) + plusMin * 60000).toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
 export function icsFor(items) {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
   const escText = (s) => String(s).replace(/[\\;,]/g, (c) => `\\${c}`).replace(/\n/g, '\\n');
@@ -100,11 +102,12 @@ export function icsFor(items) {
     'BEGIN:VEVENT',
     `UID:${it.uid || `${stamp}-${i}`}@labnotebook`,
     `DTSTAMP:${stamp}`,
-    `DTSTART:${it.date.replace(/-/g, '')}T090000`,
-    `DTEND:${it.date.replace(/-/g, '')}T093000`,
+    ...(it.allDay ? [`DTSTART;VALUE=DATE:${it.date.replace(/-/g, '')}`, `DTEND;VALUE=DATE:${addDays(it.date, 1).replace(/-/g, '')}`]
+      : it.time ? [`DTSTART:${utcStamp(it.date, it.time)}`, `DTEND:${utcStamp(it.date, it.end || it.time, it.end ? 0 : 30)}`]
+        : [`DTSTART:${it.date.replace(/-/g, '')}T090000`, `DTEND:${it.date.replace(/-/g, '')}T093000`]),
     `SUMMARY:${escText(it.summary)}`,
     it.description ? `DESCRIPTION:${escText(it.description)}` : null,
-    'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${escText(it.summary)}`, 'TRIGGER:-PT0M', 'END:VALARM',
+    'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${escText(it.summary)}`, `TRIGGER:${it.allDay ? 'PT9H' : it.time ? '-PT10M' : '-PT0M'}`, 'END:VALARM',
     'END:VEVENT',
   ].filter(Boolean).join('\r\n'));
   return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Lab notebook//CN', 'CALSCALE:GREGORIAN', ...ev, 'END:VCALENDAR', ''].join('\r\n');
@@ -269,6 +272,19 @@ export function sectionOf(body, name) {
   if (!name) return String(body || '');
   const lines = String(body || '').split('\n'); const r = sectionRange(lines, name);
   return r ? lines.slice(r[0], r[1]).join('\n').trim() : null;
+}
+// Put `content` under `## name`; a missing section is added before the first of the `before` headings (else at the end).
+export function putSection(body, name, content, before = []) {
+  const lines = String(body || '').split('\n');
+  if (sectionRange(lines, name)) return replaceSection(body, name, content);
+  let fence = false; let at = -1;
+  for (let i = 0; i < lines.length && at < 0; i++) {
+    if (/^```/.test(lines[i])) fence = !fence;
+    const m = !fence && lines[i].match(headingRE);
+    if (m && m[1].length === 2 && before.includes(m[2])) at = i;
+  }
+  if (at < 0) return `${String(body || '').trimEnd()}\n\n## ${name}\n\n${content}\n`;
+  return [...lines.slice(0, at), `## ${name}`, '', content, '', ...lines.slice(at)].join('\n').replace(/\n{3,}/g, '\n\n');
 }
 export function replaceSection(body, name, content) {
   const lines = String(body || '').split('\n'); const r = sectionRange(lines, name);

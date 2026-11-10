@@ -2207,3 +2207,39 @@ input.find-text { white-space: normal; }
   .wb-nag-body { padding: 8px 10px; }
 }
 @media (max-width: 760px) { .wb .wb-nag-list { grid-template-columns: 1fr; } .wb-nag-s { display: none; } }
+/* v52: refile a card (kind / topic); topic colours; goals by topic */
+.wb-extra { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.wb-extra:empty { display: none; }
+.wb-refile { display: none; padding: 2px 6px; border: 0; border-radius: 980px; background: color-mix(in srgb, var(--k, var(--card-ink)) 14%, transparent); color: var(--k, var(--card-ink-2)); font: 600 10.5px/1.5 var(--font-ui); cursor: pointer; white-space: nowrap; }
+.wb .task:hover .wb-refile, .wb .task:focus-within .wb-refile { display: inline-block; }
+@media (max-width: 1100px), (hover: none) { .wb-refile { display: inline-block; } }
+.wb-topic .wb-glabel { letter-spacing: 0; font-size: 11.5px; }
+.wb-plan .wb-topic + .wb-topic { margin-top: 8px; }
+.nt-tab.tinted > span::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--k); margin-right: 6px; vertical-align: 1px; }
+.nt-tab.tinted.on { color: var(--k); border-bottom-color: var(--k); } .nt-tab.tinted.on b { background: color-mix(in srgb, var(--k) 16%, transparent); color: var(--k); }
+.nt-topic[style] { color: var(--k); background: color-mix(in srgb, var(--k) 13%, transparent); }
+.nt-color { flex: none; width: 34px !important; height: 34px; padding: 2px !important; border-radius: 9px; cursor: pointer; }
+.tp-chip { display: inline-block; padding: 1px 7px; border-radius: 980px; font: 600 10.5px/1.6 var(--font-ui); color: var(--k); background: color-mix(in srgb, var(--k) 13%, transparent); white-space: nowrap; vertical-align: 1px; }
+.tp-chip::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--k); margin-right: 4px; vertical-align: 1px; }
+.bi-top .tp-chip, .idea-list .tp-chip { margin-left: 6px; }
+.pj-card { box-shadow: inset 0 3px 0 var(--k, transparent), var(--card-shadow); }
+.tp-filters { margin: 0 0 14px; }
+.tp-filter[style]::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--k); margin-right: 6px; }
+.tp-filter b { margin-left: 6px; font-weight: 600; opacity: .65; }
+/* v52: verdict on a record — green = repeatable, red = dead end */
+.oc-tag { display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 980px; font: 650 11.5px/1.7 var(--font-ui); white-space: nowrap; vertical-align: 1px; }
+.oc-tag.ok, .ci-chip.oc-ok { color: #1a7f4b; background: #dff3e6; }
+.oc-tag.fail, .ci-chip.oc-fail { color: #c21f2b; background: #fde3e3; }
+.toc-table tr.oc-ok > td:first-child, table.series-table tr.oc-ok > td:first-child { box-shadow: inset 4px 0 0 #30a46c; }
+.toc-table tr.oc-fail > td:first-child, table.series-table tr.oc-fail > td:first-child { box-shadow: inset 4px 0 0 #e5484d; }
+.toc-table tr.oc-fail a { color: #c21f2b; }
+.oc-banner { margin: 10px 0; padding: 8px 12px; border-radius: 8px; font: 500 14px/1.5 var(--font-ui); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.oc-banner.ok { color: #14663c; background: #dff3e6; box-shadow: inset 4px 0 0 #30a46c; }
+.oc-banner.fail { color: #a11722; background: #fde3e3; box-shadow: inset 4px 0 0 #e5484d; }
+.wrap-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 22px 0 6px; padding: 9px 12px; border-radius: 10px; background: color-mix(in srgb, #8e8e93 10%, transparent); font: 500 13.5px/1.4 var(--font-ui); color: var(--ink-2, #555); }
+.wrap-bar.ok { background: #dff3e6; } .wrap-bar.fail { background: #fde3e3; }
+.wrap-bar .wrap-txt { flex: 1; min-width: 160px; } .wrap-bar .oc-tag { margin: 0; }
+.oc-seg { display: flex; gap: 8px; flex-wrap: wrap; } .oc-seg .seg-btn { --k: #8e8e93; } .oc-seg .seg-btn.oc-ok { --k: #30a46c; } .oc-seg .seg-btn.oc-fail { --k: #e5484d; }
+.wrapup textarea { width: 100%; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .wrap-bar.ok, :root:not([data-theme="light"]) .wrap-bar.fail { color: #222; } }
+.wx-link { color: #07c160 !important; font-weight: 600; margin-right: 6px; }

@@ -29,12 +29,16 @@ const INTRO = '当天的零碎发现，原文照录。之后可以分类、改�
 
 // ----- topics: the sub-headings of 课题手记. Until the list is edited it mirrors the notebook's volumes. -----
 export const NO_TOPIC = '';
+// Each topic has its own colour everywhere it shows (tabs, weekly goals, project cards); a default until one is picked.
+export const TOPIC_COLORS = ['#0a84ff', '#30a46c', '#c77c02', '#bf5af2', '#e5484d', '#00a3a3', '#5e5ce6', '#8e8e93'];
+export const LOOSE_COLOR = '#8e8e93';
 export function topicsOf(doc) {
-  if (Array.isArray(doc?.topics)) return doc.topics;
-  return lib.volumes().filter((v) => v.code !== DAILY_CODE).map((v) => ({ id: `v:${v.id}`, name: v.title }));
+  const list = Array.isArray(doc?.topics) ? doc.topics : lib.volumes().filter((v) => v.code !== DAILY_CODE).map((v) => ({ id: `v:${v.id}`, name: v.title }));
+  return list.map((x, i) => ({ ...x, color: x.color || TOPIC_COLORS[i % TOPIC_COLORS.length] }));
 }
+export const pinTopicsIn = (d) => pinTopics(d);
 // Writing a topic id into an item fixes the list in the file, so the id keeps its name.
-const pinTopics = (d) => { if (!Array.isArray(d.topics)) d.topics = topicsOf(d).map((x) => ({ ...x })); };
+function pinTopics(d) { if (!Array.isArray(d.topics)) d.topics = topicsOf(d).map((x) => ({ ...x })); }
 const TOPIC_KEY = 'labnote-note-topic';
 const lastTopic = () => { try { return localStorage.getItem(TOPIC_KEY) || NO_TOPIC; } catch { return NO_TOPIC; } };
 const setLastTopic = (id) => { try { localStorage.setItem(TOPIC_KEY, id); } catch { /* private window */ } };
@@ -110,6 +114,7 @@ const ALL = '*';
 export function findsCard(doc, draw) {
   const topics = topicsOf(doc);
   const tname = new Map(topics.map((x) => [x.id, x.name]));
+  const tcolor = new Map(topics.map((x) => [x.id, x.color]));
   const known = (id) => (id && tname.has(id) ? id : NO_TOPIC);
   if (shownTopic === null) shownTopic = tname.has(lastTopic()) ? lastTopic() : ALL;
   if (shownTopic !== ALL && shownTopic !== NO_TOPIC && !tname.has(shownTopic)) shownTopic = ALL;
@@ -119,12 +124,12 @@ export function findsCard(doc, draw) {
   const t = todayISO();
   const count = (id) => finds.filter((f) => known(f.topic) === id && !f.filed).length + memos.filter((m) => known(m.topic) === id && !m.done).length;
   const loose = finds.some((f) => !known(f.topic)) || memos.some((m) => !known(m.topic));
-  const tab = (id, label, n) => h('button', { type: 'button', class: `nt-tab${cur === id ? ' on' : ''}`, role: 'tab', 'aria-selected': String(cur === id), onclick: () => { shownTopic = id; if (id !== ALL) setLastTopic(id); draw(); } }, h('span', null, label), n ? h('b', null, String(n)) : null);
+  const tab = (id, label, n) => h('button', { type: 'button', class: `nt-tab${cur === id ? ' on' : ''}${tcolor.has(id) ? ' tinted' : ''}`, style: tcolor.has(id) ? { '--k': tcolor.get(id) } : null, role: 'tab', 'aria-selected': String(cur === id), onclick: () => { shownTopic = id; if (id !== ALL) setLastTopic(id); draw(); } }, h('span', null, label), n ? h('b', null, String(n)) : null);
   const addTo = cur === ALL ? NO_TOPIC : cur;
   // move an item to another topic
   const topicChip = (x, where) => {
     const id = known(x.topic);
-    const b = h('button', { type: 'button', class: `nt-topic${id ? '' : ' none'}`, title: '改到别的课题' }, id ? tname.get(id) : '未分类');
+    const b = h('button', { type: 'button', class: `nt-topic${id ? '' : ' none'}`, style: id ? { '--k': tcolor.get(id) } : null, title: '改到别的课题' }, id ? tname.get(id) : '未分类');
     b.addEventListener('click', () => menu(b, [...topics, { id: NO_TOPIC, name: '未分类' }].filter((o) => o.id !== id).map((o) => ({ icon: 'go', label: o.name, run: () => changePlanner((d) => { if (o.id) pinTopics(d); const y = (d[where] || []).find((z) => z.id === x.id); if (y) { if (o.id) y.topic = o.id; else delete y.topic; } }, 'Notes: move to topic', draw) }))));
     return b;
   };
@@ -191,13 +196,14 @@ export function editTopics(doc, draw) {
   const list = topicsOf(doc).map((x) => ({ ...x }));
   const box = h('div', { class: 'recipe-rows' });
   const drawRows = () => box.replaceChildren(...list.map((x, i) => h('div', { class: 'recipe-row nt-row' },
+    h('input', { type: 'color', class: 'nt-color', value: x.color, 'aria-label': '颜色', title: '这个课题的颜色', oninput: (e) => { x.color = e.target.value; } }),
     h('input', { value: x.name, placeholder: '课题名，例如 OECT传感器', 'aria-label': '课题名', oninput: (e) => { x.name = e.target.value; } }),
     h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '上移', title: '上移', disabled: i === 0, onclick: () => { [list[i - 1], list[i]] = [list[i], list[i - 1]]; drawRows(); } }, '↑'),
     h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '删除', title: '删除（里面的记录归到“未分类”）', onclick: () => { list.splice(i, 1); drawRows(); } }, icon('close', 14)))),
-  h('button', { class: 'btn small', type: 'button', onclick: () => { list.push({ id: rid('tp'), name: '' }); drawRows(); box.querySelectorAll('input')[list.length - 1]?.focus(); } }, icon('plus', 14), '加一个课题'));
+  h('button', { class: 'btn small', type: 'button', onclick: () => { list.push({ id: rid('tp'), name: '', color: TOPIC_COLORS.find((c) => !list.some((y) => y.color === c)) || TOPIC_COLORS[list.length % TOPIC_COLORS.length] }); drawRows(); box.querySelectorAll('input')[list.length - 1]?.focus(); } }, icon('plus', 14), '加一个课题'));
   drawRows();
-  modal({ title: '课题手记的课题', body: h('div', { class: 'form' }, h('p', { class: 'muted' }, '每个课题一个标签页。开始时和记录本的卷同名，可以改名、增删、调顺序；删除课题不会删除里面的记录。'), box),
-    buttons: [{ label: '取消' }, { label: '保存', primary: true, run: () => { const out = list.map((x) => ({ id: x.id, name: x.name.trim() })).filter((x) => x.name); changePlanner((d) => { d.topics = out; }, 'Notes: topics', draw); } }] });
+  modal({ title: '课题', body: h('div', { class: 'form' }, h('p', { class: 'muted' }, '课题用在课题手记、本周目标和课题看板里。点色块换颜色；删除课题不会删除里面的记录。'), box),
+    buttons: [{ label: '取消' }, { label: '保存', primary: true, run: () => { const out = list.map((x) => ({ id: x.id, name: x.name.trim(), color: x.color })).filter((x) => x.name); changePlanner((d) => { d.topics = out; }, 'Notes: topics', draw); } }] });
 }
 
 // ----- quick entry from any page -----

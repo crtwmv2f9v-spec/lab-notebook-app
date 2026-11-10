@@ -4,6 +4,7 @@ import { todayISO } from './model.js';
 const SOLUTION_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAKAAAAB4CAIAAAD6wG44AAABDklEQVR42u3RMREAIAwAsSpBCWIrjq0mWJnZCrl7BZ+oWnq4sACwAAuwAAuwAAswYAEWYAEWYAEWYMACLMACLMACLMACDFiABfimMbNXgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAED/gpYgAUYsAWABViABViABVhnG9JjpvdRqp3hAAAAAElFTkSuQmCC';
 const DEVICE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAKAAAAB4CAIAAAD6wG44AAABGklEQVR42u3RsQ0AEBBAUeMoDX+NrTR6G6hIxL3kT/BfmXPo44oFgAVYgAVYgAVYgAELsFIAR3TdDjBgwIABAwYMWIAFWIABAwacArjWtg8wYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCJAgwYMGDAgAEDFmABFmDAgAEfANbjAQYswAIswAIswAIMWN+0AAK9HyA4mQNXAAAAAElFTkSuQmCC';
 const bytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+const monday = () => day(-((new Date(`${todayISO()}T12:00:00`).getDay() + 6) % 7));
 const day = (n) => { const d = new Date(`${todayISO()}T12:00:00`); d.setDate(d.getDate() + n); return todayISO(d); };
 const compact = (iso) => iso.replace(/-/g, '');
 
@@ -65,6 +66,9 @@ tags: [oect, transfer]
         { id: 'td4', text: '双光子打印机 9:00–12:00', week: day(0), date: day(2), cat: '仪器', done: false, created: `${day(-1)}T09:00:00+08:00` },
         { id: 'td5', text: 'Rivnay 2018 Nat. Rev. Mater. OECT 综述 10.1038/natrevmats.2017.86', week: day(0), cat: '文献', done: false, created: `${day(-2)}T09:00:00+08:00` },
         { id: 'td6', text: '报销 PEDOT:PSS 发票', week: day(0), date: day(3), cat: '杂事', done: false, created: `${day(-2)}T09:00:00+08:00` },
+        { id: 'tg1', text: '完成 GOPS 7 天稳定性数据', week: monday(), topic: 'v:oect', done: false, created: `${day(-1)}T09:00:00+08:00` },
+        { id: 'tg2', text: '栅极面积对比出图', week: monday(), topic: 'v:oect', done: true, doneAt: `${day(0)}T10:00:00+08:00`, created: `${day(-1)}T09:00:00+08:00` },
+        { id: 'tg3', text: '整理试剂库', week: monday(), done: false, created: `${day(-1)}T09:00:00+08:00` },
         { id: 'tn1', text: '催财务处：双光子打印机维保合同盖章', week: day(0), cat: '催办', done: false, created: `${day(-9)}T10:00:00+08:00` },
         { id: 'tn2', text: '催供应商补发 PEDOT:PSS 的 COA', week: day(0), cat: '催办', done: false, created: `${day(-4)}T15:20:00+08:00` },
         { id: 'tn3', text: '把动物伦理补充材料交给李老师签字', week: day(0), cat: '催办', done: false, created: `${day(-1)}T09:10:00+08:00` },
@@ -79,7 +83,7 @@ tags: [oect, transfer]
       projects: [
         { id: 'P1', title: '唾液 MMP-8 OECT 牙周炎早筛', kind: '课题', stage: '进行中', next: '完成 7 天稳定性', due: day(12), vols: ['oect'], why: 'MMP-8 是牙周炎活动期的标志物；现有床旁检测灵敏度不足。', priority: '高', every: 14, nextReview: day(0), reviews: [{ at: `${day(-14)}T09:00:00+08:00`, note: '读了 2 篇综述，抗体修饰栅极可行。' }] },
         { id: 'P3', title: '打印 PEDOT:PSS 器件的批间一致性', kind: '课题', stage: '想法', why: '为后续量产与临床样本测试打基础。', priority: '中', every: 30, nextReview: day(12), vols: [] },
-        { id: 'P4', title: '可拉伸 OECT', kind: '课题', stage: '调研', why: '贴附皮肤的长期监测。', priority: '中', every: 0, vols: [] },
+        { id: 'P4', title: '可拉伸 OECT', kind: '课题', stage: '调研', topic: 'v:sample', why: '贴附皮肤的长期监测。', priority: '中', every: 0, vols: [] },
         { id: 'P2', title: '国自然青年基金', kind: '基金', stage: '申请中', next: '提交申请书初稿', due: day(9), vols: [] },
       ],
       papers: [
@@ -91,12 +95,12 @@ tags: [oect, transfer]
     'library/solutions.csv': `id,name,recipe,conc,volume,prepared,by,expires,location,page,status,notes\nS-0001,PEDOT:PSS 墨水（1 wt% GOPS）,R-0001 × 1 mL; R-0002 × 10 µL,1 wt% GOPS,1 mL,${d0},示例用户,${day(10)},4 °C 冰箱,${x1},在用,\n`,
     'library/protocols/SOP-DEMO-OECT-TR-v1.md': sop,
     'volumes/oect/pages/0001.md': page(
-      `title: GOPS 浓度对沟道稳定性的影响\ndate: ${d0}\nid: ${x1}\nseries: PEDOT:PSS 配方优化\ntags: [oect, pedot-pss, gops]\nprotocol: SOP-DEMO-OECT-TR-v1\nreagents: [R-0001, R-0002, R-0003]\ndata: "01_Data/01_Keithley 4200/${d0.slice(0, 4)}/${x1}_GOPS"\nfollowups: ["✓ ${day(-2)} 稳定性复测（第 1 天）", "${day(0)} 稳定性复测（第 3 天）", "${day(4)} 稳定性复测（第 7 天）"]`,
+      `title: GOPS 浓度对沟道稳定性的影响\ndate: ${d0}\nid: ${x1}\noutcome: ok\nseries: PEDOT:PSS 配方优化\ntags: [oect, pedot-pss, gops]\nprotocol: SOP-DEMO-OECT-TR-v1\nreagents: [R-0001, R-0002, R-0003]\ndata: "01_Data/01_Keithley 4200/${d0.slice(0, 4)}/${x1}_GOPS"\nfollowups: ["✓ ${day(-2)} 稳定性复测（第 1 天）", "${day(0)} 稳定性复测（第 3 天）", "${day(4)} 稳定性复测（第 7 天）"]`,
       `## 目的\n\n比较 0.5、1、2 wt% GOPS 对 PBS 中 transfer 稳定性的影响。\n\n## 操作步骤\n\n\`\`\`steps\n移取 | 1 mL | PEDOT:PSS R-0001 | 5 mL 玻璃瓶 | 室温\n加入 | 10 µL | GOPS R-0002 | 上一步溶液 | | 用移液枪缓慢滴加，边加边摇\n超声 | | | | 10 min，冰浴 | 防止升温\n旋涂 | 60 µL | PEDOT:PSS 墨水 S-0001 | 玻璃片 | 1500 rpm，60 s\n退火 | | | 热台 | 140 °C，60 min\n\`\`\`\n\n## 反应式\n\n\`\`\`reaction\nPEDOT^+:PSS^- + M+ + e- -> PEDOT^0 + M+:PSS^- | (1)\n栅极：2 H2O2 ->[Pt] 2 H2O + O2 | (2)\nFe^3+ + e- <=> Fe^2+ | (3)\n\`\`\`\n\n将 10 mL DI 水加入烧杯，37 °C 下搅拌 30 min；所用 PBS 为 R-0003。{红|GOPS 加入后需在 2 h 内用完。}\n\n## 条件与结果\n\n\`\`\`samples\n编号,GOPS (wt%),退火 (°C),结果: gm_max (mS),结果: Vth (V),结果: on/off,备注\n#01,0.5,140,4.1,0.42,180,\n#09,1.0,140,3.6,0.45,240,边缘轻微翘起\n#10,2.0,140,2.2,0.51,95,\n\`\`\`\n\n## 与 SOP 的偏离\n\n- #10 浸泡 75 min（其余 60 min）。\n\n## 现象与讨论\n\nGOPS 增加后 gm 下降，但 #09 的漂移最小。沟道面积按 M-0001 测量。\n\n## 结论\n\n1 wt% GOPS 在 gm 与稳定性之间最平衡。\n\n## 下一步\n\n- 用 1 wt% GOPS 做 7 天稳定性测试\n- 测 #09 的输出曲线\n\n## 照片\n\n![#09 · 溶液 · 墨水呈深蓝色](${x1}-#09_solution.png)\n\n![#09 · 整片器件](${x1}-#09_device.png)`),
     [`volumes/oect/attachments/0001/${x1}-#09_solution.png`]: bytes(SOLUTION_PNG),
     [`volumes/oect/attachments/0001/${x1}-#09_device.png`]: bytes(DEVICE_PNG),
     'volumes/oect/pages/0003.md': page(
-      `title: 第 2 轮：旋涂速度\ndate: ${d1}\nid: ${x3}\nseries: PEDOT:PSS 配方优化\ntags: [oect, pedot-pss]\nprotocol: SOP-DEMO-OECT-TR-v1\nreagents: [R-0001, R-0002, R-0003]`,
+      `title: 第 2 轮：旋涂速度\ndate: ${d1}\nid: ${x3}\noutcome: fail\noutcome_note: 3000 rpm 膜太薄，gm 明显下降，以后不用\nseries: PEDOT:PSS 配方优化\ntags: [oect, pedot-pss]\nprotocol: SOP-DEMO-OECT-TR-v1\nreagents: [R-0001, R-0002, R-0003]`,
       `## 目的\n\n固定 GOPS 1 wt%，比较旋涂速度。{{1500 rpm}} 预计最好，++注意膜厚++，==旋涂后 5 min 内退火==。\n\n## 操作步骤\n\n\`\`\`quote\n${x1} #操作步骤\n本次完全按照此步骤操作，仅旋涂速度按样品号改变。\n\`\`\`\n\n## 条件与结果\n\n\`\`\`samples\n编号,GOPS (wt%),退火 (°C),旋涂 (rpm),结果: gm_max (mS),结果: Vth (V),结果: on/off,备注\n#01,1.0,140,1500,4.4,0.44,260,\n#02,1.0,140,3000,3.1,0.46,210,膜偏薄\n\`\`\`\n\n## 与 SOP 的偏离\n\n- \n\n## 现象与讨论\n\n1500 rpm 的 gm 最高。\n\n## 照片\n`),
     'volumes/oect/pages/0002.md': page(
       `title: 栅极面积对比\ndate: ${d1}\nid: ${x2}\ntags: [oect, gate]\nprotocol: SOP-DEMO-OECT-TR-v1\nreagents: [R-0003, R-0004]`,
