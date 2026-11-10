@@ -2062,3 +2062,55 @@ input.find-text { white-space: normal; }
 .wb .reminder .task-text .task-meta { display: block; margin: 1px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .home-top + .wb { margin-top: 26px; }
 .wb .cat-chip { white-space: nowrap; }
+
+/* ----- v46: home page order — week schedule on top, then tidy grids, notebooks last ----- */
+.view.home .hero, .view.home .wb, .view.home .dash, .view.home .cont-wrap, .view.home .home-boards, .view.home > .section-title, .view.home .shelf, .view.home .recent { max-width: 1760px; margin-left: auto; margin-right: auto; }
+.view.home .hero { padding-bottom: 4px; }
+.view.home .wb { margin-top: 18px; }
+.view.home > .section-title { margin-top: 40px; }
+.view.home .dash { grid-template-columns: 1fr 1fr; margin-top: 0; }
+@media (max-width: 820px) { .view.home .dash { grid-template-columns: 1fr; } }
+.view.home .dash .tile { height: 100%; }
+.home-boards { padding: 0 24px; margin-top: 8px; }
+.home-boards .rail { position: static !important; max-height: none !important; overflow: visible !important; padding: 0 !important; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.home-boards .rail-title { grid-column: 1 / -1; margin: 40px 0 0; font: 700 24px/1.2 var(--font-ui); letter-spacing: -0.015em; color: var(--bench-ink); text-transform: none; }
+@media (max-width: 1500px) { .home-boards .rail { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .home-boards .rail { grid-template-columns: 1fr; } .home-boards { padding: 0 16px; } }
+
+/* the week schedule, louder */
+.wb-title { font-size: 26px; }
+.wb-top { align-items: center; flex-wrap: wrap; }
+.wb-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-left: auto; margin-right: 8px; font: 500 12px/1 var(--font-ui); color: var(--bench-ink-2); }
+.wb-legend span::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 3px; background: var(--k); margin-right: 4px; }
+@media (min-width: 1101px) { .wb-grid { grid-template-columns: minmax(170px, 1.25fr) repeat(7, minmax(0, 1fr)); gap: 10px; } .wb-grid:has(.is-today) { grid-template-columns: minmax(170px, 1.25fr) repeat(7, minmax(0, 1fr)); } }
+.wb-col { padding: 0 0 8px; overflow: hidden; min-height: 300px; border-radius: 16px; }
+.wb-col > :not(.wb-head) { margin-left: 8px; margin-right: 8px; }
+.wb-head { align-items: center; gap: 8px; padding: 10px 10px 9px; margin: 0 0 8px; border-bottom: 0; background: color-mix(in srgb, var(--card-ink) 5%, transparent); }
+.wb-num { font: 750 26px/1 var(--font-ui); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; color: var(--card-ink); }
+.wb-hd { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.wb-hd .wb-w { font: 700 13.5px/1 var(--font-ui); } .wb-hd .wb-d { font: 500 11px/1 var(--font-ui); }
+.wb-col.past .wb-head { opacity: 1; } .wb-col.past .wb-num { color: var(--card-ink-2); }
+.wb-col.weekend .wb-head { background: color-mix(in srgb, #ff9f0a 12%, transparent); }
+.wb-col.is-today { box-shadow: 0 0 0 2px var(--accent), 0 10px 30px color-mix(in srgb, var(--accent) 22%, transparent); }
+.wb-col.is-today .wb-head { background: var(--accent); }
+.wb-col.is-today .wb-num, .wb-col.is-today .wb-w, .wb-col.is-today .wb-d { color: #fff; }
+.wb-col.is-today .wb-head svg circle:first-child { stroke: rgba(255,255,255,.35); } .wb-col.is-today .wb-head svg circle + circle { stroke: #fff; } .wb-col.is-today .wb-head svg text, .wb-col.is-today .wb-head .ring-n { fill: #fff; color: #fff; }
+.wb-plan { background: var(--card); box-shadow: 0 0 0 1.5px color-mix(in srgb, #5e5ce6 45%, transparent), var(--card-shadow); }
+.wb-head-plan { background: color-mix(in srgb, #5e5ce6 14%, transparent); justify-content: space-between; }
+.wb-head-plan > div { display: flex; flex-direction: column; gap: 4px; } .wb-head-plan .wb-w { font: 750 16px/1 var(--font-ui); color: #5e5ce6; }
+.wb-plan .task-text { font-weight: 550; }
+.wb-group { margin-top: 6px; border-radius: 9px; background: color-mix(in srgb, var(--k) 7%, transparent); box-shadow: inset 3px 0 0 var(--k); padding: 4px 4px 2px 9px; }
+.wb-glabel { display: flex; justify-content: space-between; font: 700 10.5px/1.6 var(--font-ui); letter-spacing: .06em; color: var(--k); }
+.wb-glabel span { font-weight: 600; opacity: .8; }
+.wb-group .task { padding: 4px 0; } .wb-group .task + .task { border-top-color: color-mix(in srgb, var(--k) 16%, transparent); }
+.wb .wb-group .reminder { box-shadow: none; padding-left: 0; }
+.wb-flag, .wb-flag .task-text { color: var(--k, #e5484d); }
+.wb-empty { margin-top: 14px; text-align: center; font: 400 12px/1 var(--font-ui); color: var(--card-ink-2); opacity: .7; }
+.wb-hint { margin-top: 8px; text-align: center; }
+.wb-add-row { display: flex; gap: 4px; } .wb-add-row .add-input { flex: 1; min-width: 0; }
+.wb-kind { flex: none; width: auto; padding: 4px 2px; border: 1px solid var(--card-line); border-radius: 8px; background: var(--card); color: var(--card-ink); font: 500 12px/1 var(--font-ui); }
+.wb-totoday { padding: 2px 6px !important; font-size: 11px !important; white-space: nowrap; }
+@media (max-width: 1100px) { .wb-legend { display: none; } }
+.view.home .home-boards .rail-title { grid-column: 1 / -1; margin: 40px 0 0 !important; padding: 0 !important; font: 700 24px/1.2 var(--font-ui) !important; letter-spacing: -0.015em !important; color: var(--bench-ink) !important; text-transform: none !important; }
+.wb-plan .wb-add { margin-top: 2px; }
+.wb-plan .wb-hint { margin-top: auto; padding-top: 10px; }

@@ -5,8 +5,9 @@ import { parseFrontMatter, todayISO } from './model.js';
 // Experiment  20261101-OECT-01        date-topic-sequence
 // Sample      20261101-OECT-01-#09    experiment-#condition
 // Data file   20261101-OECT-01-#09_TR_VD-0.3V_gm.xls   sample_test_condition_purpose
-export const EXP_RE = /\b(\d{8})-([A-Z][A-Z0-9]{1,11})-(\d{2,3})\b/;
-export const SAMPLE_RE = /\b(\d{8}-[A-Z][A-Z0-9]{1,11}-\d{2,3})-#(\d{1,3}[a-z]?)\b/;
+// topic code: 2-12 of A-Z/0-9 with at least one letter, may start with a digit (2PP) — same set cleanTopic() produces
+export const EXP_RE = /\b(\d{8})-((?=[A-Z0-9]*[A-Z])[A-Z0-9]{2,12})-(\d{2,3})\b/;
+export const SAMPLE_RE = /\b(\d{8}-(?=[A-Z0-9]*[A-Z])[A-Z0-9]{2,12}-\d{2,3})-#(\d{1,3}[a-z]?)\b/;
 const two = (n) => String(n).padStart(2, '0');
 
 export function cleanTopic(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12); }

@@ -126,19 +126,22 @@ export function viewHome() {
   }
 
   homeHooks.clear();
-  // Greeting and today's cards on top, then the week board across the full width, then the rest with the side rails.
-  root.append(h('div', { class: 'home-top' }, hero(), dashboard()), weekBoard({ hooks: homeHooks, redraw: redrawHome }));
-  const center = h('div', { class: 'home-center' }, continueCard());
-  center.append(h('h2', { class: 'section-title' }, '记录本', h('span', null, `${vols.length} 卷 · ${lib.allPages().length} 页`)));
+  // Top to bottom: the week (goals, today, each day) → quick notes → what to pick up → the side boards → the notebooks.
+  const { left, right } = homeRails();
   const shelf = h('section', { class: 'shelf', 'aria-label': '卷' });
   for (const v of vols) shelf.append(cover(v));
   shelf.append(thinkCover());
   shelf.append(h('button', { class: 'cover new-cover', type: 'button', onclick: openNewVolume },
     icon('plus', 28), h('span', null, vols.length ? '新建卷（项目）' : '建第一个卷（项目）')));
-  center.append(shelf);
-  // Wide screens: the side lists sit left and right of the usual page; narrower ones get them below it.
-  const { left, right } = homeRails();
-  root.append(h('div', { class: 'home-layout' }, left, center, right));
+  root.append(
+    hero(),
+    weekBoard({ hooks: homeHooks, redraw: redrawHome }),
+    h('h2', { class: 'section-title' }, '随手记', h('span', null, '零碎发现与备忘')),
+    dashboard(),
+    continueCard(),
+    h('div', { class: 'home-boards' }, left, right),
+    h('h2', { class: 'section-title' }, '记录本', h('span', null, `${vols.length} 卷 · ${lib.allPages().length} 页`)),
+    shelf);
   if (!vols.length) root.append(h('p', { class: 'hint' }, '每个项目一个卷，页码在卷内连续编号，就像装订的记录本。'));
 
   const recent = lib.allPages().sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.num - a.num).slice(0, 8);
@@ -500,55 +503,17 @@ export function homeRails() {
 }
 
 // Home: today's to-dos (your own + experiment reminders) and this week's plan, each with progress.
+// 随手记: the two free-form lists side by side. (Today's to-dos and the week's goals live in the week board.)
 export function dashboard() {
-  const t = todayISO(); const wk = weekStart(t);
   const box = h('section', { class: 'dash' }, h('div', { class: 'tile' }, h('p', { class: 'muted' }, '读取中…')));
   const draw = async () => {
-    let tasks; let fus;
     let doc;
-    try { [doc, fus] = await Promise.all([loadPlanner(), allFollowups()]); tasks = doc.tasks; } catch (e) { box.replaceChildren(h('div', { class: 'tile' }, h('p', { class: 'warn' }, e.message))); return; }
-    const focused = box.querySelector('input:focus')?.dataset.k;
-    const mine = tasks.filter((x) => x.date === t);
-    const carried = tasks.filter((x) => x.date && x.date < t && !x.done);
-    const due = fus.filter((x) => (x.date === t) || (!x.done && x.date < t));
-    const soon = fus.filter((x) => !x.done && x.date > t && daysFrom(x.date) <= 7);
-    const all = [...mine, ...carried, ...due];
-    const doneN = all.filter((x) => x.done).length;
-    const todayAdd = addBox('添加今天要做的事', (text) => changeTasks((list) => list.push(newTask(text, wk, t)), 'Planner: add to-do', redrawHome));
-    todayAdd.querySelector('input').dataset.k = 'today';
-    const todayCard = h('div', { class: 'tile today-card' },
-      cardHead('今日待办', all.length ? `已完成 ${doneN} · 还剩 ${all.length - doneN}` : '今天还没有安排', { right: ring(doneN, all.length) }),
-      todayAdd,
-      h('ul', { class: 'tasks' },
-        carried.map((x) => taskRow(x, { redraw: redrawHome, extra: h('button', { class: 'btn small ghost', type: 'button', onclick: () => moveTask(x.id, t, redrawHome) }, '移到今天') })),
-        mine.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: redrawHome })),
-        due.map((x) => reminderRow(x, redrawHome))),
-      soon.length ? h('div', { class: 'soon' }, h('h4', { class: 'soon-head' }, `接下来 7 天的实验提醒（${soon.length}）`),
-        h('ul', { class: 'tasks' }, soon.map((x) => reminderRow(x, redrawHome))),
-        h('button', { class: 'btn small ghost', type: 'button', onclick: () => exportIcs(fus.filter((x) => !x.done)) }, '导出到手机日历')) : null);
-
-    const goals = tasks.filter((x) => isGoal(x, wk));
-    const gDone = goals.filter((x) => x.done).length;
-    const days = WEEKDAYS.map((w, k) => {
-      const day = addDays(wk, k); const list = tasks.filter((x) => x.date === day);
-      const dn = list.filter((x) => x.done).length;
-      return h('a', { class: `day${day === t ? ' is-today' : ''}${day < t ? ' past' : ''}`, href: `#/plan/${wk}`, title: `${day}：${dn}/${list.length}` },
-        h('span', { class: 'day-w' }, w),
-        h('span', { class: 'day-bar' }, h('span', { style: { height: `${list.length ? (dn / list.length) * 100 : 0}%` } })),
-        h('span', { class: 'day-n' }, list.length ? `${dn}/${list.length}` : '·'));
-    });
-    const weekAdd = addBox('添加本周计划', (text) => changeTasks((list) => list.push(newTask(text, wk)), 'Planner: add weekly goal', redrawHome));
-    weekAdd.querySelector('input').dataset.k = 'week';
-    const weekCard = h('div', { class: 'tile week-card' },
-      cardHead('本周计划', goals.length ? `已完成 ${gDone} · 还剩 ${goals.length - gDone}` : `${wk.slice(5)} 至 ${addDays(wk, 6).slice(5)}`, { add: weekAdd, right: ring(gDone, goals.length) }),
-      weekAdd,
-      foldList(h('ul', { class: 'tasks' }, goals.sort((a, b) => Number(a.done) - Number(b.done)).map((x) => taskRow(x, { redraw: redrawHome }))), 'goals'),
-      h('div', { class: 'week-days', 'aria-label': '本周每天的待办完成情况' }, days),
-      h('a', { class: 'more-link', href: `#/plan/${wk}` }, '查看周计划与历史 ›'));
-    box.replaceChildren(todayCard, findsCard(doc, redrawHome), weekCard, memoCard(doc, redrawHome));
-    if (focused) box.querySelector(`input[data-k="${focused}"]`)?.focus();
+    try { doc = await loadPlanner(); } catch (e) { box.replaceChildren(h('div', { class: 'tile' }, h('p', { class: 'warn' }, e.message))); return; }
+    const focused = box.querySelector('input:focus, textarea:focus')?.dataset.k;
+    box.replaceChildren(findsCard(doc, redrawHome), memoCard(doc, redrawHome));
+    if (focused) box.querySelector(`[data-k="${focused}"]`)?.focus();
   };
   homeHooks.add(draw);
-  draw();
+  draw().then(() => autoFileFinds());
   return box;
 }

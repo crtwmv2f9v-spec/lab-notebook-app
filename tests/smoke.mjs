@@ -73,7 +73,7 @@ try {
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: `${BASE}?demo#/` });
 
-  await check('home', async () => { await waitFor("document.querySelector('.today-card') && document.querySelectorAll('.rail-card').length >= 8"); await sleep(600); await evaluate(clean); await shot('home'); });
+  await check('home', async () => { await waitFor("document.querySelector('.wb-col.is-today') && document.querySelectorAll('.rail-card').length >= 8"); await sleep(600); await evaluate(clean); await shot('home'); });
   await check('home-wide', async () => { await shot('home-wide', { width: 1920, height: 1100 }); });
   await check('phone-width', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 375, height: 812, deviceScaleFactor: 1, mobile: true });
@@ -87,7 +87,7 @@ try {
     await evaluate("[...document.querySelectorAll('.topbar a')].find(a => a.getAttribute('href') === '#/methods').click(); return 1;");
     await waitFor("location.hash === '#/methods' && document.querySelectorAll('.m-card').length >= 2");
     await evaluate("history.back(); return 1;");
-    await waitFor("document.querySelector('.today-card')");
+    await waitFor("document.querySelector('.wb-col.is-today')");
   });
   await check('continue-card', async () => {
     await waitFor("document.querySelector('.cont-card .cont-col') && !/读取中/.test(document.querySelector('.cont-card .card-sub').textContent)");
@@ -104,7 +104,7 @@ try {
     return `${await evaluate("return document.querySelectorAll('.pj-card').length;")} cards`;
   });
   await check('global-search', async () => {
-    await go('#/', "document.querySelector('.today-card')");
+    await go('#/', "document.querySelector('.wb-col.is-today')");
     await evaluate("document.querySelector('.topbar [aria-label=\"搜索\"]').click(); return 1;");
     await waitFor("document.querySelector('.modal input[type=search]')");
     await evaluate("const i = document.querySelector('.modal input[type=search]'); i.value = 'ROI'; i.dispatchEvent(new Event('input', { bubbles: true })); return 1;");
@@ -258,7 +258,7 @@ try {
   await check('series', async () => { await go(`#/series/${encodeURIComponent('PEDOT:PSS 配方优化')}`, "document.querySelector('.series-table tbody tr')"); await evaluate(clean); });
   await check('settings', async () => { await go('#/settings', "document.querySelector('#s-font')"); await evaluate(clean); });
   await check('search', async () => {
-    await go('#/', "document.querySelector('.today-card')");
+    await go('#/', "document.querySelector('.wb-col.is-today')");
     await evaluate("document.querySelector('.topbar [aria-label=\"搜索\"]').click(); return 1;");
     await waitFor("document.querySelector('.modal input[type=search]')");
     await evaluate("const i = document.querySelector('.modal input[type=search]'); i.value = 'GOPS'; i.dispatchEvent(new Event('input', { bubbles: true })); return 1;");
