@@ -1625,7 +1625,7 @@ ul.countdown { list-style: none; margin: 4px 0 0; padding: 0; display: flex; fle
 .ws span { font: 400 11.5px/1.2 var(--font-ui); color: var(--card-ink-2); }
 .cat-chip { font: 600 10.5px/1 var(--font-ui); padding: 2px 6px; border-radius: 5px; background: color-mix(in srgb, var(--card-ink) 8%, transparent); color: var(--card-ink-2); }
 .cat-chip.cat-截止 { background: color-mix(in srgb, #e5484d 14%, transparent); color: #e5484d; }
-.cat-chip.cat-仪器 { background: color-mix(in srgb, #0a84ff 14%, transparent); color: #0a84ff; }
+.cat-chip.cat-仪器, .cat-chip.cat-科研 { background: color-mix(in srgb, #0a84ff 14%, transparent); color: #0a84ff; }
 .cat-chip.cat-生活 { background: color-mix(in srgb, #30a46c 14%, transparent); color: #30a46c; }
 .cat-chip.cat-杂事 { background: color-mix(in srgb, #c77c02 14%, transparent); color: #c77c02; }
 .rail-card .add-row:has(.add-date) { flex-wrap: wrap; row-gap: 6px; }
@@ -2152,3 +2152,34 @@ input.find-text { white-space: normal; }
 .rd-wrap { max-width: 980px; } .rd-body { display: grid; gap: 18px; }
 .rd-list a b { white-space: normal; font-size: 15px; } .rd-list li { padding: 10px 0; }
 .view.reading .tile h2 { margin-bottom: 8px; }
+
+/* ----- v49: 课题手记 (findings + experiments to do, by topic) ----- */
+.view.home .dash { grid-template-columns: 1fr; }
+.notes-card { padding: 0 0 16px; overflow: hidden; }
+.nt-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 12px 16px 0; border-bottom: 1px solid var(--card-line); background: color-mix(in srgb, var(--card-ink) 3%, transparent); }
+.nt-tab { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; border: 0; border-bottom: 3px solid transparent; background: none; color: var(--card-ink-2); font: 600 14.5px/1 var(--font-ui); cursor: pointer; border-radius: 8px 8px 0 0; }
+.nt-tab:hover { color: var(--card-ink); background: color-mix(in srgb, var(--card-ink) 5%, transparent); }
+.nt-tab.on { color: var(--accent); border-bottom-color: var(--accent); background: var(--card); }
+.nt-tab b { font: 600 11px/1 var(--font-ui); padding: 3px 6px; border-radius: 980px; background: color-mix(in srgb, var(--card-ink) 9%, transparent); color: var(--card-ink-2); }
+.nt-tab.on b { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.nt-manage { margin-left: auto; font-weight: 500; font-size: 13px; }
+.nt-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.nt-col { padding: 16px 22px 4px; min-width: 0; }
+.nt-col + .nt-col { border-left: 1px solid var(--card-line); }
+.nt-h { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 10px; font: 700 17px/1.2 var(--font-ui); color: var(--card-ink); }
+.nt-h::before { content: ''; width: 10px; height: 10px; border-radius: 3px; background: var(--k); margin-right: 8px; flex: none; align-self: center; }
+.nt-h span { margin-left: auto; font: 500 12.5px/1 var(--font-ui); color: var(--card-ink-2); }
+.nt-empty { margin: 14px 2px; font: 400 13.5px/1.5 var(--font-ui); color: var(--card-ink-2); }
+.find-body { flex: 1; min-width: 0; }
+.find.filed .find-text { color: var(--card-ink-2); }
+.find-page { margin-left: 8px; font: 500 11px/1 var(--font-ui); color: var(--card-ink-2); text-decoration: none; white-space: nowrap; }
+.find-page:hover { color: var(--accent); }
+.nt-topic { display: inline-block; margin: 0 6px 0 8px; padding: 2px 7px; border: 0; border-radius: 980px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font: 600 11px/1.3 var(--font-ui); cursor: pointer; white-space: nowrap; }
+.nt-topic.none { background: color-mix(in srgb, var(--card-ink) 8%, transparent); color: var(--card-ink-2); }
+.task-meta .nt-topic { margin-left: 0; }
+.nt-todos .task { align-items: flex-start; } .nt-todos .task.pinned .task-text { font-weight: 600; }
+.nt-todos .memo-pin { opacity: 0; } .nt-todos .task:hover .memo-pin, .nt-todos .task.pinned .memo-pin { opacity: 1; }
+.notes-card .find-foot { padding: 12px 22px 0; margin-top: 8px; border-top: 1px solid var(--card-line); }
+.nt-row { display: flex; gap: 6px; } .nt-row input { flex: 1; }
+.fq-topics { margin-bottom: 8px; } .find-quick .seg { margin-bottom: 8px; align-self: flex-start; }
+@media (max-width: 820px) { .nt-cols { grid-template-columns: 1fr; } .nt-col + .nt-col { border-left: 0; border-top: 1px solid var(--card-line); } .nt-tabs { flex-wrap: nowrap; overflow-x: auto; } .nt-tab { flex: none; } }

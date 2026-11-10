@@ -106,7 +106,7 @@ export const weekStart = (iso) => addDays(iso, -((new Date(`${iso}T12:00:00`).ge
 export let planLocal = null; // { sha, doc: { tasks, memos }, dirty } — shown at once; commits follow in order
 export let planQueue = Promise.resolve();
 export const arr = (x) => (Array.isArray(x) ? x : []);
-export const planDoc = (d) => ({ tasks: arr(d?.tasks), memos: arr(d?.memos), projects: arr(d?.projects), papers: arr(d?.papers), finds: arr(d?.finds) });
+export const planDoc = (d) => ({ tasks: arr(d?.tasks), memos: arr(d?.memos), projects: arr(d?.projects), papers: arr(d?.papers), finds: arr(d?.finds), ...(Array.isArray(d?.topics) ? { topics: d.topics } : {}) });
 // Other writers of planner/tasks.json (the weekly filing of 碎片发现) wait their turn in the same queue.
 export function queuePlanner(job) {
   const p = planQueue.then(job);

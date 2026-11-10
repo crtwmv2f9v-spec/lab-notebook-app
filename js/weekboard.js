@@ -8,8 +8,9 @@ import { WEEKDAYS, allFollowups, changeTasks, editPaper, editProject, exportIcs,
 
 const FLOAT = ['杂事', '生活']; // side-list items that may wait without a day
 // Every item on a day sits under its kind, in this order, each with its own colour.
-const KINDS = [['截止', '#e5484d'], ['仪器', '#0a84ff'], ['待办', '#5e5ce6'], ['杂事', '#c77c02'], ['生活', '#30a46c'], ['提醒', '#8e8e93']];
-const kindOf = (x) => (KINDS.some(([k]) => k === x.cat) ? x.cat : '待办');
+const KINDS = [['截止', '#e5484d'], ['科研', '#0a84ff'], ['待办', '#5e5ce6'], ['杂事', '#c77c02'], ['生活', '#30a46c'], ['提醒', '#8e8e93']];
+// Items filed as 仪器 before the kind was renamed are 科研.
+const kindOf = (x) => (x.cat === '仪器' ? '科研' : KINDS.some(([k]) => k === x.cat) ? x.cat : '待办');
 // "9" → 09:00, "930" / "9:30" → 09:30, "14-17" / "14:00~17:30" → a span. 24-hour clock only.
 export function parseTime(text) {
   const one = (v) => {
@@ -88,7 +89,7 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
       const box = h('div', { class: 'wb-add' });
       const open = (focus) => {
         const input = h('input', { class: 'add-input', placeholder: day ? (day === t ? '添加今天要做的事' : '添加到这一天') : '添加本周目标', enterkeyhint: 'done', 'data-k': key });
-        const sel = day ? h('select', { class: 'wb-kind', 'aria-label': '分类', title: '分类' }, ['待办', '仪器', '截止', '杂事', '生活'].map((k) => h('option', { selected: (openKind.get(key) || '待办') === k }, k))) : null;
+        const sel = day ? h('select', { class: 'wb-kind', 'aria-label': '分类', title: '分类' }, ['待办', '科研', '截止', '杂事', '生活'].map((k) => h('option', { selected: (openKind.get(key) || '待办') === k }, k))) : null;
         sel?.addEventListener('change', () => { openKind.set(key, sel.value); input.focus(); });
         const tm = day ? h('input', { class: 'wb-time-add', placeholder: '时间', title: '可选。24 小时制：14:00、9:30，或 14-17 表示一段', inputmode: 'numeric', 'aria-label': '时间（24 小时制，可不填）' }) : null;
         const submit = () => {

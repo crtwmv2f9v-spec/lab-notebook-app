@@ -249,6 +249,25 @@ try {
     if (!r.zone.today || !r.zone.now || r.zone.z.day !== '2026-11-10' || r.zone.z.time !== '09:30' || r.pt !== '09:00|09:30|14:00-17:30|bad|bad|' || r.time !== '07:00' || r.end !== '08:00' || !r.date || r.chip !== '07:00–08:00' || r.nullText) throw new Error(JSON.stringify(r));
     return `UTC+8 day and clock; item added at ${r.chip}`;
   });
+  await check('notes-topics', async () => {
+    await go('#/', "document.querySelectorAll('.notes-card .nt-tab').length >= 4");
+    const r = await evaluate(`const p = await import('./js/planner.js');
+      const tabs = [...document.querySelectorAll('.notes-card .nt-tab')].map((b) => b.querySelector('span')?.textContent || b.textContent);
+      [...document.querySelectorAll('.notes-card .nt-tab')].find((b) => b.textContent.includes('OECT')).click();
+      await new Promise((r) => setTimeout(r, 200));
+      const inOect = { finds: document.querySelectorAll('.notes-card .find').length, todos: document.querySelectorAll('.notes-card .nt-todos .task').length };
+      const ta = document.querySelector('.notes-card textarea[data-k="memo"]'); ta.value = '测试待做'; ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await new Promise((r) => setTimeout(r, 500));
+      const d = await p.loadPlanner(); const m = d.memos.find((x) => x.text === '测试待做');
+      const pinned = Array.isArray(d.topics) && d.topics.some((x) => x.id === 'v:oect');
+      document.querySelector('.notes-card .nt-todos .tick').click(); await new Promise((r) => setTimeout(r, 400));
+      const ticked = (await p.loadPlanner()).memos.some((x) => x.done);
+      await p.changePlanner((dd) => { dd.memos = dd.memos.filter((x) => x.text !== '测试待做'); dd.memos.forEach((x) => { delete x.done; delete x.doneAt; }); }, 'test');
+      await new Promise((r) => setTimeout(r, 300)); document.querySelector('.notes-card .nt-tab').click(); localStorage.removeItem('labnote-note-topic'); await new Promise((r) => setTimeout(r, 200));
+      return { tabs, inOect, topic: m?.topic, pinned, ticked, kinds: [...document.querySelectorAll('.wb-glabel')].map((e) => e.firstChild.textContent) };`);
+    if (r.tabs[0] !== '全部' || !r.tabs.some((x) => x.includes('OECT')) || r.inOect.finds !== 1 || r.inOect.todos !== 1 || r.topic !== 'v:oect' || !r.pinned || !r.ticked || r.kinds.includes('仪器') || !r.kinds.includes('科研')) throw new Error(JSON.stringify(r));
+    return `tabs ${r.tabs.slice(0, 4).join(' / ')}; 仪器 shows as 科研`;
+  });
   await check('finds', async () => {
     await go('#/', "document.querySelectorAll('.finds-card .find').length >= 2");
     const r = await evaluate(`const f = await import('./js/finds.js'); const p = await import('./js/planner.js'); const c = await import('./js/core.js'); const lab = await import('./js/lab.js'); const m = await import('./js/model.js');
@@ -258,7 +277,7 @@ try {
       await f.autoFileFinds();
       const vol = f.dailyVolume(); const pages = c.lib.allPages().filter((x) => x.vol === vol?.id).sort((a, b) => a.date.localeCompare(b.date));
       const body = pages.length ? await c.lib.readPage(vol.id, pages[pages.length - 1].num) : '';
-      const left = (await p.loadPlanner()).finds.length;
+      const left = (await p.loadPlanner()).finds.filter((x) => !x.filed).length;
       // a later fragment for a day that already has a page is appended to it
       await p.changePlanner((d) => { d.finds.push({ id: 'o4', text: '补记', at: old + 'T18:00:00+08:00' }); }, 'test');
       await f.autoFileFinds();

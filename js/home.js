@@ -10,7 +10,7 @@ import { autoFileFinds, findsCard } from './finds.js';
 import { weekBoard } from './weekboard.js';
 import {
   PAPER_STAGE, WEEKDAYS, addBox, allFollowups, changeTasks, editPaper, editProject, exportIcs,
-  editable, isGoal, loadPlanner, memoCard, moveTask, newTask, reminderRow, ring, taskRow,
+  editable, isGoal, loadPlanner, moveTask, newTask, reminderRow, ring, taskRow,
   toggleTask, weekStart,
 } from './planner.js';
 import { openNewExperiment } from './pages.js';
@@ -136,7 +136,7 @@ export function viewHome() {
   root.append(
     hero(),
     weekBoard({ hooks: homeHooks, redraw: redrawHome }),
-    h('h2', { class: 'section-title' }, '随手记', h('span', null, '零碎发现与备忘')),
+    h('h2', { class: 'section-title' }, '课题手记', h('span', null, '按课题记：碎片发现 · 待做实验')),
     dashboard(),
     continueCard(),
     h('div', { class: 'home-boards' }, left, right),
@@ -506,7 +506,7 @@ export function dashboard() {
     let doc;
     try { doc = await loadPlanner(); } catch (e) { box.replaceChildren(h('div', { class: 'tile' }, h('p', { class: 'warn' }, e.message))); return; }
     const focused = box.querySelector('input:focus, textarea:focus')?.dataset.k;
-    box.replaceChildren(findsCard(doc, redrawHome), memoCard(doc, redrawHome));
+    box.replaceChildren(findsCard(doc, redrawHome));
     if (focused) box.querySelector(`[data-k="${focused}"]`)?.focus();
   };
   homeHooks.add(draw);

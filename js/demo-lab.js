@@ -68,9 +68,9 @@ tags: [oect, transfer]
         { id: 'td7', text: '实验室安全培训', week: day(0), cat: '杂事', done: false, created: `${day(-2)}T09:00:00+08:00` },
         { id: 'td8', text: '跑步 5 km', week: day(0), date: day(0), cat: '生活', done: false, created: `${day(-1)}T09:00:00+08:00` },
       ],
-      memos: [],
+      memos: [{ id: 'md1', text: '补一组不加 GOPS 的对照', pinned: true, created: `${day(-1)}T10:00:00+08:00`, topic: 'v:oect' }, { id: 'md2', text: '买 0.22 μm 滤头', pinned: false, created: `${day(-2)}T10:00:00+08:00` }],
       finds: [
-        { id: 'fd1', text: '银在盖玻片上可以打印，但碰到溶剂会溶解。可能是多孔、附着不好。', at: `${day(0)}T09:41:00+08:00` },
+        { id: 'fd1', text: '银在盖玻片上可以打印，但碰到溶剂会溶解。可能是多孔、附着不好。', at: `${day(0)}T09:41:00+08:00`, topic: 'v:oect' },
         { id: 'fd2', text: 'PEDOT:PSS 墨水放置 2 h 后粘度明显上升，出丝变细。', at: `${day(0)}T14:20:00+08:00` },
       ],
       projects: [
