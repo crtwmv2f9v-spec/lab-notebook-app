@@ -11,7 +11,7 @@ import { viewHypothesis, viewThinking } from './think.js';
 import { viewMethod, viewMethods } from './methods.js';
 import { viewProtocol, viewProtocols, viewReagents, viewSolutions } from './libraries.js';
 import { openSearch } from './searchui.js';
-import { viewClips } from './clips.js';
+import { viewClips, viewReading } from './clips.js';
 import { mountFindButton, openQuickFind } from './finds.js';
 
 export async function boot() {
@@ -95,6 +95,7 @@ export async function route(opts = {}) {
   if (a === 'lib' && b === 'protocols' && !c) return show('library', viewProtocols);
   if (a === 'lib' && b === 'protocols' && c) return show('library', () => viewProtocol(c));
   if (a === 'series' && b) return show('library', () => viewSeries(b));
+  if (a === 'reading') return show('reading', () => viewReading(b));
   if (a === 'clips') return show('clips', () => viewClips(b || '', params));
   if (a === 'plan') return show('plan', () => viewPlan(b));
   if (a === 'methods') return show('methods', () => viewMethods('', b === 'a' && c ? c : ''));

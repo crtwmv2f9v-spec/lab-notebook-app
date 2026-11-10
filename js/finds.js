@@ -1,7 +1,7 @@
 // 碎片发现: small things noticed during the day, typed in one line from anywhere.
 // They wait in planner/tasks.json (`finds`); once their week's Saturday has come, each finished day is filed,
 // word for word, as one page of the volume 「每日发现」 titled with its date. Sorting and rewriting is left to the owner.
-import { nowISO, pagePath, parseFrontMatter, serializePage, makeEntry, todayISO, volIndexPath } from './model.js';
+import { nowISO, zoned, pagePath, parseFrontMatter, serializePage, makeEntry, todayISO, volIndexPath } from './model.js';
 import { gitSha, te } from './store.js';
 import { addDays } from './lab.js';
 import { h, icon } from './util.js';
@@ -13,8 +13,8 @@ import { route } from './app.js';
 export const DAILY_CODE = 'DAY';
 export const DAILY_TITLE = '每日发现';
 export const dailyVolume = () => lib.volumes().find((v) => v.code === DAILY_CODE) || null;
-const dayOf = (f) => String(f.at).slice(0, 10);
-const timeOf = (f) => String(f.at).slice(11, 16);
+const dayOf = (f) => zoned(f.at).day;
+const timeOf = (f) => zoned(f.at).time;
 const weekday = (iso) => `周${WEEKDAYS[(new Date(`${iso}T12:00:00`).getDay() + 6) % 7]}`;
 export const dayTitle = (iso) => `${iso} ${weekday(iso)}`;
 // A day is filed once it is over and the Saturday of its week has come (Mon–Fri on Saturday, Sat on Sunday, Sun on Monday).

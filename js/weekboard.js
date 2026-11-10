@@ -1,6 +1,6 @@
 // 本周看板: the week at a glance, one column per day (like a calendar week view), plus a 待安排 column
 // for this week's undated plans and anything overdue. Drag a card to another day to move it.
-import { todayISO } from './model.js';
+import { todayISO, zoned } from './model.js';
 import { addDays } from './lab.js';
 import { h, icon } from './util.js';
 import { toast } from './core.js';
@@ -10,6 +10,20 @@ const FLOAT = ['杂事', '生活']; // side-list items that may wait without a d
 // Every item on a day sits under its kind, in this order, each with its own colour.
 const KINDS = [['截止', '#e5484d'], ['仪器', '#0a84ff'], ['待办', '#5e5ce6'], ['杂事', '#c77c02'], ['生活', '#30a46c'], ['提醒', '#8e8e93']];
 const kindOf = (x) => (KINDS.some(([k]) => k === x.cat) ? x.cat : '待办');
+// "9" → 09:00, "930" / "9:30" → 09:30, "14-17" / "14:00~17:30" → a span. 24-hour clock only.
+export function parseTime(text) {
+  const one = (v) => {
+    const m = String(v).trim().match(/^(\d{1,2})(?:[:：.]?(\d{2}))?$/); if (!m) return null;
+    const hh = +m[1]; const mm = +(m[2] || 0);
+    return hh <= 24 && mm < 60 && (hh < 24 || mm === 0) ? `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}` : null;
+  };
+  const raw = String(text || '').trim(); if (!raw) return { time: '', end: '' };
+  const [a, b] = raw.split(/\s*(?:[-–—~～]|到|至)\s*/);
+  const time = one(a); const end = b ? one(b) : '';
+  if (!time || end === null || (end && end <= time)) return null;
+  return { time, end: end || '' };
+}
+const timeLabel = (x) => (x.time ? `${x.time}${x.end ? `–${x.end}` : ''}` : '');
 const fmtMD = (iso) => `${+iso.slice(5, 7)}/${+iso.slice(8, 10)}`;
 const openKind = new Map(); // the kind last picked in each column's add box
 let shownWeek = null; // the home board remembers the week you paged to until reload
@@ -42,6 +56,25 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
     const card = (x, opt = {}) => {
       const li = taskRow(x, { redraw: again, showCat: false, extra: opt.toToday ? h('button', { class: 'btn small ghost wb-totoday', type: 'button', onclick: () => moveTask(x.id, t, again) }, '移到今天') : null });
       li.classList.add('wb-card');
+      if (x.date) {
+        const chip = h('button', { class: `wb-time${x.time ? '' : ' none'}`, type: 'button', title: x.time ? '改时间（清空则不定时）' : '加时间（24 小时制，如 14:00 或 14-17）' }, x.time ? timeLabel(x) : '＋时间');
+        chip.addEventListener('click', () => {
+          const input = h('input', { class: 'wb-time-input', value: timeLabel(x), placeholder: '14:00', inputmode: 'numeric', 'aria-label': '时间（24 小时制）' });
+          let done = false;
+          const finish = (save) => {
+            if (done) return; done = true;
+            const v = parseTime(input.value);
+            if (save && !v) { toast('时间写成 24 小时制：14:00、9:30，或 14-17 表示一段。'); input.replaceWith(chip); return; }
+            input.replaceWith(chip);
+            if (save && (v.time !== (x.time || '') || v.end !== (x.end || ''))) changeTasks((l) => { const y = l.find((z) => z.id === x.id); if (!y) return; if (v.time) y.time = v.time; else delete y.time; if (v.end) y.end = v.end; else delete y.end; }, 'Planner: time', again);
+          };
+          input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
+          input.addEventListener('blur', () => finish(true));
+          chip.replaceWith(input); input.focus(); input.select();
+        });
+        li.querySelector('.task-main')?.prepend(chip);
+        if (x.time) li.classList.add('timed');
+      }
       if (x.date && !x.done && x.date < t) li.classList.add('late');
       li.draggable = true;
       li.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/x-task', x.id); e.dataTransfer.effectAllowed = 'move'; li.classList.add('dragging'); el.classList.add('is-dragging'); });
@@ -57,18 +90,24 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
         const input = h('input', { class: 'add-input', placeholder: day ? (day === t ? '添加今天要做的事' : '添加到这一天') : '添加本周目标', enterkeyhint: 'done', 'data-k': key });
         const sel = day ? h('select', { class: 'wb-kind', 'aria-label': '分类', title: '分类' }, ['待办', '仪器', '截止', '杂事', '生活'].map((k) => h('option', { selected: (openKind.get(key) || '待办') === k }, k))) : null;
         sel?.addEventListener('change', () => { openKind.set(key, sel.value); input.focus(); });
+        const tm = day ? h('input', { class: 'wb-time-add', placeholder: '时间', title: '可选。24 小时制：14:00、9:30，或 14-17 表示一段', inputmode: 'numeric', 'aria-label': '时间（24 小时制，可不填）' }) : null;
+        const submit = () => {
+          const v = input.value.trim(); if (!v) return;
+          const tv = tm ? parseTime(tm.value) : { time: '', end: '' };
+          if (!tv) { toast('时间写成 24 小时制：14:00、9:30，或 14-17 表示一段。'); tm.focus(); tm.select(); return; }
+          input.value = ''; if (tm) tm.value = '';
+          const cat = sel && sel.value !== '待办' ? sel.value : null;
+          changeTasks((l) => l.push({ ...newTask(v, day ? weekStart(day) : wk, day || null, cat), ...(tv.time ? { time: tv.time } : {}), ...(tv.end ? { end: tv.end } : {}) }), day ? 'Planner: add to-do' : 'Planner: add weekly goal', again);
+        };
+        tm?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (input.value.trim()) submit(); else input.focus(); } if (e.key === 'Escape') { tm.value = ''; input.focus(); } });
         input.addEventListener('keydown', (e) => {
           if (e.isComposing) return;
-          if (e.key === 'Enter') {
-            e.preventDefault(); const v = input.value.trim(); if (!v) return; input.value = '';
-            const cat = sel && sel.value !== '待办' ? sel.value : null;
-            changeTasks((l) => l.push(newTask(v, day ? weekStart(day) : wk, day || null, cat)), day ? 'Planner: add to-do' : 'Planner: add weekly goal', again);
-          }
+          if (e.key === 'Enter') { e.preventDefault(); submit(); }
           if (e.key === 'Escape') { input.value = ''; input.blur(); }
         });
-        const leave = () => { if (!input.value.trim()) setTimeout(close, 150); };
-        input.addEventListener('blur', leave); sel?.addEventListener('blur', leave);
-        box.replaceChildren(h('div', { class: 'wb-add-row' }, input, sel)); if (focus) input.focus();
+        const leave = () => { if (!input.value.trim() && !(tm && tm.value.trim())) setTimeout(close, 150); };
+        input.addEventListener('blur', leave); sel?.addEventListener('blur', leave); tm?.addEventListener('blur', leave);
+        box.replaceChildren(h('div', { class: 'wb-add-row' }, input), ...(day ? [h('div', { class: 'wb-add-row wb-add-opts' }, tm, sel)] : [])); if (focus) input.focus();
       };
       const close = () => { if (!box.contains(document.activeElement)) box.replaceChildren(h('button', { class: 'wb-add-btn', type: 'button', onclick: () => open(true) }, icon('plus', 14), '添加')); };
       if (focused === key || (cats && day === t && !standalone && false)) open(false); else close();
@@ -102,7 +141,7 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
 
     const lateRem = isThis ? fus.filter((x) => !x.done && x.date < t) : [];
     const cols = days.map((day, k) => {
-      const mine = dated.filter((x) => x.date === day).sort((a, b) => Number(a.done) - Number(b.done) || String(a.created).localeCompare(String(b.created)));
+      const mine = dated.filter((x) => x.date === day).sort((a, b) => String(a.time || '99').localeCompare(String(b.time || '99')) || Number(a.done) - Number(b.done) || String(a.created).localeCompare(String(b.created)));
       const rem = [...fus.filter((x) => x.date === day && (!x.done || day >= t)), ...(day === t ? lateRem : [])];
       const dl = [
         ...projects.filter((x) => x.due === day && x.stage !== '已结束').map((x) => flag(x.title, `${x.kind || '课题'}截止`, () => editProject(x))),
@@ -132,7 +171,7 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
       h('div', { class: 'wb-top' },
         h('div', null,
           h('h2', { class: 'wb-title' }, standalone ? '一周日程' : '本周日程'),
-          h('p', { class: 'wb-sub' }, `${fmtMD(wk)} – ${fmtMD(days[6])}${total ? ` · 完成 ${done}/${total}` : ''}${overdue.length ? ` · 之前没做完 ${overdue.length}` : ''}`)),
+          h('p', { class: 'wb-sub' }, `${fmtMD(wk)} – ${fmtMD(days[6])} · 东八区 ${zoned(new Date().toISOString()).time}${total ? ` · 完成 ${done}/${total}` : ''}${overdue.length ? ` · 之前没做完 ${overdue.length}` : ''}`)),
         h('div', { class: 'wb-legend', 'aria-hidden': 'true' }, KINDS.map(([k, c]) => h('span', { style: { '--k': c } }, k))),
         h('div', { class: 'wb-nav' },
           h('button', { class: 'btn small ghost', type: 'button', 'aria-label': '上一周', onclick: () => go(addDays(wk, -7)) }, '‹'),

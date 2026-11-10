@@ -1,11 +1,11 @@
 // Home page: greeting, today / week / memo cards, the side rails, the shelf of volumes.
 import { NetworkError, kv } from './store.js';
-import { fmtDate, todayISO, parseFrontMatter } from './model.js';
+import { fmtDate, todayISO, parseFrontMatter, zoned } from './model.js';
 import { addDays, cleanTopic, daysFrom, loadHypotheses, sectionOf, readSamples, isResultCol, evidenceCounts, loadMethods } from './lab.js';
 import { search } from './search.js';
 import { h, icon } from './util.js';
 import { S, demoBanner, lib, modal, toast, topbar, view, menu } from './core.js';
-import { clipCounts, connectZoteroApi, loadClips, readingStats, zoteroApi } from './clips.js';
+import { clipCounts, loadClips } from './clips.js';
 import { autoFileFinds, findsCard } from './finds.js';
 import { weekBoard } from './weekboard.js';
 import {
@@ -215,7 +215,7 @@ export function clothPicker(current) {
 
 export function hero() {
   const t = todayISO(); const d = new Date(`${t}T12:00:00`);
-  const hr = new Date().getHours();
+  const hr = zoned(new Date().toISOString()).hour;
   const greet = hr < 5 ? '夜深了' : hr < 11 ? '早上好' : hr < 13 ? '中午好' : hr < 18 ? '下午好' : '晚上好';
   const name = (lib.notebook.owner || '').trim();
   return h('header', { class: 'hero' },
@@ -423,43 +423,6 @@ export async function weekStats() {
   return { pages: pages.length, exps: pages.filter((p) => p.xid).length, signed: pages.filter((p) => p.signed).length, ev, done: tasks.filter((x) => x.done && inWk(x.doneAt)).length };
 }
 
-// 文献阅读（Zotero）: papers with a highlight, note or box made this week, the number of those marks per day,
-// and items newly added to the library.
-async function fillReading(box, tasks) {
-  const head = (right) => h('div', { class: 'ws-rhead' }, h('h4', null, '文献阅读', h('span', null, 'Zotero · 本周')), right || null);
-  if (!zoteroApi()) {
-    box.replaceChildren(head(), h('p', { class: 'muted small' }, '连接 Zotero 账号后，这里统计本周读了几篇、做了多少批注、新入库几篇。'),
-      h('button', { class: 'btn small', type: 'button', onclick: () => connectZoteroApi(redrawHome) }, '连接 Zotero（只读，一次）'));
-    return;
-  }
-  if (!box.childElementCount) box.replaceChildren(head(), h('p', { class: 'muted small' }, '正在向 Zotero 查询…'));
-  const t = todayISO(); const from = new Date(`${weekStart(t)}T00:00:00`);
-  const load = async (fresh) => {
-    let r;
-    try { r = await readingStats(from, { fresh }); } catch (e) { box.replaceChildren(head(), h('p', { class: 'muted small' }, `没连上 Zotero：${e.message}`)); return; }
-    if (!r) return;
-    const max = Math.max(1, ...r.days);
-    const wait = tasks.filter((x) => x.cat === '文献' && !x.done && x.ref?.doi);
-    box.replaceChildren(
-      head(h('button', { class: 'btn small ghost', type: 'button', title: '重新查询 Zotero', onclick: () => load(true) }, '刷新')),
-      h('div', { class: 'week-stats' },
-        h('div', { class: 'ws' }, h('b', null, String(r.papers.length)), h('span', null, '篇读过（有批注）')),
-        h('div', { class: 'ws' }, h('b', null, String(r.notes)), h('span', null, '条批注')),
-        h('div', { class: 'ws' }, h('b', null, String(r.added)), h('span', null, '篇新入库'))),
-      h('div', { class: 'ws-days', 'aria-label': '每天的批注数' }, r.days.map((n, k) => h('div', { class: `ws-day${addDays(weekStart(t), k) === t ? ' is-today' : ''}`, title: `周${WEEKDAYS[k]}：${n} 条批注` },
-        h('span', { class: 'ws-bar' }, h('span', { style: { height: `${(n / max) * 100}%` } })), h('span', { class: 'ws-dn' }, n ? String(n) : '·'), h('span', { class: 'ws-dw' }, WEEKDAYS[k])))),
-      r.papers.length ? h('ul', { class: 'ws-papers' }, r.papers.slice(0, 8).map((p) => {
-        const todo = p.doi ? wait.find((x) => x.ref.doi.toLowerCase() === p.doi.toLowerCase()) : null;
-        return h('li', null,
-          h('a', { href: `zotero://select/library/items/${p.key}`, title: `${p.title}\n在 Zotero 中打开` }, h('b', null, paperKeywords(p.title) || p.title || '（无题目）'), h('span', null, [p.who, p.journal].filter(Boolean).join(' · '))),
-          todo ? h('button', { class: 'btn small ghost', type: 'button', title: '这篇在「文献待读」里：标为已读', onclick: () => toggleTask(todo.id, redrawHome) }, '待读 → 已读') : null,
-          h('span', { class: 'ws-pn', title: '本周批注数' }, String(p.n)));
-      })) : h('p', { class: 'muted small' }, '本周还没有新的批注。在 Zotero 里读文献时划一下高亮，同步后就会计入。'),
-      ...(r.papers.length > 8 ? [h('p', { class: 'muted small' }, `还有 ${r.papers.length - 8} 篇`)] : []));
-  };
-  load(false);
-}
-
 export function homeRails() {
   const left = h('aside', { class: 'rail rail-left', 'aria-label': '科研主线' });
   const right = h('aside', { class: 'rail rail-right', 'aria-label': '时间与日常' });
@@ -523,13 +486,11 @@ export function homeRails() {
     const st = await weekStats();
     const stat = (n, label) => h('div', { class: 'ws' }, h('b', null, String(n)), h('span', null, label));
     const clipsWk = (await loadClips().catch(() => [])).filter((c) => c.kind === 'img' && String(c.created).slice(0, 10) >= weekStart(t)).length;
-    const reading = h('div', { class: 'ws-reading' });
     right.replaceChildren(
       h('p', { class: 'rail-title' }, '时间与数据'), countdown,
-      railCard('本周科研数据', `${weekStart(t).slice(5)} 至 ${addDays(weekStart(t), 6).slice(5)}`,
+      railCard('本周科研数据', `${weekStart(t).slice(5)} 至 ${addDays(weekStart(t), 6).slice(5)} · 东八区`,
         h('div', { class: 'week-stats' }, stat(st.pages, '页记录'), stat(st.exps, '个实验'), stat(st.pages ? `${Math.round((st.signed / st.pages) * 100)}%` : '—', '已签名'), stat(st.ev, '条新证据'), stat(st.done, '项待办完成'), stat(clipsWk, '张文献图')),
-        reading));
-    fillReading(reading, tasks);
+        h('a', { class: 'btn small ws-open', href: '#/reading', title: '打开后才向 Zotero 查询' }, icon('book', 16), '本周读过的文献 ›')));
     if (focused) document.querySelector(`.rail input[data-k="${focused}"]`)?.focus();
   };
   homeHooks.add(draw);

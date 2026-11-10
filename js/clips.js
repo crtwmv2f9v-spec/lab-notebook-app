@@ -1,12 +1,13 @@
 // 素材库 (clips/F-0001.json): figures cut from papers and small facts (template line widths, plotting settings).
 // The record (title, categories, source paper, Zotero link) lives in the notebook repository; the image itself is
 // written to a folder the user picks once (e.g. in iCloud Drive), so pictures never go into GitHub.
-import { nowISO } from './model.js';
+import { ZONE, nowISO, todayISO, zoned } from './model.js';
+import { addDays } from './lab.js';
 import { kv } from './store.js';
 import { h, icon } from './util.js';
 import { DEMO, choose, demoBanner, lib, modal, saveError, toast, topbar, view } from './core.js';
 import { route } from './app.js';
-import { loadPlanner } from './planner.js';
+import { WEEKDAYS, loadPlanner, toggleTask, weekStart } from './planner.js';
 import { lookupPaper, paperKey, paperKeywords } from './home.js';
 
 // clip = { id, kind: 'img' | 'note', title, cats: [], note, file, w, h,
@@ -238,17 +239,16 @@ const byKeys = async (keys) => {
 // What was read in Zotero from `from` (a local Date) on: a paper counts as read once it has a highlight, note or box
 // made in that time. Zotero only reports what it has synced. Kept for ten minutes so redraws do not ask again.
 // -> { papers: [{ key, title, who, journal, doi, n, last }], notes, added, days: [7 counts], at }
-export async function readingStats(from, { fresh = false } = {}) {
+export async function readingStats(from, { fresh = false, to = null } = {}) {
   if (!zoteroApi()) return null;
   const ck = `labnote-reading:${from.toISOString().slice(0, 10)}`;
   if (!fresh) try { const c = JSON.parse(sessionStorage.getItem(ck) || 'null'); if (c && Date.now() - c.at < 10 * 60e3) return c; } catch { /* no cache */ }
-  const since = from.toISOString();
+  const since = from.toISOString(); const until = (to || new Date(from.getTime() + 7 * 864e5)).toISOString();
   const anns = [];
-  for (let start = 0; start < 500; start += 100) {
+  for (let start = 0; start < 1000; start += 100) {
     const page = await zlist(`items?itemType=annotation&sort=dateAdded&direction=desc&limit=100&start=${start}`);
-    const inWk = page.filter((x) => x.dateAdded >= since);
-    anns.push(...inWk);
-    if (page.length < 100 || inWk.length < page.length) break;
+    anns.push(...page.filter((x) => x.dateAdded >= since && x.dateAdded < until));
+    if (page.length < 100 || page.some((x) => x.dateAdded < since)) break;
   }
   const days = Array(7).fill(0);
   for (const x of anns) { const k = Math.floor((new Date(x.dateAdded) - from) / 864e5); if (k >= 0 && k < 7) days[k] += 1; }
@@ -269,7 +269,7 @@ export async function readingStats(from, { fresh = false } = {}) {
     Object.assign(cur, { title: it.title || '', who: [n[0] ? `${n[0]}${n.length > 1 ? ' 等' : ''}` : '', String(it.date || '').match(/\d{4}/)?.[0] || ''].filter(Boolean).join(' '), journal: it.journalAbbreviation || it.publicationTitle || '', doi: it.DOI || '' });
   }
   const top = await zlist('items/top?sort=dateAdded&direction=desc&limit=100');
-  const added = top.filter((x) => x.dateAdded >= since && !['attachment', 'note', 'annotation'].includes(x.itemType)).length;
+  const added = top.filter((x) => x.dateAdded >= since && x.dateAdded < until && !['attachment', 'note', 'annotation'].includes(x.itemType)).length;
   const out = { papers: [...perPaper.values()].sort((a, b) => b.last.localeCompare(a.last)), notes: anns.length, added, days, at: Date.now() };
   try { sessionStorage.setItem(ck, JSON.stringify(out)); } catch { /* private window */ }
   return out;
@@ -689,4 +689,49 @@ export async function clipCounts() {
   const m = new Map();
   for (const c of await loadClips().catch(() => [])) if (c.src?.task) m.set(c.src.task, (m.get(c.src.task) || 0) + 1);
   return m;
+}
+
+// ----- 本周读过的文献: its own page, asked from Zotero only when opened -----
+export async function viewReading(param) {
+  const t = todayISO();
+  const wk = weekStart(/^\d{4}-\d{2}-\d{2}$/.test(param || '') ? param : t);
+  const from = new Date(`${wk}T00:00:00${ZONE}`);
+  const body = h('div', { class: 'rd-body' }, h('p', { class: 'muted' }, '正在向 Zotero 查询…'));
+  const load = async (fresh) => {
+    if (!zoteroApi()) {
+      body.replaceChildren(h('div', { class: 'tile' }, h('p', null, '连接 Zotero 账号后，这里列出这一周读过的文献。'),
+        h('button', { class: 'btn primary', type: 'button', onclick: () => connectZoteroApi(() => load(true)) }, '连接 Zotero（只读，一次）')));
+      return;
+    }
+    let r; let tasks = [];
+    try { [r, tasks] = await Promise.all([readingStats(from, { fresh }), loadPlanner().then((d) => d.tasks).catch(() => [])]); } catch (e) { body.replaceChildren(h('div', { class: 'tile' }, h('p', { class: 'warn' }, `没连上 Zotero：${e.message}`))); return; }
+    const wait = tasks.filter((x) => x.cat === '文献' && !x.done && x.ref?.doi);
+    const max = Math.max(1, ...r.days);
+    const stat = (n, label) => h('div', { class: 'ws' }, h('b', null, String(n)), h('span', null, label));
+    body.replaceChildren(
+      h('div', { class: 'tile' },
+        h('div', { class: 'week-stats' }, stat(r.papers.length, '篇读过（有批注）'), stat(r.notes, '条批注'), stat(r.added, '篇新入库')),
+        h('div', { class: 'ws-days', 'aria-label': '每天的批注数' }, r.days.map((n, k) => h('div', { class: `ws-day${addDays(wk, k) === t ? ' is-today' : ''}`, title: `周${WEEKDAYS[k]}：${n} 条批注` },
+          h('span', { class: 'ws-bar' }, h('span', { style: { height: `${(n / max) * 100}%` } })), h('span', { class: 'ws-dn' }, n ? String(n) : '·'), h('span', { class: 'ws-dw' }, WEEKDAYS[k])))),
+        h('p', { class: 'muted small' }, '一篇文章算“读过”：这一周在它的 PDF 里做过高亮、下划线、笔记或框图。时间按东八区；Zotero 同步后才会出现。')),
+      h('div', { class: 'tile' },
+        h('h2', null, `读过的文献 ${r.papers.length}`),
+        r.papers.length ? h('ul', { class: 'ws-papers rd-list' }, r.papers.map((p) => {
+          const todo = p.doi ? wait.find((x) => x.ref.doi.toLowerCase() === p.doi.toLowerCase()) : null;
+          const z = zoned(p.last);
+          return h('li', null,
+            h('a', { href: `zotero://select/library/items/${p.key}`, title: '在 Zotero 中打开' }, h('b', null, p.title || '（Zotero 没有返回题目）'), h('span', null, [p.who, p.journal, `最后批注 ${z.day.slice(5)} ${z.time}`].filter(Boolean).join(' · '))),
+            todo ? h('button', { class: 'btn small ghost', type: 'button', title: '这篇在「文献待读」里：标为已读', onclick: async () => { await toggleTask(todo.id); load(false); } }, '待读 → 已读') : null,
+            p.doi ? h('a', { class: 'btn small ghost', href: `https://doi.org/${p.doi}`, target: '_blank', rel: 'noopener' }, 'DOI') : null,
+            h('span', { class: 'ws-pn', title: '这一周的批注数' }, String(p.n)));
+        })) : h('p', { class: 'muted' }, '这一周没有新的批注。')));
+  };
+  load(false);
+  return h('div', { class: 'view reading' },
+    topbar({ back: '#/', backLabel: '首页', title: '读过的文献', sub: `${wk} 至 ${addDays(wk, 6)} · 东八区 · 来自 Zotero`, actions: [
+      h('a', { class: 'btn ghost', href: `#/reading/${addDays(wk, -7)}` }, '‹ 上一周'),
+      wk !== weekStart(t) ? h('a', { class: 'btn ghost', href: '#/reading' }, '本周') : null,
+      wk < weekStart(t) ? h('a', { class: 'btn ghost', href: `#/reading/${addDays(wk, 7)}` }, '下一周 ›') : null,
+      h('button', { class: 'btn', type: 'button', onclick: () => load(true) }, '刷新')] }),
+    demoBanner(), h('div', { class: 'plan-wrap rd-wrap' }, body));
 }

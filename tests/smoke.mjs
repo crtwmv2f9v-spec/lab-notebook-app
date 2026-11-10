@@ -229,6 +229,26 @@ try {
     await evaluate(clean);
     return `moved to ${r.to}, then back to 待安排`;
   });
+  await check('time-zone-and-times', async () => {
+    await go('#/', "document.querySelector('.wb-col.is-today .wb-add-btn')");
+    const r = await evaluate(`const m = await import('./js/model.js'); const w = await import('./js/weekboard.js'); const p = await import('./js/planner.js');
+      const bj = new Date(Date.now() + 8 * 3600e3).toISOString();
+      const zone = { today: m.todayISO() === bj.slice(0, 10), now: m.nowISO().endsWith('+08:00') && m.nowISO().slice(0, 16) === bj.slice(0, 16), z: m.zoned('2026-11-09T20:30:00-05:00') };
+      const pt = [w.parseTime('9'), w.parseTime('930'), w.parseTime('14:00-17:30'), w.parseTime('25'), w.parseTime('17-14'), w.parseTime('')].map((x) => (x ? x.time + (x.end ? '-' + x.end : '') : 'bad')).join('|');
+      const col = document.querySelector('.wb-col.is-today'); col.querySelector('.wb-add-btn').click();
+      const input = col.querySelector('.wb-add .add-input'); const tm = col.querySelector('.wb-time-add');
+      input.value = '测试定时事项'; tm.value = '7-8';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await new Promise((r) => setTimeout(r, 500));
+      const x = (await p.loadPlanner()).tasks.find((y) => y.text === '测试定时事项');
+      const first = document.querySelector('.wb-col.is-today .wb-card .task-text')?.textContent;
+      const chip = [...document.querySelectorAll('.wb-col.is-today .wb-card')].find((e) => e.textContent.includes('测试定时事项'))?.querySelector('.wb-time')?.textContent;
+      const nullText = document.querySelector('.wb').innerText.includes('null');
+      await p.removeTask(x.id);
+      return { zone, pt, time: x.time, end: x.end, date: x.date === m.todayISO(), chip, nullText };`);
+    if (!r.zone.today || !r.zone.now || r.zone.z.day !== '2026-11-10' || r.zone.z.time !== '09:30' || r.pt !== '09:00|09:30|14:00-17:30|bad|bad|' || r.time !== '07:00' || r.end !== '08:00' || !r.date || r.chip !== '07:00–08:00' || r.nullText) throw new Error(JSON.stringify(r));
+    return `UTC+8 day and clock; item added at ${r.chip}`;
+  });
   await check('finds', async () => {
     await go('#/', "document.querySelectorAll('.finds-card .find').length >= 2");
     const r = await evaluate(`const f = await import('./js/finds.js'); const p = await import('./js/planner.js'); const c = await import('./js/core.js'); const lab = await import('./js/lab.js'); const m = await import('./js/model.js');

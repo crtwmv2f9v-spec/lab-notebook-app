@@ -154,14 +154,23 @@ export function makeEntry(vol, num, md, sha) {
 
 // ---------- dates ----------
 const two = (n) => String(n).padStart(2, '0');
-export function todayISO(d = new Date()) {
-  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
-}
+// The notebook keeps one clock wherever it is opened: UTC+8 (北京时间). "Today", the current week and every new
+// timestamp follow it, so a page written in another time zone still lands on the right day.
+export const ZONE = '+08:00';
+const wall = (d) => new Date(d.getTime() + (480 + d.getTimezoneOffset()) * 60000); // local getters then read the UTC+8 wall clock
+const ymd = (d) => `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+// No argument: today in UTC+8. With a Date built from a calendar day (as addDays does): that calendar day.
+export function todayISO(d) { return ymd(d || wall(new Date())); }
 export function nowISO(d = new Date()) {
-  const off = -d.getTimezoneOffset();
-  const sign = off >= 0 ? '+' : '-';
-  const a = Math.abs(off);
-  return `${todayISO(d)}T${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}${sign}${two(Math.floor(a / 60))}:${two(a % 60)}`;
+  const w = wall(d);
+  return `${ymd(w)}T${two(w.getHours())}:${two(w.getMinutes())}:${two(w.getSeconds())}${ZONE}`;
+}
+// A stored timestamp (any offset) as the UTC+8 day and 24-hour time.
+export function zoned(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return { day: String(iso).slice(0, 10), time: String(iso).slice(11, 16) };
+  const w = wall(d);
+  return { day: ymd(w), time: `${two(w.getHours())}:${two(w.getMinutes())}`, hour: w.getHours() };
 }
 export function fmtDate(iso) {
   if (!iso) return '';
@@ -172,5 +181,5 @@ export function fmtDate(iso) {
 export function fmtTime(iso) {
   const d = new Date(iso);
   if (isNaN(d)) return '';
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return zoned(iso).time;
 }
