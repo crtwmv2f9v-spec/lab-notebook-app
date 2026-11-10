@@ -2114,3 +2114,26 @@ input.find-text { white-space: normal; }
 .view.home .home-boards .rail-title { grid-column: 1 / -1; margin: 40px 0 0 !important; padding: 0 !important; font: 700 24px/1.2 var(--font-ui) !important; letter-spacing: -0.015em !important; color: var(--bench-ink) !important; text-transform: none !important; }
 .wb-plan .wb-add { margin-top: 2px; }
 .wb-plan .wb-hint { margin-top: auto; padding-top: 10px; }
+
+/* ----- v47: fewer side cards; reading from Zotero in 本周科研数据 ----- */
+.home-boards .rail-left { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.home-boards .rail-right { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+@media (max-width: 1500px) { .home-boards .rail-left { grid-template-columns: repeat(2, minmax(0, 1fr)); } .home-boards .rail-right { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .home-boards .rail-left { grid-template-columns: 1fr; } }
+.ws-reading { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--card-line); }
+.ws-rhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.ws-rhead h4 { margin: 0; font: 700 15px/1.2 var(--font-ui); color: var(--card-ink); }
+.ws-rhead h4 span { margin-left: 8px; font: 500 12px/1 var(--font-ui); color: var(--card-ink-2); }
+.ws-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin: 12px 0 4px; max-width: 420px; }
+.ws-day { display: flex; flex-direction: column; align-items: center; gap: 3px; font: 500 11px/1 var(--font-ui); color: var(--card-ink-2); }
+.ws-bar { width: 100%; max-width: 30px; height: 44px; border-radius: 6px; background: color-mix(in srgb, var(--card-ink) 6%, transparent); display: flex; align-items: flex-end; overflow: hidden; }
+.ws-bar span { display: block; width: 100%; background: #a2845e; border-radius: 6px 6px 0 0; min-height: 0; }
+.ws-day.is-today .ws-dw { color: var(--accent); font-weight: 700; }
+.ws-dn { font-variant-numeric: tabular-nums; color: var(--card-ink); }
+.ws-papers { list-style: none; margin: 10px 0 0; padding: 0; }
+.ws-papers li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--card-line); }
+.ws-papers a { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-decoration: none; color: var(--card-ink); }
+.ws-papers a b { font: 600 13.5px/1.35 var(--font-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-papers a span { font: 400 11.5px/1.2 var(--font-ui); color: var(--card-ink-2); }
+.ws-papers a:hover b { color: var(--accent); }
+.ws-pn { flex: none; min-width: 24px; text-align: center; font: 600 12px/1 var(--font-ui); padding: 4px 6px; border-radius: 980px; background: color-mix(in srgb, #a2845e 16%, transparent); color: #a2845e; }

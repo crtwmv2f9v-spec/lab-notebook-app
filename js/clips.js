@@ -222,6 +222,58 @@ async function zget(path) {
   if (!r.ok) throw new Error(`Zotero ${r.status}`);
   return (await r.json()).data;
 }
+async function zlist(path) {
+  const a = zoteroApi(); if (!a) return [];
+  const r = await fetch(`https://api.zotero.org/users/${a.userID}/${path}`, { headers: { 'Zotero-API-Key': a.key, 'Zotero-API-Version': '3' } });
+  if (!r.ok) throw new Error(`Zotero ${r.status}`);
+  return (await r.json()).map((x) => x.data);
+}
+const byKeys = async (keys) => {
+  const out = [];
+  keys = [...new Set(keys)];
+  for (let i = 0; i < keys.length; i += 50) out.push(...await zlist(`items?itemKey=${keys.slice(i, i + 50).join(',')}&limit=50`));
+  const seen = new Set();
+  return out.filter((x) => keys.includes(x.key) && !seen.has(x.key) && seen.add(x.key)); // each asked-for item once
+};
+// What was read in Zotero from `from` (a local Date) on: a paper counts as read once it has a highlight, note or box
+// made in that time. Zotero only reports what it has synced. Kept for ten minutes so redraws do not ask again.
+// -> { papers: [{ key, title, who, journal, doi, n, last }], notes, added, days: [7 counts], at }
+export async function readingStats(from, { fresh = false } = {}) {
+  if (!zoteroApi()) return null;
+  const ck = `labnote-reading:${from.toISOString().slice(0, 10)}`;
+  if (!fresh) try { const c = JSON.parse(sessionStorage.getItem(ck) || 'null'); if (c && Date.now() - c.at < 10 * 60e3) return c; } catch { /* no cache */ }
+  const since = from.toISOString();
+  const anns = [];
+  for (let start = 0; start < 500; start += 100) {
+    const page = await zlist(`items?itemType=annotation&sort=dateAdded&direction=desc&limit=100&start=${start}`);
+    const inWk = page.filter((x) => x.dateAdded >= since);
+    anns.push(...inWk);
+    if (page.length < 100 || inWk.length < page.length) break;
+  }
+  const days = Array(7).fill(0);
+  for (const x of anns) { const k = Math.floor((new Date(x.dateAdded) - from) / 864e5); if (k >= 0 && k < 7) days[k] += 1; }
+  const perAtt = new Map();
+  for (const x of anns) { const g = perAtt.get(x.parentItem) || { n: 0, last: '' }; g.n += 1; if (x.dateAdded > g.last) g.last = x.dateAdded; perAtt.set(x.parentItem, g); }
+  const atts = await byKeys([...perAtt.keys()].filter(Boolean));
+  const perPaper = new Map(); // parent key (or the attachment itself when it has no parent)
+  for (const at of atts) {
+    const g = perAtt.get(at.key); const k = at.parentItem || at.key;
+    const cur = perPaper.get(k) || { key: k, n: 0, last: '', title: at.parentItem ? '' : (at.title || at.filename || '') };
+    cur.n += g.n; if (g.last > cur.last) cur.last = g.last; perPaper.set(k, cur);
+  }
+  // An attachment Zotero would not return still counts as one paper read.
+  for (const [k, g] of perAtt) if (k && !atts.some((x) => x.key === k)) perPaper.set(k, { key: k, n: g.n, last: g.last, title: '' });
+  for (const it of await byKeys(atts.map((x) => x.parentItem).filter(Boolean))) {
+    const cur = perPaper.get(it.key); if (!cur) continue;
+    const n = (it.creators || []).map((c) => c.lastName || c.name || '').filter(Boolean);
+    Object.assign(cur, { title: it.title || '', who: [n[0] ? `${n[0]}${n.length > 1 ? ' 等' : ''}` : '', String(it.date || '').match(/\d{4}/)?.[0] || ''].filter(Boolean).join(' '), journal: it.journalAbbreviation || it.publicationTitle || '', doi: it.DOI || '' });
+  }
+  const top = await zlist('items/top?sort=dateAdded&direction=desc&limit=100');
+  const added = top.filter((x) => x.dateAdded >= since && !['attachment', 'note', 'annotation'].includes(x.itemType)).length;
+  const out = { papers: [...perPaper.values()].sort((a, b) => b.last.localeCompare(a.last)), notes: anns.length, added, days, at: Date.now() };
+  try { sessionStorage.setItem(ck, JSON.stringify(out)); } catch { /* private window */ }
+  return out;
+}
 // annotation key -> { zotero link, page, page label, ref }; null if the annotation has not synced yet.
 export async function resolveAnnotation(akey) {
   const an = await zget(`items/${akey}`).catch(() => null);

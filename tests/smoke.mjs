@@ -73,7 +73,7 @@ try {
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: `${BASE}?demo#/` });
 
-  await check('home', async () => { await waitFor("document.querySelector('.wb-col.is-today') && document.querySelectorAll('.rail-card').length >= 8"); await sleep(600); await evaluate(clean); await shot('home'); });
+  await check('home', async () => { await waitFor("document.querySelector('.wb-col.is-today') && document.querySelectorAll('.rail-card').length >= 5"); await sleep(600); await evaluate(clean); await shot('home'); });
   await check('home-wide', async () => { await shot('home-wide', { width: 1920, height: 1100 }); });
   await check('phone-width', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 375, height: 812, deviceScaleFactor: 1, mobile: true });

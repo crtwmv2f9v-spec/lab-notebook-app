@@ -5,7 +5,7 @@ import { addDays, cleanTopic, daysFrom, loadHypotheses, sectionOf, readSamples, 
 import { search } from './search.js';
 import { h, icon } from './util.js';
 import { S, demoBanner, lib, modal, toast, topbar, view, menu } from './core.js';
-import { clipCounts } from './clips.js';
+import { clipCounts, connectZoteroApi, loadClips, readingStats, zoteroApi } from './clips.js';
 import { autoFileFinds, findsCard } from './finds.js';
 import { weekBoard } from './weekboard.js';
 import {
@@ -423,6 +423,43 @@ export async function weekStats() {
   return { pages: pages.length, exps: pages.filter((p) => p.xid).length, signed: pages.filter((p) => p.signed).length, ev, done: tasks.filter((x) => x.done && inWk(x.doneAt)).length };
 }
 
+// 文献阅读（Zotero）: papers with a highlight, note or box made this week, the number of those marks per day,
+// and items newly added to the library.
+async function fillReading(box, tasks) {
+  const head = (right) => h('div', { class: 'ws-rhead' }, h('h4', null, '文献阅读', h('span', null, 'Zotero · 本周')), right || null);
+  if (!zoteroApi()) {
+    box.replaceChildren(head(), h('p', { class: 'muted small' }, '连接 Zotero 账号后，这里统计本周读了几篇、做了多少批注、新入库几篇。'),
+      h('button', { class: 'btn small', type: 'button', onclick: () => connectZoteroApi(redrawHome) }, '连接 Zotero（只读，一次）'));
+    return;
+  }
+  if (!box.childElementCount) box.replaceChildren(head(), h('p', { class: 'muted small' }, '正在向 Zotero 查询…'));
+  const t = todayISO(); const from = new Date(`${weekStart(t)}T00:00:00`);
+  const load = async (fresh) => {
+    let r;
+    try { r = await readingStats(from, { fresh }); } catch (e) { box.replaceChildren(head(), h('p', { class: 'muted small' }, `没连上 Zotero：${e.message}`)); return; }
+    if (!r) return;
+    const max = Math.max(1, ...r.days);
+    const wait = tasks.filter((x) => x.cat === '文献' && !x.done && x.ref?.doi);
+    box.replaceChildren(
+      head(h('button', { class: 'btn small ghost', type: 'button', title: '重新查询 Zotero', onclick: () => load(true) }, '刷新')),
+      h('div', { class: 'week-stats' },
+        h('div', { class: 'ws' }, h('b', null, String(r.papers.length)), h('span', null, '篇读过（有批注）')),
+        h('div', { class: 'ws' }, h('b', null, String(r.notes)), h('span', null, '条批注')),
+        h('div', { class: 'ws' }, h('b', null, String(r.added)), h('span', null, '篇新入库'))),
+      h('div', { class: 'ws-days', 'aria-label': '每天的批注数' }, r.days.map((n, k) => h('div', { class: `ws-day${addDays(weekStart(t), k) === t ? ' is-today' : ''}`, title: `周${WEEKDAYS[k]}：${n} 条批注` },
+        h('span', { class: 'ws-bar' }, h('span', { style: { height: `${(n / max) * 100}%` } })), h('span', { class: 'ws-dn' }, n ? String(n) : '·'), h('span', { class: 'ws-dw' }, WEEKDAYS[k])))),
+      r.papers.length ? h('ul', { class: 'ws-papers' }, r.papers.slice(0, 8).map((p) => {
+        const todo = p.doi ? wait.find((x) => x.ref.doi.toLowerCase() === p.doi.toLowerCase()) : null;
+        return h('li', null,
+          h('a', { href: `zotero://select/library/items/${p.key}`, title: `${p.title}\n在 Zotero 中打开` }, h('b', null, paperKeywords(p.title) || p.title || '（无题目）'), h('span', null, [p.who, p.journal].filter(Boolean).join(' · '))),
+          todo ? h('button', { class: 'btn small ghost', type: 'button', title: '这篇在「文献待读」里：标为已读', onclick: () => toggleTask(todo.id, redrawHome) }, '待读 → 已读') : null,
+          h('span', { class: 'ws-pn', title: '本周批注数' }, String(p.n)));
+      })) : h('p', { class: 'muted small' }, '本周还没有新的批注。在 Zotero 里读文献时划一下高亮，同步后就会计入。'),
+      ...(r.papers.length > 8 ? [h('p', { class: 'muted small' }, `还有 ${r.papers.length - 8} 篇`)] : []));
+  };
+  load(false);
+}
+
 export function homeRails() {
   const left = h('aside', { class: 'rail rail-left', 'aria-label': '科研主线' });
   const right = h('aside', { class: 'rail rail-right', 'aria-label': '时间与日常' });
@@ -462,11 +499,9 @@ export function homeRails() {
     for (const [card, key] of [[pj, 'pj'], [pp, 'pp']]) { const ul = card.querySelector('ul.board-list'); if (ul) foldList(ul, key); }
     const rd = catList(tasks, '文献', { placeholder: '粘贴 DOI、链接或题目' });
     setTimeout(fillPaperRefs, 300);
-    const ins = catList(tasks, '仪器', { placeholder: '仪器和时间段，如 Keithley 14:00–17:00', dated: true, dateRequired: true });
     left.replaceChildren(
       h('p', { class: 'rail-title' }, '科研主线'), pj, pp,
-      railCard('文献待读', rd.open.length ? `${rd.open.length} 篇待读` : '读完打勾', ...rd.el),
-      railCard('仪器预约与实验队列', ins.open.length ? `${ins.open.length} 项` : '预约时间、排队的实验', ...ins.el));
+      railCard('文献待读', rd.open.length ? `${rd.open.length} 篇待读` : '读完打勾', ...rd.el));
     // 截止日倒计时：自己的截止项 + 课题、论文的日期
     const t = todayISO();
     const dl = [
@@ -485,16 +520,16 @@ export function homeRails() {
           x.task ? h('button', { class: 'tick small', type: 'button', role: 'checkbox', 'aria-checked': 'false', 'aria-label': '完成', title: '完成', onclick: () => toggleTask(x.task.id, redrawHome) }) : null);
       })));
     { const ul = countdown.querySelector('ul.countdown'); if (ul) foldList(ul, 'dl'); }
-    const chores = catList(tasks, '杂事', { placeholder: '报销、采购、盖章…', dated: true });
-    const life = catList(tasks, '生活', { placeholder: '运动、体检…', dated: true });
     const st = await weekStats();
     const stat = (n, label) => h('div', { class: 'ws' }, h('b', null, String(n)), h('span', null, label));
+    const clipsWk = (await loadClips().catch(() => [])).filter((c) => c.kind === 'img' && String(c.created).slice(0, 10) >= weekStart(t)).length;
+    const reading = h('div', { class: 'ws-reading' });
     right.replaceChildren(
-      h('p', { class: 'rail-title' }, '时间与日常'), countdown,
-      railCard('杂事', chores.open.length ? `${chores.open.length} 项待办` : '行政、采购、报销', ...chores.el),
-      railCard('生活', life.open.length ? `${life.open.length} 项` : '健康、运动、个人', ...life.el),
+      h('p', { class: 'rail-title' }, '时间与数据'), countdown,
       railCard('本周科研数据', `${weekStart(t).slice(5)} 至 ${addDays(weekStart(t), 6).slice(5)}`,
-        h('div', { class: 'week-stats' }, stat(st.pages, '页记录'), stat(st.exps, '个实验'), stat(st.pages ? `${Math.round((st.signed / st.pages) * 100)}%` : '—', '已签名'), stat(st.ev, '条新证据'), stat(st.done, '项待办完成'))));
+        h('div', { class: 'week-stats' }, stat(st.pages, '页记录'), stat(st.exps, '个实验'), stat(st.pages ? `${Math.round((st.signed / st.pages) * 100)}%` : '—', '已签名'), stat(st.ev, '条新证据'), stat(st.done, '项待办完成'), stat(clipsWk, '张文献图')),
+        reading));
+    fillReading(reading, tasks);
     if (focused) document.querySelector(`.rail input[data-k="${focused}"]`)?.focus();
   };
   homeHooks.add(draw);
