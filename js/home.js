@@ -11,7 +11,7 @@ import { weekBoard } from './weekboard.js';
 import {
   PAPER_STAGE, WEEKDAYS, addBox, allFollowups, changeTasks, editPaper, editProject, exportIcs,
   editable, isGoal, loadPlanner, moveTask, newTask, reminderRow, ring, taskRow,
-  toggleTask, weekStart, projectTopic, topicChip, freshId, PAPER_NOTES, openPaperNotes, paperNoteCount,
+  toggleTask, weekStart, projectTopic, topicChip, freshId, noteBar, paperNoteStats, PAPER_NOTES, openPaperNotes, paperNoteCount,
 } from './planner.js';
 import { openNewExperiment } from './pages.js';
 import { openExport } from './printing.js';
@@ -466,14 +466,17 @@ export function homeRails() {
     const paperCard = (x) => {
       const k = Math.max(0, PAPER_STAGE.indexOf(x.stage));
       const nm = paperMethods.filter((m) => (m.papers || []).includes(x.id));
-      return h('li', { class: 'pp-card paper', style: { '--k': STAGE_COLOR[x.stage] || '#8e8e93' }, tabindex: '0', onclick: () => editPaper(x), onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) editPaper(x); } },
-        h('div', { class: 'pp-top' }, h('span', { class: 'pp-stage' }, x.stage || PAPER_STAGE[0]), x.journal ? h('i', { class: 'pp-journal' }, x.journal) : null, dueTag(x.due)),
+      const tp = topics.find((t) => t.id === x.topic) || null;
+      const ns = paperNoteStats(x);
+      return h('li', { class: 'pp-card paper', style: { '--k': tp?.color || '#8e8e93' }, tabindex: '0', onclick: () => editPaper(x), onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) editPaper(x); } },
+        h('div', { class: 'pp-top' }, h('span', { class: 'pp-stage' }, x.stage || PAPER_STAGE[0]), tp ? h('span', { class: 'pp-topic' }, tp.name) : null, x.journal ? h('i', { class: 'pp-journal' }, x.journal) : null, dueTag(x.due)),
         h('h3', null, x.title),
         h('ol', { class: 'pp-track', 'aria-label': `进度：${x.stage}` }, PAPER_STAGE.map((st, i) => h('li', { class: i < k ? 'done' : i === k ? 'now' : null, title: st }, i === k ? h('span', null, st) : null))),
         x.note ? h('p', { class: 'pp-note' }, x.note) : null,
         h('div', { class: 'pp-stats' },
           ppStat(nm.length, '方法卡片', nm.length ? `${nm.filter((m) => m.status === '待写入').length} 张待写入` : '写 Methods 用', { href: `#/methods/a/${x.id}`, title: '这篇文章的方法卡片' }, false),
-          ...Object.entries(PAPER_NOTES).map(([key, [name, label]]) => { const open = (x[key] || []).filter((n) => !n.done).length; const all = paperNoteCount(x, key); return ppStat(all, name, all ? (open ? `${open} 条未处理` : '都已处理') : '记意见', { cls: 'bi-notes', title: `${label}：共 ${all} 条${open ? `，${open} 条未处理` : ''}`, run: () => openPaperNotes(x.id, key) }, open > 0); })));
+          ...Object.entries(PAPER_NOTES).map(([key, [name, label]]) => { const open = paperNoteStats(x, [key]).open; const all = paperNoteCount(x, key); return ppStat(all, name, all ? (open ? `${open} 条待完成` : '都已处理') : '记意见', { cls: 'bi-notes', title: `${label}：共 ${all} 条${open ? `，${open} 条待完成` : ''}`, run: () => openPaperNotes(x.id, key) }, open > 0); })),
+        ns.all ? h('div', { class: 'pp-prog', title: '全部修改意见的处理进度' }, noteBar(ns), h('span', null, `已完成 ${ns.done} · 待完成 ${ns.open}${ns.drop ? ` · 不采纳 ${ns.drop}` : ''}`)) : null);
     };
     const live = papers.filter((x) => x.stage !== '已发表');
     papersEl.replaceChildren(

@@ -309,47 +309,99 @@ export function editProject(p, preset = {}) {
   });
 }
 // ----- comments on a paper's figures and manuscript (the advisor's pen marks on the printout, typed in) -----
-// Kept on the paper itself: paper.fig / paper.ms = [{ id, text, where, by, done, at }].
-export const PAPER_NOTES = { fig: ['Figures', '图的意见', '位置，如 Fig. 2b'], ms: ['Manuscript', '稿件的意见', '位置，如 p. 3 第 2 段 / Abstract'] };
+// Kept on the paper itself: paper.fig / paper.ms = [{ id, text, sec?, where?, by, at, done?, doneAt?, how?, drop?, dropAt?, why? }].
+// Nothing is thrown away: a comment ends as 已完成 (with how it was handled) or 不采纳 (with why), and stays in the archive.
+export const PAPER_NOTES = { fig: ['Figures', '图的意见', '位置，如 Fig. 2b'], ms: ['Manuscript', '稿件的意见', '位置，如 p. 3 第 2 段'] };
+export const MS_SECTIONS = ['Title', 'Abstract', 'Introduction', 'Results and Discussion', 'Conclusion', 'Experimental', 'References', 'Supporting Information'];
 const NOTE_BY = ['导师', '我', '合作者', '审稿人'];
+const noteState = (n) => (n.drop ? 'drop' : n.done ? 'done' : 'open');
 export const paperNoteCount = (p, kind) => arr(p?.[kind]).length;
+// { all, done, open, drop } over one list or both.
+export function paperNoteStats(p, kinds = ['fig', 'ms']) {
+  const items = kinds.flatMap((k) => arr(p?.[k]));
+  const n = (st) => items.filter((x) => noteState(x) === st).length;
+  return { all: items.length, done: n('done'), open: n('open'), drop: n('drop') };
+}
+// A three-part bar: done (green), open (amber), not adopted (grey).
+export function noteBar(st, cls = '') {
+  const w = (n) => `${st.all ? (n / st.all) * 100 : 0}%`;
+  return h('div', { class: `nbar ${cls}`, role: 'img', 'aria-label': `已完成 ${st.done}，待完成 ${st.open}，不采纳 ${st.drop}` },
+    h('i', { class: 'd', style: { width: w(st.done) } }), h('i', { class: 'o', style: { width: w(st.open) } }), h('i', { class: 'x', style: { width: w(st.drop) } }));
+}
+const figGroup = (n) => { const m = String(n.where || '').match(/(?:fig(?:ure)?\.?|图|scheme|table|表)\s*s?\d+/i); return m ? m[0].replace(/\s+/g, ' ').replace(/^fig(ure)?\.?/i, 'Fig.').replace(/^Fig\.(\S)/, 'Fig. $1') : '未标位置'; };
 export function openPaperNotes(paperId, kind) {
-  const [name, label, wherePh] = PAPER_NOTES[kind];
   const paper = () => planLocal?.doc.papers.find((x) => x.id === paperId);
   if (!paper()) return;
   let by = '导师'; try { by = localStorage.getItem('labnote-note-by') || '导师'; } catch { /* private window */ }
-  const list = h('ul', { class: 'tasks pn-list' });
-  const sum = h('p', { class: 'muted small' });
-  const upd = (mutate, msg) => changePlanner((d) => { const y = d.papers.find((z) => z.id === paperId); if (!y) return; y[kind] = arr(y[kind]); mutate(y[kind]); }, msg, () => { draw(); redrawHome(); });
-  const draw = () => {
-    const items = arr(paper()?.[kind]);
-    const open = items.filter((x) => !x.done);
-    sum.textContent = items.length ? `共 ${items.length} 条 · ${open.length} 条未处理` : '还没有。把打印稿上的批注一条一条敲进来，改完一条勾一条。';
-    list.replaceChildren(...[...open, ...items.filter((x) => x.done)].map((x) => h('li', { class: `task pn-item${x.done ? ' done' : ''}` },
-      h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!x.done), 'aria-label': x.done ? '标为未处理' : '标为已改', onclick: () => upd((l) => { const y = l.find((z) => z.id === x.id); if (y) { y.done = !y.done; if (y.done) y.doneAt = nowISO(); else delete y.doneAt; } }, 'Paper notes: tick') }),
-      h('span', { class: 'task-main' },
-        editable(x.text, (v) => upd((l) => { const y = l.find((z) => z.id === x.id); if (y) y.text = v; }, 'Paper notes: edit'), 'task-text'),
-        h('span', { class: 'task-meta' }, x.where ? h('span', { class: 'pn-where' }, x.where) : null, h('span', { class: `pn-by${x.by === '导师' ? ' boss' : ''}` }, x.by || '我'), fmtDate(x.at))),
-      h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => upd((l) => { const k = l.findIndex((z) => z.id === x.id); if (k >= 0) l.splice(k, 1); }, 'Paper notes: remove') }, icon('close', 14)))));
-  };
-  const where = h('input', { id: 'pn-where', placeholder: wherePh, autocomplete: 'off' });
+  let tab = kind; let show = 'open'; let sec = MS_SECTIONS[1];
+  const root = h('div', { class: 'form paper-notes' });
+  const upd = (k, mutate, msg) => changePlanner((d) => { const y = d.papers.find((z) => z.id === paperId); if (!y) return; y[k] = arr(y[k]); mutate(y[k]); }, msg, () => { draw(); redrawHome(); });
+  const one = (k, id, f, msg) => upd(k, (l) => { const y = l.find((z) => z.id === id); if (y) f(y); }, msg);
+  const where = h('input', { id: 'pn-where', autocomplete: 'off' });
   const who = h('select', { id: 'pn-by', 'aria-label': '谁提的' }, NOTE_BY.map((o) => h('option', { selected: by === o }, o)));
   who.addEventListener('change', () => { try { localStorage.setItem('labnote-note-by', who.value); } catch { /* private window */ } });
   const text = h('textarea', { id: 'pn-text', rows: 3, placeholder: '意见原话。回车保存；一次贴多行 = 每行一条（Shift+回车换行）' });
   const add = () => {
     const lines = text.value.split(/\n+/).map((l) => l.replace(/^\s*(?:[-•*]|\d+[.、)）])\s*/, '').trim()).filter(Boolean);
     if (!lines.length) return false;
-    const w = where.value.trim(); const b = who.value; text.value = '';
-    upd((l) => { for (const t of lines) l.push({ id: uid('N'), text: t, ...(w ? { where: w } : {}), by: b, done: false, at: nowISO() }); }, `Paper notes: add ${name}`);
-    text.focus(); return false;
+    const w = where.value.trim(); const b = who.value; const sc = tab === 'ms' ? sec : ''; text.value = '';
+    upd(tab, (l) => { for (const t of lines) l.push({ id: uid('N'), text: t, ...(sc ? { sec: sc } : {}), ...(w ? { where: w } : {}), by: b, at: nowISO() }); }, `Paper notes: add ${PAPER_NOTES[tab][0]}`);
+    show = 'open'; text.focus(); return false;
   };
   text.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); add(); } });
+  const item = (k, x) => {
+    const st = noteState(x);
+    const trace = [`${x.by || '我'} ${fmtDate(x.at)} 提出`, st === 'done' ? `${fmtDate(x.doneAt)} 完成` : st === 'drop' ? `${fmtDate(x.dropAt)} 不采纳` : null].filter(Boolean).join(' → ');
+    const reason = st === 'open' ? null : editable(st === 'done' ? (x.how || '') : (x.why || ''), (v) => one(k, x.id, (y) => { if (st === 'done') y.how = v; else y.why = v; }, 'Paper notes: resolution'), `pn-how${(st === 'done' ? x.how : x.why) ? '' : ' empty'}`);
+    if (reason && !(st === 'done' ? x.how : x.why)) reason.textContent = st === 'done' ? '＋ 怎么改的（可不填）' : '＋ 为什么不采纳（可不填）';
+    return h('li', { class: `task pn-item ${st}` },
+      h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(st === 'done'), 'aria-label': st === 'done' ? '标为未完成' : '标为已完成', onclick: () => one(k, x.id, (y) => { delete y.drop; delete y.dropAt; if (y.done) { delete y.done; delete y.doneAt; } else { y.done = true; y.doneAt = nowISO(); } }, 'Paper notes: tick') }),
+      h('span', { class: 'task-main' },
+        editable(x.text, (v) => one(k, x.id, (y) => { y.text = v; }, 'Paper notes: edit'), 'task-text'),
+        h('span', { class: 'task-meta pn-trace' }, x.where ? h('span', { class: 'pn-where' }, x.where) : null, h('span', { class: `pn-by${x.by === '导师' ? ' boss' : ''}` }, x.by || '我'), trace),
+        reason),
+      st === 'drop' ? h('button', { class: 'pn-act', type: 'button', title: '重新列为待完成', onclick: () => one(k, x.id, (y) => { delete y.drop; delete y.dropAt; }, 'Paper notes: reopen') }, '恢复')
+        : h('button', { class: 'pn-act', type: 'button', title: '不改这一条：归档为“不采纳”，可写原因', onclick: () => one(k, x.id, (y) => { delete y.done; delete y.doneAt; y.drop = true; y.dropAt = nowISO(); }, 'Paper notes: not adopted') }, '不采纳'));
+  };
+  const markdown = () => {
+    const p = paper(); const L = [`# ${p.title} · 修改意见`];
+    for (const k of ['fig', 'ms']) {
+      const items = arr(p[k]); if (!items.length) continue;
+      L.push('', `## ${PAPER_NOTES[k][0]}`, '', '| 位置 | 谁提的 | 意见 | 状态 | 处理 |', '| --- | --- | --- | --- | --- |');
+      for (const x of items) L.push(`| ${[x.sec, x.where].filter(Boolean).join(' · ')} | ${x.by || '我'} ${fmtDate(x.at)} | ${String(x.text).replace(/\|/g, '/').replace(/\n/g, ' ')} | ${{ open: '待完成', done: `已完成 ${fmtDate(x.doneAt)}`, drop: `不采纳 ${fmtDate(x.dropAt)}` }[noteState(x)]} | ${(x.how || x.why || '').replace(/\|/g, '/')} |`);
+    }
+    return L.join('\n');
+  };
+  const draw = () => {
+    const p = paper(); if (!p) return;
+    const all = paperNoteStats(p); const st = paperNoteStats(p, [tab]);
+    const items = arr(p[tab]);
+    const groups = tab === 'ms' ? [...MS_SECTIONS, ''] : [...new Set(items.map(figGroup))].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+    const gOf = (x) => (tab === 'ms' ? (MS_SECTIONS.includes(x.sec) ? x.sec : '') : figGroup(x));
+    const shown = items.filter((x) => show === 'all' || noteState(x) === show);
+    const byWho = NOTE_BY.map((o) => [o, [...arr(p.fig), ...arr(p.ms)].filter((x) => (x.by || '我') === o)]).filter(([, l]) => l.length);
+    where.placeholder = PAPER_NOTES[tab][2];
+    const focusId = document.activeElement?.id;
+    root.replaceChildren(
+      h('div', { class: 'pn-dash' },
+        ring(all.done + all.drop, all.all, 76),
+        h('div', { class: 'pn-nums' },
+          h('div', null, h('b', { class: 'd' }, String(all.done)), h('span', null, '已完成')),
+          h('div', null, h('b', { class: 'o' }, String(all.open)), h('span', null, '待完成')),
+          h('div', null, h('b', { class: 'x' }, String(all.drop)), h('span', null, '不采纳')),
+          h('div', null, h('b', null, String(all.all)), h('span', null, '全部意见'))),
+        h('div', { class: 'pn-who' }, byWho.map(([o, l]) => { const s = { all: l.length, done: l.filter((x) => noteState(x) === 'done').length, open: l.filter((x) => noteState(x) === 'open').length, drop: l.filter((x) => noteState(x) === 'drop').length }; return h('div', { class: 'pn-who-row' }, h('span', null, o), noteBar(s), h('em', null, `${s.done + s.drop}/${s.all}`)); }))),
+      h('div', { class: 'pn-tabs', role: 'tablist' }, Object.entries(PAPER_NOTES).map(([k, [name]]) => { const s = paperNoteStats(p, [k]); return h('button', { type: 'button', role: 'tab', class: `pn-tab${tab === k ? ' on' : ''}`, 'aria-selected': String(tab === k), onclick: () => { tab = k; draw(); } }, name, h('b', null, String(s.all)), s.open ? h('i', null, `${s.open} 待完成`) : null); }),
+        h('button', { class: 'btn small ghost pn-copy', type: 'button', title: '复制成一张表（Markdown），可贴给导师或存档', onclick: () => { navigator.clipboard?.writeText(markdown()).then(() => toast('已复制全部意见与处理情况。'), () => toast('复制失败。')); } }, '复制全部')),
+      tab === 'ms' ? h('div', { class: 'clip-chips pn-secs', role: 'radiogroup', 'aria-label': '稿件的哪一部分' }, MS_SECTIONS.map((o) => { const n = items.filter((x) => x.sec === o && noteState(x) === 'open').length; return h('button', { type: 'button', class: `chip${sec === o ? ' on' : ''}`, 'aria-pressed': String(sec === o), onclick: () => { sec = o; draw(); document.getElementById('pn-text')?.focus(); } }, o, n ? h('b', null, String(n)) : null); })) : null,
+      h('div', { class: 'pn-add' }, h('div', { class: 'pair' }, h('div', null, h('label', { for: 'pn-where' }, tab === 'ms' ? `${sec} 里的位置（可不填）` : '位置'), where), h('div', null, h('label', { for: 'pn-by' }, '谁提的'), who)), text),
+      h('div', { class: 'pn-filter' }, [['open', `待完成 ${st.open}`], ['done', `已完成 ${st.done}`], ['drop', `不采纳 ${st.drop}`], ['all', `全部 ${st.all}`]].map(([k, l]) => h('button', { type: 'button', class: `chip${show === k ? ' on' : ''}`, 'aria-pressed': String(show === k), onclick: () => { show = k; draw(); } }, l)), noteBar(st, 'wide')),
+      shown.length ? h('div', { class: 'pn-groups' }, groups.map((g) => { const l = shown.filter((x) => gOf(x) === g); return l.length ? h('section', { class: 'pn-group' }, h('h4', null, g || '未分章节', h('span', null, String(l.length))), h('ul', { class: 'tasks pn-list' }, l.map((x) => item(tab, x)))) : null; }))
+        : h('p', { class: 'muted pn-none' }, items.length ? { open: '没有待完成的意见。', done: '还没有已完成的。', drop: '没有不采纳的。', all: '' }[show] : '还没有。把打印稿上的批注一条一条敲进来，改完一条勾一条。'));
+    if (focusId) document.getElementById(focusId)?.focus();
+  };
   draw();
-  modal({ title: `${name} · ${paper().title}`, wide: true,
-    body: h('div', { class: 'form paper-notes' },
-      h('div', { class: 'pair' }, h('div', null, h('label', { for: 'pn-where' }, '位置（可不填）'), where), h('div', null, h('label', { for: 'pn-by' }, '谁提的'), who)),
-      h('label', { for: 'pn-text' }, label), text, sum, list),
-    buttons: [{ label: '关闭' }, { label: '添加', primary: true, run: add }] });
+  modal({ title: `修改意见 · ${paper().title}`, wide: true, body: root, buttons: [{ label: '关闭' }, { label: '添加', primary: true, run: add }] });
   setTimeout(() => text.focus(), 40);
 }
 export function editPaper(p) {
@@ -358,15 +410,18 @@ export function editPaper(p) {
   const body = h('div', { class: 'form' }, ...f('title', '题目（可简写）', { placeholder: '例如：Printed OECT for salivary MMP-8' }),
     h('div', { class: 'pair' }, h('div', null, ...f('journal', '期刊 / 会议', { placeholder: 'Adv. Mater.' })),
       h('div', null, h('label', { for: 'pp-stage' }, '阶段'), h('select', { id: 'pp-stage' }, PAPER_STAGE.map((o) => h('option', { selected: x.stage === o }, o))))),
+    h('label', { for: 'pp-topic' }, '所属课题（决定卡片的颜色）'), h('select', { id: 'pp-topic' }, [{ id: '', name: '未归类' }, ...topicsOf(planLocal?.doc)].map((o) => h('option', { value: o.id, selected: (x.topic || '') === o.id }, o.name))),
     ...f('due', '关键日期（截稿 / 返修截止）', { type: 'date' }), ...f('note', '备注', { placeholder: '稿件号、共同作者、审稿意见要点…' }));
   modal({
     title: isNew ? '新建论文' : x.title, body,
     buttons: [isNew ? null : { label: '删除', danger: true, run: async () => { if ((await choose(`删除“${x.title}”？`, 'GitHub 历史里仍可找回。', [['yes', '删除'], ['no', '取消']])) !== 'yes') return false; changePlanner((d) => { d.papers = d.papers.filter((y) => y.id !== x.id); }, 'Board: remove paper', redrawHome); } },
       { label: '取消' }, { label: '保存', primary: true, run: () => {
-        for (const k of ['title', 'journal', 'due', 'note']) x[k] = body.querySelector(`#pp-${k}`).value.trim();
-        x.stage = body.querySelector('#pp-stage').value;
-        if (!x.title) { toast('写一个题目。'); return false; }
-        changePlanner((d) => { const k = d.papers.findIndex((y) => y.id === x.id); if (k >= 0) d.papers[k] = x; else d.papers.push(x); }, `Board: ${isNew ? 'add' : 'edit'} paper`, redrawHome);
+        const set = {};
+        for (const k of ['title', 'journal', 'due', 'note']) set[k] = body.querySelector(`#pp-${k}`).value.trim();
+        set.stage = body.querySelector('#pp-stage').value; set.topic = body.querySelector('#pp-topic').value;
+        if (!set.title) { toast('写一个题目。'); return false; }
+        // only the fields of this form are written, so comments added meanwhile are never overwritten
+        changePlanner((d) => { if (set.topic) pinTopicsIn(d); const y = d.papers.find((z) => z.id === x.id); if (y) Object.assign(y, set); else d.papers.push({ ...x, ...set }); }, `Board: ${isNew ? 'add' : 'edit'} paper`, redrawHome);
       } }],
   });
 }

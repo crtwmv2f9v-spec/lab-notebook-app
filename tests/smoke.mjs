@@ -394,24 +394,34 @@ try {
     return `quick entry → ${r.filed} 过程记录; existing finding attached`;
   });
   await check('paper-notes', async () => {
-    await go('#/', "document.querySelectorAll('.pp-card.paper .bi-notes').length >= 2");
-    const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const p = await import('./js/planner.js');
+    await go('#/', "document.querySelectorAll('.pp-card.paper .bi-notes').length >= 2 && document.querySelector('.pp-card .pp-prog')");
+    const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const p = await import('./js/planner.js'); const f = await import('./js/finds.js');
       const papers = [...document.querySelectorAll('.pp-card.paper')]; const every = papers.every((li) => li.querySelectorAll('.bi-notes').length === 2 && /\\dFigures/.test(li.textContent) && /\\dManuscript/.test(li.textContent) && /\\d方法卡片/.test(li.textContent));
-      const li = papers.find((e) => /2Figures/.test(e.textContent)); const btn = [...li.querySelectorAll('.bi-notes')].find((b) => b.textContent.includes('Manuscript'));
-      btn.click(); await wait(300);
+      const doc0 = await p.loadPlanner(); const tp = f.topicsOf(doc0).find((t) => t.id === 'v:oect');
+      const li = papers.find((e) => /2Figures/.test(e.textContent)); const colour = li.style.getPropertyValue('--k') === tp.color; const prog = li.querySelector('.pp-prog').textContent;
+      [...li.querySelectorAll('.bi-notes')].find((b) => b.textContent.includes('Manuscript')).click(); await wait(300);
       const editOpened = !!document.querySelector('#pp-title');
-      document.querySelector('#pn-where').value = 'p. 3';
-      const ta = document.querySelector('#pn-text'); ta.value = '1. Shorten the abstract\\n- 这一段逻辑不顺';
+      const nums = [...document.querySelectorAll('.pn-nums b')].map((e) => e.textContent).join('/');
+      const groups0 = [...document.querySelectorAll('.pn-group h4')].map((e) => e.firstChild.textContent);
+      [...document.querySelectorAll('.pn-secs .chip')].find((b) => b.textContent.startsWith('Conclusion')).click(); await wait(100);
+      document.querySelector('#pn-where').value = 'p. 7';
+      const ta = document.querySelector('#pn-text'); ta.value = '1. Shorten the conclusion\\n- 这一段逻辑不顺';
       ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(500);
-      const rows = document.querySelectorAll('.pn-list .pn-item').length;
-      document.querySelector('.pn-list .tick').click(); await wait(400);
-      const doc = await p.loadPlanner(); const paper = doc.papers.find((x) => (x.ms || []).length);
+      const g = [...document.querySelectorAll('.pn-group')].find((e) => e.querySelector('h4').firstChild.textContent === 'Conclusion');
+      const rows = g.querySelectorAll('.pn-item').length;
+      g.querySelector('.pn-item .tick').click(); await wait(400);
+      [...document.querySelectorAll('.pn-group')].find((e) => e.querySelector('h4').firstChild.textContent === 'Conclusion').querySelector('.pn-act').click(); await wait(400);
+      const paper = (await p.loadPlanner()).papers.find((x) => x.id === 'A1'); const mine = paper.ms.filter((n) => n.sec === 'Conclusion');
+      const st = p.paperNoteStats(paper);
+      [...document.querySelectorAll('.pn-filter .chip')].find((b) => b.textContent.startsWith('已完成')).click(); await wait(100);
+      const trace = [...document.querySelectorAll('.pn-item.done .pn-trace')].map((e) => e.textContent).join(' | ');
+      const how = [...document.querySelectorAll('.pn-item.done .pn-how')].map((e) => e.textContent).join(' | ');
       [...document.querySelectorAll('.modal-root .btn')].find((b) => b.textContent.trim() === '关闭').click(); await wait(400);
-      const label = [...document.querySelectorAll('.pp-card.paper .bi-notes')].find((b) => /^2Manuscript/.test(b.textContent));
-      return { every, editOpened, rows, ms: paper.ms.map((n) => [n.text, n.where, n.by, !!n.done].join('|')), label: !!label, open: label?.classList.contains('open') };`);
-    if (!r.every || r.editOpened || r.rows !== 2 || r.ms.length !== 2 || r.ms[0] !== 'Shorten the abstract|p. 3|导师|true' || r.ms[1] !== '这一段逻辑不顺|p. 3|导师|false' || !r.label || !r.open) throw new Error(JSON.stringify(r));
+      return { every, colour, prog, editOpened, nums, groups0, rows, mine: mine.map((n) => [n.text, n.where, n.by, n.done ? 'done' : n.drop ? 'drop' : 'open'].join('|')), st, trace, how };`);
+    if (!r.every || !r.colour || !/已完成 2 · 待完成 3 · 不采纳 1/.test(r.prog) || r.editOpened || r.nums !== '2/3/1/6' || r.groups0.join(',') !== 'Results and Discussion,Experimental' || r.rows !== 2
+      || r.mine[0] !== 'Shorten the conclusion|p. 7|导师|done' || r.mine[1] !== '这一段逻辑不顺|p. 7|导师|drop' || r.st.all !== 8 || r.st.done !== 3 || r.st.open !== 3 || r.st.drop !== 2 || !/提出 → .* 完成/.test(r.trace) || !r.how.includes('148 词')) throw new Error(JSON.stringify(r));
     await evaluate(clean);
-    return 'Figures / Manuscript on every paper; two pasted lines became two items';
+    return `sections ${r.groups0.join(' / ')}; stats ${r.nums}; done and 不采纳 archived with trace`;
   });
   await check('toc-by-topic', async () => {
     await go('#/v/oect', "document.querySelector('.toc-table .series-row') && document.querySelector('.toc-mode .chip')");
