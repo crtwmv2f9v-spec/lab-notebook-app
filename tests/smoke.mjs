@@ -368,6 +368,31 @@ try {
     await evaluate(clean);
     return r.names[2];
   });
+  await check('finding-into-page', async () => {
+    await go('#/', "document.querySelector('.notes-card .find .find-attach')");
+    const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const f = await import('./js/finds.js'); const p = await import('./js/planner.js'); const core = await import('./js/core.js'); const m = await import('./js/model.js');
+      const ts = f.findTargets(); const kinds = [ts.some((o) => o.key.startsWith('s:')), ts.some((o) => o.key.startsWith('p:')), ts.every((o) => !o.page.signed)];
+      // through the quick-entry dialog, into the latest page of a 实验主题
+      await f.openQuickFind(); await wait(300);
+      const sel = document.querySelector('#fq-target'); const opt = [...sel.options].find((o) => o.value.startsWith('s:')); sel.value = opt.value; sel.dispatchEvent(new Event('change'));
+      const box = document.querySelector('#fq-text'); box.value = '测试：挂到实验页的发现';
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(2500);
+      [...document.querySelectorAll('.modal-root .btn')].find((b) => b.textContent.trim() === '关闭')?.click(); await wait(600);
+      const x = (await p.loadPlanner()).finds.find((y) => y.text === '测试：挂到实验页的发现');
+      const [vol, num] = (x?.filed || '/').split('/');
+      const body = x?.filed ? m.parseFrontMatter(await core.lib.readPage(vol, Number(num))).body : '';
+      const line = /## 过程记录\\n\\n- \\*\\*[\\d: -]+\\*\\* 测试：挂到实验页的发现/.test(body);
+      const order = body.indexOf('## 过程记录') > 0 && (body.indexOf('## 结论') < 0 || body.indexOf('## 过程记录') < body.indexOf('## 结论'));
+      // and an existing one, afterwards
+      const old = (await p.loadPlanner()).finds.find((y) => !y.filed); const page = ts.find((o) => o.key.startsWith('p:')).page;
+      const ok = await f.attachFind(old.id, page); await wait(800);
+      const old2 = (await p.loadPlanner()).finds.find((y) => y.id === old.id);
+      const body2 = m.parseFrontMatter(await core.lib.readPage(page.vol, page.num)).body;
+      return { kinds, filed: x?.filed, inPage: x?.inPage, topic: x?.topic, line, order, ok, old: old2.filed === page.vol + '/' + page.num && old2.inPage, has: body2.includes(old.text.split('\\n')[0]) };`);
+    if (r.kinds.includes(false) || !r.filed || !r.inPage || !r.line || !r.order || !r.ok || !r.old || !r.has) throw new Error(JSON.stringify(r));
+    await go('#/', "document.querySelector('.notes-card .find-page.in-page')");
+    return `quick entry → ${r.filed} 过程记录; existing finding attached`;
+  });
   await check('toc-by-topic', async () => {
     await go('#/v/oect', "document.querySelector('.toc-table .series-row') && document.querySelector('.toc-mode .chip')");
     const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));

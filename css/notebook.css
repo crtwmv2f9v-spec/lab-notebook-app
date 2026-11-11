@@ -2288,3 +2288,9 @@ table.series-course .xid-tag { margin-left: 8px; }
 @media print { .dl-hero { display: none; } }
 .dl-head .add-row { min-width: 0; max-width: 100%; } .dl-head .add-row input { min-width: 0; }
 @media (max-width: 760px) { .dl-head .add-row { flex: 1 1 100%; flex-wrap: wrap; } .dl-cards { grid-template-columns: 1fr; } }
+/* v57: a finding sent into its experiment page */
+.find-attach { display: none; margin-left: 8px; padding: 1px 7px; border: 0; border-radius: 980px; background: color-mix(in srgb, var(--card-ink) 8%, transparent); color: var(--card-ink-2); font: 500 11px/1.6 var(--font-ui); cursor: pointer; white-space: nowrap; }
+.find:hover .find-attach, .find:focus-within .find-attach { display: inline-block; }
+@media (hover: none) { .find-attach { display: inline-block; } }
+.find-page.in-page { color: #1a7f4b; }
+.fq-target { margin: 4px 0; } .fq-target select { width: 100%; }

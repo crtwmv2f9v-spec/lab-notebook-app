@@ -3,7 +3,8 @@
 // word for word, as one page of the volume 「每日发现」 titled with its date. Sorting and rewriting is left to the owner.
 import { nowISO, zoned, pagePath, parseFrontMatter, serializePage, makeEntry, todayISO, volIndexPath } from './model.js';
 import { gitSha, te } from './store.js';
-import { addDays } from './lab.js';
+import { addDays, putSection, sectionOf } from './lab.js';
+import { updatePage } from './pages.js';
 import { h, icon } from './util.js';
 import { lib, menu, modal, toast, view } from './core.js';
 import { PIN_SVG, TASKS_PATH, WEEKDAYS, changePlanner, editable, loadPlanner, planDoc, queuePlanner, weekStart } from './planner.js';
@@ -47,7 +48,8 @@ const rid = (p) => `${p}${Date.now().toString(36)}${Math.random().toString(36).s
 export function addFind(text, redraw = redrawHome, topic = NO_TOPIC) {
   const t = String(text || '').trim();
   if (!t) return null;
-  return changePlanner((d) => { if (topic) pinTopics(d); d.finds ||= []; d.finds.push({ id: rid('f'), text: t, at: nowISO(), ...(topic ? { topic } : {}) }); }, 'Notes: add finding', redraw);
+  const id = rid('f');
+  return changePlanner((d) => { if (topic) pinTopics(d); d.finds ||= []; d.finds.push({ id, text: t, at: nowISO(), ...(topic ? { topic } : {}) }); }, 'Notes: add finding', redraw).then(() => id);
 }
 // 待做实验 live in `memos` (the old 备忘录), now with a topic and a tick.
 export function addTodoNote(text, redraw = redrawHome, topic = NO_TOPIC) {
@@ -62,6 +64,38 @@ export function addIdea(text, redraw = redrawHome, topic = NO_TOPIC) {
   if (!t) return null;
   return changePlanner((d) => { if (topic) pinTopics(d); d.memos.push({ id: rid('m'), kind: 'idea', text: t, pinned: false, created: nowISO(), ...(topic ? { topic } : {}) }); }, 'Notes: add idea', redraw);
 }
+
+// ----- a finding that belongs to an experiment goes straight into that page's 「过程记录」 -----
+// Targets: each 实验主题 (its latest open page) and the latest open experiment pages. Signed pages are not offered.
+export function findTargets() {
+  const daily = dailyVolume()?.id;
+  const ps = lib.allPages().filter((p) => !p.void && !p.signed && !p.pending && p.vol !== daily)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.num - a.num);
+  const out = []; const seen = new Set();
+  for (const p of ps) if (p.series && !seen.has(p.series)) { seen.add(p.series); out.push({ key: `s:${p.series}`, label: `主题 · ${p.series}`, sub: `${p.date} ${p.xid || p.title}`, page: p }); }
+  for (const p of ps.slice(0, 8)) out.push({ key: `p:${p.vol}/${p.num}`, label: `${p.xid || `p. ${p.num}`} ${p.title}`, sub: p.date, page: p });
+  return out;
+}
+const PROC_BEFORE = ['结果', '讨论', '现象与讨论', '结论', '下一步', '照片', '自动挂接', '原始数据', '试剂等关键资源', '注意事项'];
+// Writes the line into the page and marks the finding as filed there, so the Saturday filing leaves it alone.
+export async function attachFind(id, page, redraw = redrawHome) {
+  const doc = await loadPlanner();
+  const f = (doc.finds || []).find((x) => x.id === id);
+  if (!f) return false;
+  const z = zoned(f.at);
+  const stamp = z.day === page.date ? z.time : `${z.day.slice(5)} ${z.time}`;
+  const line = `- **${stamp}** ${String(f.text).trim().split(/\n+/).map((l) => l.trim()).filter(Boolean).join('\n  ')}`;
+  try {
+    await updatePage(page.vol, page.num, ({ fm, body }) => {
+      const old = (sectionOf(body, '过程记录') || '').trim();
+      return { fm, body: putSection(body, '过程记录', old ? `${old}\n${line}` : line, PROC_BEFORE) };
+    }, `Finding into p. ${page.num}`, '补充过程记录');
+  } catch (e) { toast(`没有写进实验页：${e.message}`); return false; }
+  const vt = `v:${page.vol}`;
+  await changePlanner((d) => { const x = (d.finds || []).find((y) => y.id === id); if (!x) return; x.filed = `${page.vol}/${page.num}`; x.inPage = true; if (!x.topic && topicsOf(d).some((t) => t.id === vt)) { pinTopics(d); x.topic = vt; } }, 'Notes: finding into its experiment page', redraw);
+  return true;
+}
+let lastTarget = { key: '', day: '' }; // the experiment picked last, for the rest of the day
 
 // ----- filing -----
 let filing = null;
@@ -152,6 +186,16 @@ export function findsCard(doc, draw) {
   const shown = myFinds.slice(0, 30);
   const days = [...groupByDay(shown)].reverse();
   const updF = (id, f, msg) => changePlanner((d) => { const x = (d.finds || []).find((y) => y.id === id); if (x) f(x); }, msg, draw);
+  // an unfiled finding can be sent into an experiment page
+  const toPage = (f) => {
+    const b = h('button', { type: 'button', class: 'find-attach', title: '这条发现属于某次实验：写进那一页的「过程记录」' }, '→ 实验页');
+    b.addEventListener('click', () => {
+      const ts = findTargets();
+      if (!ts.length) { toast('还没有可写入的实验页（已签名的页不能挂）。'); return; }
+      menu(b, ts.map((o) => ({ icon: 'go', label: o.label, run: async () => { if (await attachFind(f.id, o.page, draw)) toast(`已写进 ${o.page.xid || o.page.title} 的过程记录。`, { label: '查看', run: () => { location.hash = `#/v/${o.page.vol}/${o.page.num}`; } }); } })));
+    });
+    return b;
+  };
   const findCol = h('div', { class: 'nt-col' },
     h('h3', { class: 'nt-h', style: { '--k': '#ff9f0a' } }, '碎片发现', h('span', null, `${myFinds.length} 条`)),
     box('刚发现了什么？写一句，回车保存', 'find', (v) => addFind(v, draw, addTo)),
@@ -161,7 +205,7 @@ export function findsCard(doc, draw) {
         h('span', { class: 'find-time' }, timeOf(f)),
         h('span', { class: 'find-body' }, editable(f.text, (v) => updF(f.id, (x) => { x.text = v; }, 'Notes: edit finding'), 'find-text'),
           showChip ? topicChip(f, 'finds') : null,
-          f.filed ? h('a', { class: 'find-page', href: `#/v/${f.filed}`, title: '已整理进「每日发现」的这一页' }, '已成页') : null),
+          f.filed ? h('a', { class: `find-page${f.inPage ? ' in-page' : ''}`, href: `#/v/${f.filed}`, title: f.inPage ? '已写进这次实验的「过程记录」' : '已整理进「每日发现」的这一页' }, f.inPage ? '已进实验页' : '已成页') : toPage(f)),
         h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: f.filed ? '从这里删除（每日发现页里的那一行不受影响）' : '删除', onclick: () => changePlanner((d) => { d.finds = (d.finds || []).filter((x) => x.id !== f.id); }, 'Notes: remove finding', draw) }, icon('close', 14)))))))
       : h('p', { class: 'nt-empty' }, '还没有。实验时注意到的小现象、小规律，随手记一句。'),
     myFinds.length > shown.length ? h('p', { class: 'muted small' }, `更早的 ${myFinds.length - shown.length} 条在「每日发现」卷里。`) : null);
@@ -242,9 +286,15 @@ export async function openQuickFind() {
   const kinds = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': '类型' });
   const list = h('ul', { class: 'finds fq-list' });
   const count = h('p', { class: 'muted small' });
+  const targets = findTargets();
+  const keep = lastTarget.day === t && targets.some((o) => o.key === lastTarget.key) ? lastTarget.key : '';
+  const target = h('select', { id: 'fq-target', 'aria-label': '属于哪次实验' }, h('option', { value: '' }, '不属于某次实验（周六按天成页）'), targets.map((o) => h('option', { value: o.key, selected: keep === o.key }, `${o.label}　${o.sub}`)));
+  const targetRow = h('div', { class: 'fq-target' }, h('label', { for: 'fq-target' }, '属于哪次实验（选了就直接写进那一页的过程记录）'), target);
+  target.addEventListener('change', () => { lastTarget = { key: target.value, day: t }; box.focus(); });
   const drawPick = () => {
     chips.replaceChildren(...[...topics, { id: NO_TOPIC, name: '未分类' }].map((x) => h('button', { type: 'button', class: `chip${topic === x.id ? ' on' : ''}`, 'aria-pressed': String(topic === x.id), onclick: () => { topic = x.id; setLastTopic(x.id); drawPick(); box.focus(); } }, x.name)));
     kinds.replaceChildren(...[['find', '碎片发现'], ['todo', '待做实验'], ['idea', '零散想法']].map(([k, l]) => h('button', { type: 'button', class: `seg-btn${kind === k ? ' on' : ''}`, onclick: () => { kind = k; drawPick(); box.focus(); } }, l)));
+    targetRow.hidden = kind !== 'find' || !targets.length;
     box.placeholder = kind === 'find' ? '例如：银在盖玻片上可以打印，但碰到溶剂会溶解。可能是多孔、附着不好。' : kind === 'todo' ? '例如：补一组不加交联剂的对照' : '例如：能不能把 OECT 做成贴片？买 0.22 μm 滤头';
   };
   const drawList = () => {
@@ -254,11 +304,11 @@ export async function openQuickFind() {
     count.textContent = mine.length ? `今天已记 ${mine.length} 条发现` : '';
   };
   const after = () => { drawList(); redrawHome(); };
-  const save = () => { const v = box.value.trim(); if (!v) return false; box.value = ''; if (kind === 'find') addFind(v, after, topic); else if (kind === 'todo') { addTodoNote(v, after, topic); toast('已记到待做实验。'); } else { addIdea(v, after, topic); toast('已记到零散想法。'); } box.focus(); return false; };
+  const save = () => { const v = box.value.trim(); if (!v) return false; box.value = ''; if (kind === 'find') { const o = targets.find((x) => x.key === target.value); const vt = o && topics.some((x) => x.id === `v:${o.page.vol}`) ? `v:${o.page.vol}` : topic; addFind(v, after, o ? vt : topic).then((id) => { if (o && id) attachFind(id, o.page, after).then((ok) => { if (ok) toast(`已写进 ${o.page.xid || o.page.title} 的过程记录。`); }); }); } else if (kind === 'todo') { addTodoNote(v, after, topic); toast('已记到待做实验。'); } else { addIdea(v, after, topic); toast('已记到零散想法。'); } box.focus(); return false; };
   box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); save(); } });
   drawPick(); drawList();
   const dlg = modal({ title: `课题手记 · ${dayTitle(t)}`, body: h('div', { class: 'form find-quick' },
-    h('span', { class: 'label' }, '记到哪个课题'), chips, kinds, box,
+    h('span', { class: 'label' }, '记到哪个课题'), chips, kinds, targetRow, box,
     h('p', { class: 'muted small' }, '回车保存并继续记下一条；Shift+回车换行；Esc 关闭。'), count, list),
   buttons: [{ label: '关闭' }, { label: '记下', primary: true, run: save }] });
   setTimeout(() => box.focus(), 40);
