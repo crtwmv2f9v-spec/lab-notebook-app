@@ -255,7 +255,7 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
             ];
             if (!items.length) { toast('这一周没有未完成的日程。'); return; }
             downloadText(`lab-week-${wk}.ics`, icsFor(items), 'text/calendar');
-            toast(`已导出 ${items.length} 项。打开下载的文件即可加进日历；带时间的提前 10 分钟提醒，不带时间的当天 9:00 提醒。`);
+            toast(`已导出 ${items.length} 项。打开下载的文件即可加进日历；带时间的按设备当地时间提前 10 分钟提醒，不带时间的当天 9:00 提醒。`);
           } }, '加到日历'),
           standalone ? null : h('a', { class: 'btn small', href: `#/plan/${wk}` }, '周计划与历史 ›'))),
       nagBox,

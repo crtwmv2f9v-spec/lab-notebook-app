@@ -275,7 +275,7 @@ try {
       const ics = lab.icsFor([{ date: '2026-11-10', time: '14:00', end: '17:00', summary: 'a', uid: 'u1' }, { date: '2026-11-11', allDay: true, summary: 'b', uid: 'u2' }]);
       const wx = hm.wechat('一篇关于 OECT 的推送 https://mp.weixin.qq.com/s/AbCd123');
       const put = lab.putSection('## 目的\\n\\nx\\n\\n## 下一步\\n\\n- y\\n', '结论', 'z', ['下一步']);
-      return { groups, colours, kind, goalTopic, ics: ics.includes('DTSTART:20261110T060000Z') && ics.includes('DTEND:20261110T090000Z') && ics.includes('DTSTART;VALUE=DATE:20261111') && ics.includes('TRIGGER:-PT10M'), wx, put: put.indexOf('## 结论') < put.indexOf('## 下一步') && put.includes('z') };`);
+      return { groups, colours, kind, goalTopic, ics: ics.includes('DTSTART:20261110T140000\\r') && ics.includes('DTEND:20261110T170000\\r') && ics.includes('DTSTART;VALUE=DATE:20261111') && ics.includes('TRIGGER:-PT10M'), wx, put: put.indexOf('## 结论') < put.indexOf('## 下一步') && put.includes('z') };`);
     if (r.groups.length < 2 || !r.colours || r.kind !== '杂事' || !r.goalTopic || !r.ics || r.wx.wx !== 'https://mp.weixin.qq.com/s/AbCd123' || r.wx.text !== '一篇关于 OECT 的推送' || !r.put) throw new Error(JSON.stringify(r));
     await go('#/v/oect', "document.querySelector('.toc-table .series-row .oc-tag.fail') && document.querySelector('.toc-table .series-row .oc-tag.ok')");
     await go('#/v/oect/3', "document.querySelector('.oc-banner.fail') && document.querySelector('.wrap-bar.fail')");

@@ -93,8 +93,8 @@ export function daysFrom(iso, today = todayISO()) {
 }
 
 // Calendar file so reminders reach the phone's own calendar app.
-// A UTC+8 wall-clock day and time as a UTC stamp, so every calendar shows it at the right moment.
-const utcStamp = (date, time, plusMin = 0) => new Date(Date.parse(`${date}T${time === '24:00' ? '23:59' : time}:00+08:00`) + plusMin * 60000).toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+// A day and time as a "floating" stamp (no zone): 14:00 alerts at 14:00 on the clock of whatever device shows it.
+const utcStamp = (date, time, plusMin = 0) => new Date(Date.parse(`${date}T${time === '24:00' ? '23:59' : time}:00Z`) + plusMin * 60000).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '');
 export function icsFor(items) {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
   const escText = (s) => String(s).replace(/[\\;,]/g, (c) => `\\${c}`).replace(/\n/g, '\\n');
