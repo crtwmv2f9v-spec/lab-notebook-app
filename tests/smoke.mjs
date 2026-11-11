@@ -393,6 +393,26 @@ try {
     await go('#/', "document.querySelector('.notes-card .find-page.in-page')");
     return `quick entry → ${r.filed} 过程记录; existing finding attached`;
   });
+  await check('paper-notes', async () => {
+    await go('#/', "document.querySelectorAll('.board-item.paper .bi-notes').length >= 2");
+    const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const p = await import('./js/planner.js');
+      const papers = [...document.querySelectorAll('.board-item.paper')]; const every = papers.every((li) => li.querySelectorAll('.bi-notes').length === 2 && /Figures \\d+/.test(li.textContent) && /Manuscript \\d+/.test(li.textContent));
+      const li = papers.find((e) => /Figures 2/.test(e.textContent)); const btn = [...li.querySelectorAll('.bi-notes')].find((b) => b.textContent.startsWith('Manuscript'));
+      btn.click(); await wait(300);
+      const editOpened = !!document.querySelector('#pp-title');
+      document.querySelector('#pn-where').value = 'p. 3';
+      const ta = document.querySelector('#pn-text'); ta.value = '1. Shorten the abstract\\n- 这一段逻辑不顺';
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(500);
+      const rows = document.querySelectorAll('.pn-list .pn-item').length;
+      document.querySelector('.pn-list .tick').click(); await wait(400);
+      const doc = await p.loadPlanner(); const paper = doc.papers.find((x) => (x.ms || []).length);
+      [...document.querySelectorAll('.modal-root .btn')].find((b) => b.textContent.trim() === '关闭').click(); await wait(400);
+      const label = [...document.querySelectorAll('.board-item.paper .bi-notes')].find((b) => b.textContent === 'Manuscript 2');
+      return { every, editOpened, rows, ms: paper.ms.map((n) => [n.text, n.where, n.by, !!n.done].join('|')), label: !!label, open: label?.classList.contains('open') };`);
+    if (!r.every || r.editOpened || r.rows !== 2 || r.ms.length !== 2 || r.ms[0] !== 'Shorten the abstract|p. 3|导师|true' || r.ms[1] !== '这一段逻辑不顺|p. 3|导师|false' || !r.label || !r.open) throw new Error(JSON.stringify(r));
+    await evaluate(clean);
+    return 'Figures / Manuscript on every paper; two pasted lines became two items';
+  });
   await check('toc-by-topic', async () => {
     await go('#/v/oect', "document.querySelector('.toc-table .series-row') && document.querySelector('.toc-mode .chip')");
     const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));

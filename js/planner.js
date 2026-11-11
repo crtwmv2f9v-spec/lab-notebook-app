@@ -143,20 +143,26 @@ export async function loadPlanner() {
   return planLocal.doc;
 }
 export const loadTasks = async () => (await loadPlanner()).tasks;
+// An edit runs twice: at once on the copy on screen, then again on the fresh file when it is saved. Ids made the
+// first time are replayed the second time, so what is on screen and what is saved carry the same ids.
+let idTape = null;
+export const freshId = (make) => { if (!idTape) return make(); if (idTape.play) return idTape.ids[idTape.i++] ?? make(); const v = make(); idTape.ids.push(v); return v; };
+const taped = (tape, play, f) => { idTape = { ids: tape, play, i: 0 }; try { return f(); } finally { idTape = null; } };
 export function changePlanner(mutate, message, redraw) {
   const mine = planLocal; // the count of unsaved edits belongs to this copy, whatever replaces it later
-  mutate(mine.doc); mine.dirty += 1;
+  const tape = [];
+  taped(tape, false, () => mutate(mine.doc)); mine.dirty += 1;
   redraw?.(); refreshDueBar();
   planQueue = planQueue.then(() => lib.commit(message, async (l) => {
     const doc = planDoc(await l.readJSON(TASKS_PATH, {}));
-    mutate(doc);
+    taped(tape, true, () => mutate(doc));
     return { changes: [{ path: TASKS_PATH, data: `${JSON.stringify(doc, null, 1)}\n` }], after: () => { mine.dirty -= 1; if (!mine.dirty) mine.doc = doc; } };
   })).then(() => { if (planLocal === mine && !mine.dirty) mine.sha = lib.tree.get(TASKS_PATH); })
     .catch((e) => { toast(e instanceof NetworkError ? '离线中：没有同步，联网后请再操作一次。' : `没有保存：${e.message}`); mine.dirty = 0; if (planLocal === mine) planLocal = null; redraw?.(); refreshDueBar(); });
   return planQueue;
 }
 export const changeTasks = (mutate, message, redraw) => changePlanner((d) => mutate(d.tasks), message, redraw);
-export const newTask = (text, week, date, cat) => ({ id: `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, text, week, ...(date ? { date } : {}), ...(cat ? { cat } : {}), done: false, created: nowISO() });
+export const newTask = (text, week, date, cat) => ({ id: freshId(() => `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`), text, week, ...(date ? { date } : {}), ...(cat ? { cat } : {}), done: false, created: nowISO() });
 export const isGoal = (x, wk) => x.week === wk && !x.date && !x.cat;
 export const toggleTask = (id, redraw) => changeTasks((list) => { const t = list.find((x) => x.id === id); if (t) { t.done = !t.done; if (t.done) t.doneAt = nowISO(); else delete t.doneAt; } }, 'Planner: tick', redraw);
 export const removeTask = (id, redraw) => changeTasks((list) => { const k = list.findIndex((x) => x.id === id); if (k >= 0) list.splice(k, 1); }, 'Planner: remove', redraw);
@@ -301,6 +307,50 @@ export function editProject(p, preset = {}) {
         changePlanner((d) => { if (x.topic) pinTopicsIn(d); const k = d.projects.findIndex((y) => y.id === x.id); if (k >= 0) d.projects[k] = x; else d.projects.push(x); }, `Board: ${isNew ? 'add' : 'edit'} project`, redrawAll);
       } }],
   });
+}
+// ----- comments on a paper's figures and manuscript (the advisor's pen marks on the printout, typed in) -----
+// Kept on the paper itself: paper.fig / paper.ms = [{ id, text, where, by, done, at }].
+export const PAPER_NOTES = { fig: ['Figures', '图的意见', '位置，如 Fig. 2b'], ms: ['Manuscript', '稿件的意见', '位置，如 p. 3 第 2 段 / Abstract'] };
+const NOTE_BY = ['导师', '我', '合作者', '审稿人'];
+export const paperNoteCount = (p, kind) => arr(p?.[kind]).length;
+export function openPaperNotes(paperId, kind) {
+  const [name, label, wherePh] = PAPER_NOTES[kind];
+  const paper = () => planLocal?.doc.papers.find((x) => x.id === paperId);
+  if (!paper()) return;
+  let by = '导师'; try { by = localStorage.getItem('labnote-note-by') || '导师'; } catch { /* private window */ }
+  const list = h('ul', { class: 'tasks pn-list' });
+  const sum = h('p', { class: 'muted small' });
+  const upd = (mutate, msg) => changePlanner((d) => { const y = d.papers.find((z) => z.id === paperId); if (!y) return; y[kind] = arr(y[kind]); mutate(y[kind]); }, msg, () => { draw(); redrawHome(); });
+  const draw = () => {
+    const items = arr(paper()?.[kind]);
+    const open = items.filter((x) => !x.done);
+    sum.textContent = items.length ? `共 ${items.length} 条 · ${open.length} 条未处理` : '还没有。把打印稿上的批注一条一条敲进来，改完一条勾一条。';
+    list.replaceChildren(...[...open, ...items.filter((x) => x.done)].map((x) => h('li', { class: `task pn-item${x.done ? ' done' : ''}` },
+      h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!x.done), 'aria-label': x.done ? '标为未处理' : '标为已改', onclick: () => upd((l) => { const y = l.find((z) => z.id === x.id); if (y) { y.done = !y.done; if (y.done) y.doneAt = nowISO(); else delete y.doneAt; } }, 'Paper notes: tick') }),
+      h('span', { class: 'task-main' },
+        editable(x.text, (v) => upd((l) => { const y = l.find((z) => z.id === x.id); if (y) y.text = v; }, 'Paper notes: edit'), 'task-text'),
+        h('span', { class: 'task-meta' }, x.where ? h('span', { class: 'pn-where' }, x.where) : null, h('span', { class: `pn-by${x.by === '导师' ? ' boss' : ''}` }, x.by || '我'), fmtDate(x.at))),
+      h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => upd((l) => { const k = l.findIndex((z) => z.id === x.id); if (k >= 0) l.splice(k, 1); }, 'Paper notes: remove') }, icon('close', 14)))));
+  };
+  const where = h('input', { id: 'pn-where', placeholder: wherePh, autocomplete: 'off' });
+  const who = h('select', { id: 'pn-by', 'aria-label': '谁提的' }, NOTE_BY.map((o) => h('option', { selected: by === o }, o)));
+  who.addEventListener('change', () => { try { localStorage.setItem('labnote-note-by', who.value); } catch { /* private window */ } });
+  const text = h('textarea', { id: 'pn-text', rows: 3, placeholder: '意见原话。回车保存；一次贴多行 = 每行一条（Shift+回车换行）' });
+  const add = () => {
+    const lines = text.value.split(/\n+/).map((l) => l.replace(/^\s*(?:[-•*]|\d+[.、)）])\s*/, '').trim()).filter(Boolean);
+    if (!lines.length) return false;
+    const w = where.value.trim(); const b = who.value; text.value = '';
+    upd((l) => { for (const t of lines) l.push({ id: uid('N'), text: t, ...(w ? { where: w } : {}), by: b, done: false, at: nowISO() }); }, `Paper notes: add ${name}`);
+    text.focus(); return false;
+  };
+  text.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); add(); } });
+  draw();
+  modal({ title: `${name} · ${paper().title}`, wide: true,
+    body: h('div', { class: 'form paper-notes' },
+      h('div', { class: 'pair' }, h('div', null, h('label', { for: 'pn-where' }, '位置（可不填）'), where), h('div', null, h('label', { for: 'pn-by' }, '谁提的'), who)),
+      h('label', { for: 'pn-text' }, label), text, sum, list),
+    buttons: [{ label: '关闭' }, { label: '添加', primary: true, run: add }] });
+  setTimeout(() => text.focus(), 40);
 }
 export function editPaper(p) {
   const isNew = !p; const x = p ? { ...p } : { id: uid('A'), stage: '写作中' };

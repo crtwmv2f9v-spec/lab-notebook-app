@@ -2294,3 +2294,12 @@ table.series-course .xid-tag { margin-left: 8px; }
 @media (hover: none) { .find-attach { display: inline-block; } }
 .find-page.in-page { color: #1a7f4b; }
 .fq-target { margin: 4px 0; } .fq-target select { width: 100%; }
+/* v58: comments on a paper's figures and manuscript */
+button.bi-m { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.bi-notes.open { color: #c77c02; font-weight: 600; }
+.paper-notes textarea { width: 100%; }
+.pn-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 46vh; overflow: auto; }
+.pn-item { align-items: flex-start; }
+.pn-where, .pn-by { display: inline-block; margin-right: 6px; padding: 0 7px; border-radius: 980px; font: 600 11px/1.7 var(--font-ui); background: color-mix(in srgb, var(--card-ink, #555) 9%, transparent); }
+.pn-where { color: #0a84ff; background: color-mix(in srgb, #0a84ff 12%, transparent); }
+.pn-by.boss { color: #c21f2b; background: #fde3e3; }

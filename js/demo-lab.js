@@ -87,7 +87,7 @@ tags: [oect, transfer]
         { id: 'P2', title: '国自然青年基金', kind: '基金', stage: '申请中', next: '提交申请书初稿', due: day(9), vols: [] },
       ],
       papers: [
-        { id: 'A1', title: 'Fully printed OECT for salivary biomarkers', journal: 'Adv. Mater.', stage: '写作中', due: day(20) },
+        { id: 'A1', fig: [{ id: 'N1', text: 'Scale bar too small; use the same color map in b and c', where: 'Fig. 2b', by: '导师', done: false, at: `${day(-1)}T10:00:00+08:00` }, { id: 'N2', text: '加一张器件实物照片', where: 'Fig. 1', by: '我', done: true, at: `${day(-2)}T10:00:00+08:00` }], title: 'Fully printed OECT for salivary biomarkers', journal: 'Adv. Mater.', stage: '写作中', due: day(20) },
         { id: 'A2', title: 'GOPS crosslinking and drift in PEDOT:PSS', journal: 'ACS AMI', stage: '返修', due: day(6) },
       ],
     }, null, 1)}\n`,

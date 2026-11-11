@@ -7,7 +7,7 @@ import { addDays, putSection, sectionOf } from './lab.js';
 import { updatePage } from './pages.js';
 import { h, icon } from './util.js';
 import { lib, menu, modal, toast, view } from './core.js';
-import { PIN_SVG, TASKS_PATH, WEEKDAYS, changePlanner, editable, loadPlanner, planDoc, queuePlanner, weekStart } from './planner.js';
+import { freshId, PIN_SVG, TASKS_PATH, WEEKDAYS, changePlanner, editable, loadPlanner, planDoc, queuePlanner, weekStart } from './planner.js';
 import { redrawHome } from './home.js';
 import { route } from './app.js';
 
@@ -43,7 +43,7 @@ function pinTopics(d) { if (!Array.isArray(d.topics)) d.topics = topicsOf(d).map
 const TOPIC_KEY = 'labnote-note-topic';
 const lastTopic = () => { try { return localStorage.getItem(TOPIC_KEY) || NO_TOPIC; } catch { return NO_TOPIC; } };
 const setLastTopic = (id) => { try { localStorage.setItem(TOPIC_KEY, id); } catch { /* private window */ } };
-const rid = (p) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+const rid = (p) => freshId(() => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`);
 
 export function addFind(text, redraw = redrawHome, topic = NO_TOPIC) {
   const t = String(text || '').trim();

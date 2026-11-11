@@ -11,7 +11,7 @@ import { weekBoard } from './weekboard.js';
 import {
   PAPER_STAGE, WEEKDAYS, addBox, allFollowups, changeTasks, editPaper, editProject, exportIcs,
   editable, isGoal, loadPlanner, moveTask, newTask, reminderRow, ring, taskRow,
-  toggleTask, weekStart, projectTopic, topicChip,
+  toggleTask, weekStart, projectTopic, topicChip, freshId, PAPER_NOTES, openPaperNotes, paperNoteCount,
 } from './planner.js';
 import { openNewExperiment } from './pages.js';
 import { openExport } from './printing.js';
@@ -219,7 +219,7 @@ export function hero() {
 export const homeHooks = new Set();
 export const redrawHome = () => homeHooks.forEach((f) => f());
 
-export const uid = (p) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+export const uid = (p) => freshId(() => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`);
 // Deadlines count down on the deadline's own clock: this device's time plus S.deadlineOffset hours
 // (13 h turns US Eastern winter time into Beijing time). A deadline date means the end of that day.
 export const dlOffset = () => (S.deadlineOffset === '' || S.deadlineOffset == null || !Number.isFinite(Number(S.deadlineOffset)) ? 13 : Number(S.deadlineOffset));
@@ -463,7 +463,8 @@ export function homeRails() {
       h('ul', { class: 'board-list' }, [...papers].sort((a, b) => PAPER_STAGE.indexOf(a.stage) - PAPER_STAGE.indexOf(b.stage)).map((x) => h('li', { class: `board-item paper st-${x.stage}`, onclick: () => editPaper(x) },
         h('div', { class: 'bi-top' }, h('span', { class: 'bi-kind' }, x.stage), h('b', null, x.title)),
         h('div', { class: 'bi-meta' }, x.journal ? h('i', null, x.journal) : null, dueTag(x.due),
-          h('a', { class: 'bi-m', href: `#/methods/a/${x.id}`, title: '这篇文章的方法卡片' }, `方法卡片 ${paperMethods.filter((m) => (m.papers || []).includes(x.id)).length}`))))),
+          h('a', { class: 'bi-m', href: `#/methods/a/${x.id}`, title: '这篇文章的方法卡片', onclick: (e) => e.stopPropagation() }, `方法卡片 ${paperMethods.filter((m) => (m.papers || []).includes(x.id)).length}`),
+          ...Object.entries(PAPER_NOTES).map(([k, [name, label]]) => { const open = (x[k] || []).filter((n) => !n.done).length; return h('button', { class: `bi-m bi-notes${open ? ' open' : ''}`, type: 'button', title: `${label}：共 ${paperNoteCount(x, k)} 条${open ? `，${open} 条未处理` : ''}`, onclick: (e) => { e.stopPropagation(); openPaperNotes(x.id, k); } }, `${name} ${paperNoteCount(x, k)}`); }))))),
       h('button', { class: 'btn small rail-add', type: 'button', onclick: () => editPaper(null) }, icon('plus', 14), '新建论文'));
     for (const [card, key] of [[pj, 'pj'], [pp, 'pp']]) { const ul = card.querySelector('ul.board-list'); if (ul) foldList(ul, key); }
     const rd = catList(tasks, '文献', { placeholder: '粘贴 DOI、链接、题目或公众号文章链接' });
