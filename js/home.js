@@ -128,7 +128,7 @@ export function viewHome() {
 
   homeHooks.clear();
   // Top to bottom: the week (goals, today, each day) → quick notes → what to pick up → the side boards → the notebooks.
-  const { left, right } = homeRails();
+  const { left, right, top } = homeRails();
   const shelf = h('section', { class: 'shelf', 'aria-label': '卷' });
   for (const v of vols) shelf.append(cover(v));
   shelf.append(thinkCover());
@@ -136,26 +136,16 @@ export function viewHome() {
     icon('plus', 28), h('span', null, vols.length ? '新建卷（项目）' : '建第一个卷（项目）')));
   root.append(
     hero(),
+    top,
     weekBoard({ hooks: homeHooks, redraw: redrawHome }),
-    h('h2', { class: 'section-title' }, '课题手记', h('span', null, '按课题记：碎片发现 · 待做实验')),
+    h('h2', { class: 'section-title' }, '课题手记', h('span', null, '按课题记：碎片发现 · 待做实验 · 零散想法')),
     dashboard(),
-    continueCard(),
-    h('div', { class: 'home-boards' }, left, right),
     h('h2', { class: 'section-title' }, '记录本', h('span', null, `${vols.length} 卷 · ${lib.allPages().length} 页`)),
     shelf);
   if (!vols.length) root.append(h('p', { class: 'hint' }, '每个项目一个卷，页码在卷内连续编号，就像装订的记录本。'));
-
-  const recent = lib.allPages().sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.num - a.num).slice(0, 8);
-  if (recent.length) {
-    root.append(h('h2', { class: 'section-title' }, '最近的记录'), h('section', { class: 'tile recent' },
-      h('ol', { class: 'ledger-rows' }, recent.map((p) => h('li', null, h('a', { href: `#/v/${p.vol}/${p.num}` },
-        h('span', { class: 'l-date' }, fmtDate(p.date)),
-        h('span', { class: 'l-title' }, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, p.title, p.series ? h('span', { class: 'series-tag small' }, p.series) : null, p.pending ? h('span', { class: 'pending-tag' }, '待同步') : null),
-        h('span', { class: 'l-where' }, `${lib.volume(p.vol)?.title || p.vol}, p. ${p.num}`)))))));
-  }
+  root.append(h('div', { class: 'home-boards' }, left, right));
   return root;
 }
-
 export function cover(v) {
   const pages = lib.pages(v.id);
   const last = pages.reduce((m, p) => (String(p.date) > m ? String(p.date) : m), '');
@@ -435,9 +425,11 @@ export async function weekStats() {
   return { pages: pages.length, exps: pages.filter((p) => p.xid).length, signed: pages.filter((p) => p.signed).length, ev, done: tasks.filter((x) => x.done && inWk(x.doneAt)).length };
 }
 
+let dlAll = false;
 export function homeRails() {
   const left = h('aside', { class: 'rail rail-left', 'aria-label': '科研主线' });
   const right = h('aside', { class: 'rail rail-right', 'aria-label': '时间与日常' });
+  const top = h('section', { class: 'dl-hero', 'aria-label': '截止日倒计时' });
   const draw = async () => {
     let doc; try { doc = await loadPlanner(); } catch { return; }
     const focused = document.activeElement?.closest?.('.rail') ? document.activeElement.dataset.k : null;
@@ -488,20 +480,26 @@ export function homeRails() {
     ].sort((a, b) => a.date.localeCompare(b.date));
     const dlAdd = addDated('截止事项，如 双周报告', (text, date) => changeTasks((l) => l.push(newTask(text, weekStart(date), date, '截止')), 'Planner: add deadline', redrawHome), { dateRequired: true });
     dlAdd.querySelector('input').dataset.k = 'cat-截止';
-    const countdown = railCard('截止日倒计时', `${dl.length ? `${dl.filter((x) => dlDays(x.date) <= 7).length} 项在 7 天内 · ` : ''}${dlBasis()}`, dlAdd,
-      h('ul', { class: 'countdown' }, dl.map((x) => {
-        const d = dlDays(x.date); const inHours = d >= 0 && d <= 1;
-        return h('li', { class: `cd ${urgency(x.date)}` },
-          h('span', { class: 'cd-n' }, d < 0 ? '!' : String(inHours ? dlHours(x.date) : d)), h('span', { class: 'cd-u' }, d < 0 ? `逾期 ${-d} 天` : inHours ? '小时' : '天'),
-          h('span', { class: 'cd-t' }, h('b', { class: x.open ? 'linkish' : null, onclick: x.open || null }, x.text), h('span', null, `${x.date}${x.tag ? ` · ${x.tag}` : ''}`)),
-          x.task ? h('button', { class: 'tick small', type: 'button', role: 'checkbox', 'aria-checked': 'false', 'aria-label': '完成', title: '完成', onclick: () => toggleTask(x.task.id, redrawHome) }) : null);
-      })));
-    { const ul = countdown.querySelector('ul.countdown'); if (ul) foldList(ul, 'dl'); }
+    // The countdown opens the page: one big card per deadline, nearest first.
+    const DL_SHOW = 6;
+    const dlCard = (x) => {
+      const d = dlDays(x.date); const inHours = d >= 0 && d <= 1;
+      return h('li', { class: `dl-card ${urgency(x.date)}` },
+        h('div', { class: 'dl-num' }, h('b', null, d < 0 ? `+${-d}` : String(inHours ? dlHours(x.date) : d)), h('span', null, d < 0 ? '天 · 已逾期' : inHours ? '小时' : '天')),
+        h('div', { class: 'dl-body' }, h('b', { class: x.open ? 'linkish' : null, onclick: x.open || null }, x.text), h('span', null, `${x.date}${x.tag ? ` · ${x.tag}` : ''}`)),
+        x.task ? h('button', { class: 'tick small', type: 'button', role: 'checkbox', 'aria-checked': 'false', 'aria-label': '完成', title: '完成', onclick: () => toggleTask(x.task.id, redrawHome) }) : null);
+    };
+    const near = dl.filter((x) => dlDays(x.date) <= 7).length;
+    top.replaceChildren(
+      h('div', { class: 'dl-head' }, h('h2', null, '截止日倒计时'), h('span', { class: 'dl-sub' }, `${dl.length ? `${dl.length} 项${near ? ` · ${near} 项在 7 天内` : ''}` : '没有临近的截止日'} · ${dlBasis()}`), dlAdd),
+      dl.length ? h('ul', { class: 'dl-cards' }, (dlAll ? dl : dl.slice(0, DL_SHOW)).map(dlCard),
+        dl.length > DL_SHOW ? h('li', { class: 'dl-more' }, h('button', { class: 'btn small ghost', type: 'button', onclick: () => { dlAll = !dlAll; draw(); } }, dlAll ? '收起' : `还有 ${dl.length - DL_SHOW} 项`)) : null) : null);
+    top.classList.toggle('empty', !dl.length);
     const st = await weekStats();
     const stat = (n, label) => h('div', { class: 'ws' }, h('b', null, String(n)), h('span', null, label));
     const clipsWk = (await loadClips().catch(() => [])).filter((c) => c.kind === 'img' && String(c.created).slice(0, 10) >= weekStart(t)).length;
     right.replaceChildren(
-      h('p', { class: 'rail-title' }, '时间与数据'), countdown,
+      h('p', { class: 'rail-title' }, '时间与数据'),
       railCard('本周科研数据', `${weekStart(t).slice(5)} 至 ${addDays(weekStart(t), 6).slice(5)} · 东八区`,
         h('div', { class: 'week-stats' }, stat(st.pages, '页记录'), stat(st.exps, '个实验'), stat(st.pages ? `${Math.round((st.signed / st.pages) * 100)}%` : '—', '已签名'), stat(st.ev, '条新证据'), stat(st.done, '项待办完成'), stat(clipsWk, '张文献图')),
         h('a', { class: 'btn small ws-open', href: '#/reading', title: '打开后才向 Zotero 查询' }, icon('book', 16), '本周读过的文献 ›')));
@@ -509,7 +507,7 @@ export function homeRails() {
   };
   homeHooks.add(draw);
   draw().then(() => autoFileFinds());
-  return { left, right };
+  return { left, right, top };
 }
 
 // Home: today's to-dos (your own + experiment reminders) and this week's plan, each with progress.

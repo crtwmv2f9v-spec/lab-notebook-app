@@ -56,6 +56,13 @@ export function addTodoNote(text, redraw = redrawHome, topic = NO_TOPIC) {
   return changePlanner((d) => { if (topic) pinTopics(d); d.memos.push({ id: rid('m'), text: t, pinned: false, created: nowISO(), ...(topic ? { topic } : {}) }); }, 'Notes: add to-do experiment', redraw);
 }
 
+// 零散想法: the same list as 待做实验, marked `kind: 'idea'` — thoughts that are not an experiment to run.
+export function addIdea(text, redraw = redrawHome, topic = NO_TOPIC) {
+  const t = String(text || '').trim();
+  if (!t) return null;
+  return changePlanner((d) => { if (topic) pinTopics(d); d.memos.push({ id: rid('m'), kind: 'idea', text: t, pinned: false, created: nowISO(), ...(topic ? { topic } : {}) }); }, 'Notes: add idea', redraw);
+}
+
 // ----- filing -----
 let filing = null;
 // which(day) -> true for the days to file. Returns { days, n, vol } or null when there was nothing to do.
@@ -122,7 +129,7 @@ export function findsCard(doc, draw) {
   const finds = doc.finds || []; const memos = doc.memos || [];
   const inTab = (x) => cur === ALL || known(x.topic) === cur;
   const t = todayISO();
-  const count = (id) => finds.filter((f) => known(f.topic) === id && !f.filed).length + memos.filter((m) => known(m.topic) === id && !m.done).length;
+  const count = (id) => finds.filter((f) => known(f.topic) === id && !f.filed).length + memos.filter((m) => known(m.topic) === id && !m.done && m.kind !== 'idea').length;
   const loose = finds.some((f) => !known(f.topic)) || memos.some((m) => !known(m.topic));
   const tab = (id, label, n) => h('button', { type: 'button', class: `nt-tab${cur === id ? ' on' : ''}${tcolor.has(id) ? ' tinted' : ''}`, style: tcolor.has(id) ? { '--k': tcolor.get(id) } : null, role: 'tab', 'aria-selected': String(cur === id), onclick: () => { shownTopic = id; if (id !== ALL) setLastTopic(id); draw(); } }, h('span', null, label), n ? h('b', null, String(n)) : null);
   const addTo = cur === ALL ? NO_TOPIC : cur;
@@ -159,29 +166,44 @@ export function findsCard(doc, draw) {
       : h('p', { class: 'nt-empty' }, '还没有。实验时注意到的小现象、小规律，随手记一句。'),
     myFinds.length > shown.length ? h('p', { class: 'muted small' }, `更早的 ${myFinds.length - shown.length} 条在「每日发现」卷里。`) : null);
   // experiments to do
-  const myMemos = memos.filter(inTab).sort((a, b) => Number(!!a.done) - Number(!!b.done) || Number(!!b.pinned) - Number(!!a.pinned) || String(b.updated || b.created).localeCompare(String(a.updated || a.created)));
+  const isIdea = (m) => m.kind === 'idea';
+  const move = (m) => h('button', { class: 'nt-move', type: 'button', title: isIdea(m) ? '这是要做的实验：移到「待做实验」' : '这不是实验：移到「零散想法」', onclick: () => updM(m.id, (x) => { if (isIdea(x)) delete x.kind; else { x.kind = 'idea'; delete x.done; delete x.doneAt; } }, 'Notes: move between lists') }, isIdea(m) ? '→ 实验' : '→ 想法');
+  const myIdeas = memos.filter((m) => inTab(m) && isIdea(m)).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || String(b.updated || b.created).localeCompare(String(a.updated || a.created)));
+  const myMemos = memos.filter((m) => inTab(m) && !isIdea(m)).sort((a, b) => Number(!!a.done) - Number(!!b.done) || Number(!!b.pinned) - Number(!!a.pinned) || String(b.updated || b.created).localeCompare(String(a.updated || a.created)));
   const updM = (id, f, msg) => changePlanner((d) => { const m = d.memos.find((x) => x.id === id); if (m) f(m); }, msg, draw);
   const openN = myMemos.filter((m) => !m.done).length;
   const todoCol = h('div', { class: 'nt-col' },
-    h('h3', { class: 'nt-h', style: { '--k': '#5e5ce6' } }, '待做实验 · 备忘', h('span', null, openN ? `${openN} 项待做` : '')),
-    box('想做的实验、要买的耗材、要问的问题', 'memo', (v) => addTodoNote(v, draw, addTo)),
+    h('h3', { class: 'nt-h', style: { '--k': '#5e5ce6' } }, '待做实验', h('span', null, openN ? `${openN} 项待做` : '')),
+    box('想做的实验、要补的对照、想试的条件', 'memo', (v) => addTodoNote(v, draw, addTo)),
     myMemos.length ? h('ul', { class: 'tasks nt-todos' }, myMemos.map((m) => h('li', { class: `task${m.done ? ' done' : ''}${m.pinned ? ' pinned' : ''}` },
       h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!m.done), 'aria-label': m.done ? '标为未做' : '标为已做', onclick: () => updM(m.id, (x) => { x.done = !x.done; if (x.done) x.doneAt = nowISO(); else delete x.doneAt; }, 'Notes: tick') }),
       h('span', { class: 'task-main' }, editable(m.text, (v) => updM(m.id, (x) => { x.text = v; x.updated = nowISO(); }, 'Notes: edit'), 'task-text'),
         h('span', { class: 'task-meta' }, showChip ? topicChip(m, 'memos') : null, zoned(m.updated || m.created).day.slice(5))),
+      move(m),
       h('button', { class: 'memo-pin', type: 'button', 'aria-pressed': String(!!m.pinned), 'aria-label': m.pinned ? '取消置顶' : '置顶', title: m.pinned ? '取消置顶' : '置顶', html: PIN_SVG, onclick: () => updM(m.id, (x) => { x.pinned = !x.pinned; }, 'Notes: pin') }),
       h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Notes: remove', draw) }, icon('close', 14)))))
       : h('p', { class: 'nt-empty' }, '还没有。想到要补的对照、下一步想试的条件，记在这里，做完打勾。'));
+  const ideaCol = h('div', { class: 'nt-col' },
+    h('h3', { class: 'nt-h', style: { '--k': '#30a46c' } }, '零散想法', h('span', null, myIdeas.length ? `${myIdeas.length} 条` : '')),
+    box('一个念头、一个问题、要买的东西、要问的人', 'idea', (v) => addIdea(v, draw, addTo)),
+    myIdeas.length ? h('ul', { class: 'tasks nt-todos nt-ideas' }, myIdeas.map((m) => h('li', { class: `task${m.pinned ? ' pinned' : ''}` },
+      h('span', { class: 'nt-dot', 'aria-hidden': 'true' }),
+      h('span', { class: 'task-main' }, editable(m.text, (v) => updM(m.id, (x) => { x.text = v; x.updated = nowISO(); }, 'Notes: edit'), 'task-text'),
+        h('span', { class: 'task-meta' }, showChip ? topicChip(m, 'memos') : null, zoned(m.updated || m.created).day.slice(5))),
+      move(m),
+      h('button', { class: 'memo-pin', type: 'button', 'aria-pressed': String(!!m.pinned), 'aria-label': m.pinned ? '取消置顶' : '置顶', title: m.pinned ? '取消置顶' : '置顶', html: PIN_SVG, onclick: () => updM(m.id, (x) => { x.pinned = !x.pinned; }, 'Notes: pin') }),
+      h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Notes: remove', draw) }, icon('close', 14)))))
+      : h('p', { class: 'nt-empty' }, '还没有。和实验无关或还不成形的念头，记在这里。'));
   const unfiled = finds.filter((f) => !f.filed).length;
   const vol = dailyVolume();
   const sat = addDays(weekStart(t), 5);
   return h('div', { class: 'tile finds-card notes-card' },
     h('div', { class: 'nt-tabs', role: 'tablist', 'aria-label': '课题' },
-      tab(ALL, '全部', finds.filter((f) => !f.filed).length + memos.filter((m) => !m.done).length),
+      tab(ALL, '全部', finds.filter((f) => !f.filed).length + memos.filter((m) => !m.done && m.kind !== 'idea').length),
       topics.map((x) => tab(x.id, x.name, count(x.id))),
       loose || cur === NO_TOPIC ? tab(NO_TOPIC, '未分类', count(NO_TOPIC)) : null,
       h('button', { type: 'button', class: 'nt-tab nt-manage', title: '增加、改名或删除课题', onclick: () => editTopics(doc, draw) }, icon('plus', 14), '课题')),
-    h('div', { class: 'nt-cols' }, findCol, todoCol),
+    h('div', { class: 'nt-cols three' }, findCol, todoCol, ideaCol),
     h('div', { class: 'rail-actions find-foot' },
       vol ? h('a', { class: 'btn small', href: `#/v/${vol.id}` }, `${DAILY_TITLE} ›`) : null,
       unfiled ? h('button', { class: 'btn small ghost', type: 'button', title: '不等周六，现在就把还没成页的发现按天整理成页（今天的也算）', onclick: async (e) => {
@@ -222,8 +244,8 @@ export async function openQuickFind() {
   const count = h('p', { class: 'muted small' });
   const drawPick = () => {
     chips.replaceChildren(...[...topics, { id: NO_TOPIC, name: '未分类' }].map((x) => h('button', { type: 'button', class: `chip${topic === x.id ? ' on' : ''}`, 'aria-pressed': String(topic === x.id), onclick: () => { topic = x.id; setLastTopic(x.id); drawPick(); box.focus(); } }, x.name)));
-    kinds.replaceChildren(...[['find', '碎片发现'], ['todo', '待做实验 · 备忘']].map(([k, l]) => h('button', { type: 'button', class: `seg-btn${kind === k ? ' on' : ''}`, onclick: () => { kind = k; drawPick(); box.focus(); } }, l)));
-    box.placeholder = kind === 'find' ? '例如：银在盖玻片上可以打印，但碰到溶剂会溶解。可能是多孔、附着不好。' : '例如：补一组不加交联剂的对照；买 0.22 μm 滤头';
+    kinds.replaceChildren(...[['find', '碎片发现'], ['todo', '待做实验'], ['idea', '零散想法']].map(([k, l]) => h('button', { type: 'button', class: `seg-btn${kind === k ? ' on' : ''}`, onclick: () => { kind = k; drawPick(); box.focus(); } }, l)));
+    box.placeholder = kind === 'find' ? '例如：银在盖玻片上可以打印，但碰到溶剂会溶解。可能是多孔、附着不好。' : kind === 'todo' ? '例如：补一组不加交联剂的对照' : '例如：能不能把 OECT 做成贴片？买 0.22 μm 滤头';
   };
   const drawList = () => {
     const mine = (doc.finds || []).filter((f) => dayOf(f) === t).sort((a, b) => String(b.at).localeCompare(String(a.at)));
@@ -232,7 +254,7 @@ export async function openQuickFind() {
     count.textContent = mine.length ? `今天已记 ${mine.length} 条发现` : '';
   };
   const after = () => { drawList(); redrawHome(); };
-  const save = () => { const v = box.value.trim(); if (!v) return false; box.value = ''; if (kind === 'find') addFind(v, after, topic); else { addTodoNote(v, after, topic); toast('已记到待做实验。'); } box.focus(); return false; };
+  const save = () => { const v = box.value.trim(); if (!v) return false; box.value = ''; if (kind === 'find') addFind(v, after, topic); else if (kind === 'todo') { addTodoNote(v, after, topic); toast('已记到待做实验。'); } else { addIdea(v, after, topic); toast('已记到零散想法。'); } box.focus(); return false; };
   box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); save(); } });
   drawPick(); drawList();
   const dlg = modal({ title: `课题手记 · ${dayTitle(t)}`, body: h('div', { class: 'form find-quick' },
@@ -246,7 +268,7 @@ export async function openQuickFind() {
 export function mountFindButton() {
   let b = document.getElementById('find-fab');
   if (!b) {
-    b = h('button', { id: 'find-fab', class: 'find-fab', type: 'button', title: '课题手记：记一条发现或待做实验（N 或 ⌘J）', 'aria-label': '课题手记：记一条', onclick: () => openQuickFind() }, icon('pen', 22));
+    b = h('button', { id: 'find-fab', class: 'find-fab', type: 'button', title: '课题手记：记一条发现、待做实验或想法（N 或 ⌘J）', 'aria-label': '课题手记：记一条', onclick: () => openQuickFind() }, icon('pen', 22));
     document.body.append(b);
   }
   b.hidden = !lib;

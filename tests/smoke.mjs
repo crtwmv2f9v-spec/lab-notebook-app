@@ -73,7 +73,7 @@ try {
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: `${BASE}?demo#/` });
 
-  await check('home', async () => { await waitFor("document.querySelector('.wb-col.is-today') && document.querySelectorAll('.rail-card').length >= 5"); await sleep(600); await evaluate(clean); await shot('home'); });
+  await check('home', async () => { await waitFor("document.querySelector('.wb-col.is-today') && document.querySelectorAll('.rail-card').length >= 4"); await sleep(600); await evaluate(clean); await shot('home'); });
   await check('home-wide', async () => { await shot('home-wide', { width: 1920, height: 1100 }); });
   await check('phone-width', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 375, height: 812, deviceScaleFactor: 1, mobile: true });
@@ -89,12 +89,11 @@ try {
     await evaluate("history.back(); return 1;");
     await waitFor("document.querySelector('.wb-col.is-today')");
   });
-  await check('continue-card', async () => {
-    await waitFor("document.querySelector('.cont-card .cont-col') && !/读取中/.test(document.querySelector('.cont-card .card-sub').textContent)");
-    return await evaluate("return document.querySelector('.cont-card .card-sub').textContent;");
-  });
   await check('countdown-basis', async () => {
-    const t = await evaluate("return [...document.querySelectorAll('.rail-card')].find(c => c.querySelector('h3').textContent === '截止日倒计时').querySelector('.card-sub').textContent;");
+    await waitFor("document.querySelector('.dl-hero .dl-card') && document.querySelector('.dl-hero .dl-sub')");
+    const order = await evaluate("const y = (q) => document.querySelector(q).getBoundingClientRect().top; return { ok: y('.dl-hero') < y('.wb') && y('.wb') < y('.notes-card') && y('.notes-card') < y('.shelf') && y('.shelf') < y('.home-boards'), gone: !document.querySelector('.cont-card') && !document.querySelector('.tile.recent'), cols: document.querySelectorAll('.notes-card .nt-col').length };");
+    if (!order.ok || !order.gone || order.cols !== 3) throw new Error(JSON.stringify(order));
+    const t = await evaluate("return document.querySelector('.dl-hero .dl-sub').textContent;");
     if (!/北京时间|本机时间/.test(t)) throw new Error(`basis missing: ${t}`);
     return t;
   });
