@@ -579,14 +579,41 @@ export function openNaming(fm, num) {
     ['电化学（CHI）', `01_Data/02_CHI/${year}/${xid}-#09_CV_50mVs.txt`, ''],
     ['预处理文件', `${xid}-#09_TR_20mVs_cond03.xls`, 'SOP v2：预处理数据带 _cond，不计入结果。'],
   ];
+  // One prefix for every instrument: <实验编号>_<仪器>_<样品>. The same rule is used by labnote.py names / mkdir / compare.
+  const INST = ['Keithley', 'Eclipse', 'AFM', 'CHI', 'Microscopy', 'Profilometer', 'XPS', 'Camera'];
+  let picked = new Set(['Keithley', 'Eclipse', 'AFM']);
+  try { const v = JSON.parse(localStorage.getItem('labnote-naming') || 'null'); if (Array.isArray(v) && v.length) picked = new Set(v); } catch { /* private window */ }
+  const slug = (v) => v.trim().replace(/[\s_/\\:]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const sample = h('input', { id: 'nm-sample', placeholder: '样品名，例如 P3HT fiber-01', autocomplete: 'off' });
+  const other = h('input', { id: 'nm-other', placeholder: '其他仪器（逗号分隔）', autocomplete: 'off' });
+  const chips = h('div', { class: 'clip-chips' });
+  const out = h('tbody');
+  const cmd = h('div');
+  const copyBtn = (text) => h('button', { class: 'linkish', type: 'button', title: '点击复制', onclick: () => copyText(text) }, h('code', null, text));
+  const drawOut = () => {
+    const sm = slug(sample.value) || '样品';
+    const insts = [...INST.filter((k) => picked.has(k)), ...other.value.split(/[,，]/).map((x) => slug(x)).filter(Boolean)];
+    out.replaceChildren(...insts.map((k) => h('tr', null, h('td', null, k), h('td', null, copyBtn(`${xid}_${k}_${sm}`)), h('td', { class: 'muted' }, k === 'Keithley' ? '作为数据文件夹名；里面按样品号建子文件夹' : '文件名或文件夹名的开头，后面接 _测试条件'))));
+    const line = `python3 ~/LabNotebook/tools/labnote.py mkdir ${xid} --sample "${sample.value.trim() || '样品'}" --inst ${insts.join(',') || 'Keithley'}`;
+    cmd.replaceChildren(h('p', { class: 'muted' }, '在 Claude Code 或终端里运行，一次建好各仪器的数据文件夹：'), copyBtn(line));
+  };
+  const drawChips = () => chips.replaceChildren(...INST.map((k) => h('button', { type: 'button', class: `chip${picked.has(k) ? ' on' : ''}`, 'aria-pressed': String(picked.has(k)), onclick: () => { if (picked.has(k)) picked.delete(k); else picked.add(k); try { localStorage.setItem('labnote-naming', JSON.stringify([...picked])); } catch { /* private window */ } drawChips(); drawOut(); } }, k)));
+  sample.addEventListener('input', drawOut); other.addEventListener('input', drawOut);
+  drawChips(); drawOut();
   modal({
     title: `命名助手 · ${xid}`, wide: true,
-    body: h('div', null,
-      h('p', { class: 'muted' }, '把 #09 换成实际样品号。点名字即可复制。'),
-      h('table', { class: 'data naming' }, thead(['用途', '名字', '说明']),
-        h('tbody', null, rows.map(([a, b, c]) => h('tr', null, h('td', null, a), h('td', null, h('button', { class: 'linkish', type: 'button', onclick: () => copyText(b) }, h('code', null, b))), h('td', { class: 'muted' }, c)))))),
+    body: h('div', { class: 'form naming-form' },
+      h('p', { class: 'muted' }, '这次实验的所有数据、照片、表征，名字都以「实验编号_仪器_样品」开头，之后可以按样品统一对比。点名字即可复制。'),
+      h('label', { for: 'nm-sample' }, '样品'), sample,
+      h('span', { class: 'label' }, '仪器'), chips, other,
+      h('table', { class: 'data naming' }, thead(['仪器', '名字开头', '说明']), out),
+      cmd,
+      h('details', null, h('summary', null, '按样品号（#09）命名的旧规则'),
+        h('table', { class: 'data naming' }, thead(['用途', '名字', '说明']),
+          h('tbody', null, rows.map(([a, b, c]) => h('tr', null, h('td', null, a), h('td', null, copyBtn(b)), h('td', { class: 'muted' }, c))))))),
     buttons: [{ label: '关闭' }],
   });
+  setTimeout(() => sample.focus(), 40);
 }
 
 // ----- paper record card: printed before the experiment, filled at the bench -----

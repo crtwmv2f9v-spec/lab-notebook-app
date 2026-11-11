@@ -356,6 +356,19 @@ try {
   await check('hypothesis', async () => { await go('#/think/H-0001', "document.querySelector('.ev-chain')"); await evaluate(clean); });
   await check('plan', async () => { await go('#/plan', "document.querySelectorAll('.wb-page .wb-col').length === 8"); await evaluate(clean); await shot('plan'); });
   await check('series', async () => { await go(`#/series/${encodeURIComponent('PEDOT:PSS 配方优化')}`, "document.querySelector('.series-table tbody tr') && document.querySelectorAll('.series-course tbody tr').length === 2 && document.querySelector('.series-course tr.oc-fail .oc-tag.fail')"); await evaluate(clean); });
+  await check('naming', async () => {
+    await go('#/v/oect/2', "document.querySelector('.wrap-bar')");
+    const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const pg = await import('./js/pages.js'); const core = await import('./js/core.js'); const m = await import('./js/model.js');
+      const { fm } = m.parseFrontMatter(await core.lib.readPage('oect', 2)); pg.openNaming(fm, 2); await wait(300);
+      const inp = document.querySelector('#nm-sample'); inp.value = 'P3HT fiber-01'; inp.dispatchEvent(new Event('input')); await wait(100);
+      const names = [...document.querySelectorAll('.naming-form > table.naming tbody code')].map((e) => e.textContent);
+      const cmd = document.querySelector('.naming-form > div:not(.clip-chips) code')?.textContent || '';
+      document.querySelector('.modal-root .btn').click();
+      return { id: fm.id, names, cmd };`);
+    if (r.names.length !== 3 || r.names[2] !== r.id + '_AFM_P3HT-fiber-01' || !r.cmd.includes('labnote.py mkdir ' + r.id + ' --sample "P3HT fiber-01" --inst Keithley,Eclipse,AFM')) throw new Error(JSON.stringify(r));
+    await evaluate(clean);
+    return r.names[2];
+  });
   await check('toc-by-topic', async () => {
     await go('#/v/oect', "document.querySelector('.toc-table .series-row') && document.querySelector('.toc-mode .chip')");
     const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));
