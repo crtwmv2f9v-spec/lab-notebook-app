@@ -279,7 +279,7 @@ export function editProject(p, preset = {}) {
   const f = (k, label, attrs = {}) => { const el = h('input', { id: `pj-${k}`, value: x[k] || '', ...attrs }); return [h('label', { for: `pj-${k}` }, label), el]; };
   const sel = (k, label, opts) => [h('label', { for: `pj-${k}` }, label), h('select', { id: `pj-${k}` }, opts.map((o) => h('option', { selected: x[k] === o }, o)))];
   const topics = topicsOf(planLocal?.doc);
-  const cur = isNew && boardTopic !== '*' ? boardTopic : projectTopic(x, topics)?.id || '';
+  const cur = x.topic && topics.some((t) => t.id === x.topic) ? x.topic : isNew && boardTopic !== '*' ? boardTopic : projectTopic(x, topics)?.id || '';
   const dir = h('select', { id: 'pj-topic' }, [{ id: '', name: '未归类' }, ...topics].map((o) => h('option', { value: o.id, selected: cur === o.id }, o.name)));
   const vols = h('div', { class: 'check-list' }, lib.volumes().map((v) => h('label', { class: 'check' }, h('input', { type: 'checkbox', value: v.id, checked: (x.vols || []).includes(v.id) }), ` ${v.title}`)));
   const body = h('div', { class: 'form' }, ...f('title', '名称', { placeholder: '例如：国自然青年基金 · 唾液 OECT 早筛' }),

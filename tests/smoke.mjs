@@ -423,6 +423,39 @@ try {
     await evaluate(clean);
     return `sections ${r.groups0.join(' / ')}; stats ${r.nums}; done and 不采纳 archived with trace`;
   });
+  await check('back-keeps-place', async () => {
+    await go('#/', "document.querySelector('.shelf .cover[href]') && document.querySelector('.home-boards .rail-card')");
+    const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const shelf = document.querySelector('.shelf'); window.scrollTo(0, shelf.getBoundingClientRect().top + window.scrollY - 80); await wait(150);
+      const y0 = Math.round(window.scrollY);
+      document.querySelector('.shelf .cover[href]').click(); await wait(900);
+      const atTop = window.scrollY < 5 && location.hash.startsWith('#/v/');
+      document.querySelector('.topbar a[aria-label]').click(); await wait(1600);
+      const y1 = Math.round(window.scrollY);
+      document.querySelector('.shelf .cover[href]').click(); await wait(900);
+      history.back(); await wait(1600);
+      const y2 = Math.round(window.scrollY);
+      // a fresh visit by a link still starts at the top
+      location.hash = '#/projects'; await wait(900); const fresh = window.scrollY < 5;
+      return { y0, atTop, y1, y2, fresh, hash: location.hash };`);
+    if (r.y0 < 300 || !r.atTop || Math.abs(r.y1 - r.y0) > 6 || Math.abs(r.y2 - r.y0) > 6 || !r.fresh) throw new Error(JSON.stringify(r));
+    return `left home at ${r.y0}px, back button → ${r.y1}px, browser back → ${r.y2}px`;
+  });
+  await check('paper-progress-and-seeds', async () => {
+    await go('#/', "document.querySelector('.pp-card .pp-progress input') && document.querySelector('.notes-card .nt-pj')");
+    const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const p = await import('./js/planner.js');
+      const card = [...document.querySelectorAll('.pp-card.paper')].find((e) => /2Figures/.test(e.textContent)); const input = card.querySelector('.pp-progress input');
+      const auto = card.querySelector('.pp-progress').classList.contains('auto');
+      input.value = '65'; input.dispatchEvent(new Event('input', { bubbles: true })); const live = card.querySelector('.pp-progress b').textContent;
+      input.dispatchEvent(new Event('change', { bubbles: true })); await wait(500);
+      const saved = (await p.loadPlanner()).papers.find((x) => x.id === 'A1').progress; const noDialog = !document.querySelector('#pp-title');
+      const seeds = [...document.querySelectorAll('.notes-card .nt-seeds li b')].map((e) => e.textContent);
+      const early = !document.querySelector('.home-boards .pj-early');
+      return { auto, live, saved, noDialog, seeds, early };`);
+    if (!r.auto || r.live !== '65%' || r.saved !== 65 || !r.noDialog || r.seeds.length !== 2 || !r.early) throw new Error(JSON.stringify(r));
+    await evaluate(clean);
+    return `progress dragged to ${r.live}; ${r.seeds.length} project ideas under 课题手记`;
+  });
   await check('toc-by-topic', async () => {
     await go('#/v/oect', "document.querySelector('.toc-table .series-row') && document.querySelector('.toc-mode .chip')");
     const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));

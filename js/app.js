@@ -1,7 +1,7 @@
 // Lab notebook: routing and start-up.
 import { fitChartsForPrint, loadLib } from './render.js';
 import { search } from './search.js';
-import { DEMO, S, applyTheme, offerUpdate, lib, loadFonts, show, startLibrary, toast, view, viewMissing } from './core.js';
+import { markReturn, DEMO, S, applyTheme, offerUpdate, lib, loadFonts, show, startLibrary, toast, view, viewMissing } from './core.js';
 import { viewSettings, viewSetup } from './settings.js';
 import { viewHome } from './home.js';
 import { viewPlan, viewProjects } from './planner.js';
@@ -67,7 +67,7 @@ export function globalKeys(e) {
     e.preventDefault(); openQuickFind(); return;
   }
   if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'h' && !document.querySelector('.modal-root') && location.hash.replace(/^#\/?/, '')) {
-    e.preventDefault(); location.hash = '#/'; return;
+    e.preventDefault(); markReturn(); location.hash = '#/'; return;
   }
   if (view.kind === 'page' && !typing && !document.querySelector('.modal-root')) {
     if (e.key === 'ArrowLeft') document.querySelector('[data-nav="prev"]')?.click();

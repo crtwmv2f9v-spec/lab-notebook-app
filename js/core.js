@@ -118,9 +118,35 @@ export function onLibraryEvent(kind) {
   updateSync();
 }
 
+// Going back (the browser's back, the top bar's back and home buttons, the H key) returns to where you were on that
+// page, not to its top: each address remembers how far down it was scrolled when you left it.
+const scrollMemo = new Map();
+let shownHash = null; let returning = false; let histN = 0; let histAt = null;
+export const markReturn = () => { returning = true; };
+function restoreScroll(y, token) {
+  let tries = 0; let stop = false;
+  const cancel = () => { stop = true; };
+  window.addEventListener('wheel', cancel, { once: true, passive: true }); window.addEventListener('touchstart', cancel, { once: true, passive: true });
+  // parts of the page arrive a moment later, so keep trying until it is tall enough
+  const step = () => {
+    if (stop || token !== view.token) return;
+    window.scrollTo(0, y);
+    if (Math.abs(window.scrollY - y) > 2 && tries++ < 30) setTimeout(step, 100);
+  };
+  step();
+}
 export async function show(kind, render, { quiet = false } = {}) {
   const token = ++view.token;
   const scroll = window.scrollY;
+  const hash = location.hash || '#/';
+  if (shownHash && shownHash !== hash) scrollMemo.set(shownHash, scroll);
+  // The browser's back / forward lands on a history entry numbered earlier; a new visit makes an entry with no number yet.
+  try {
+    const n = history.state?.labI;
+    if (n == null) { histAt = ++histN; history.replaceState({ ...(history.state || {}), labI: histAt }, ''); } else { if (histAt != null && n !== histAt) returning = true; histAt = n; histN = Math.max(histN, n); }
+  } catch { /* history not available */ }
+  const back = returning && shownHash !== hash ? scrollMemo.get(hash) : null;
+  returning = false; shownHash = hash;
   const oldUrls = view.urls;
   const prevKind = view.kind;
   view = { kind, token, urls: [] };
@@ -138,6 +164,7 @@ export async function show(kind, render, { quiet = false } = {}) {
   }
   setTimeout(() => oldUrls.forEach((u) => URL.revokeObjectURL(u)), 1000);
   if (quiet) window.scrollTo(0, scroll);
+  else if (back) restoreScroll(back, token);
   else if (prevKind !== kind || kind !== 'page') window.scrollTo(0, 0);
   updateSync();
 }
@@ -165,9 +192,9 @@ export function offerUpdate() {
 export function topbar({ back, backLabel = '返回', title, sub, actions = [], home = !!back }) {
   return h('header', { class: 'topbar' },
     h('div', { class: 'tb-left' },
-      back ? h('a', { class: 'btn icon ghost', href: back, 'aria-label': backLabel, title: backLabel }, icon('back')) : null,
+      back ? h('a', { class: 'btn icon ghost', href: back, 'aria-label': backLabel, title: backLabel, onclick: markReturn }, icon('back')) : null,
       // One click home from anywhere (also the H key when not typing).
-      home ? h('a', { class: 'btn icon ghost tb-home', href: '#/', 'aria-label': '回到首页', title: '回到首页（H）' }, icon('home')) : null,
+      home ? h('a', { class: 'btn icon ghost tb-home', href: '#/', 'aria-label': '回到首页', title: '回到首页（H）', onclick: markReturn }, icon('home')) : null,
       h('div', { class: 'tb-title' },
         h('span', { class: 'tb-main' }, title),
         sub ? h('span', { class: 'tb-sub' }, sub) : null)),

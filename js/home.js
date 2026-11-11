@@ -11,7 +11,7 @@ import { weekBoard } from './weekboard.js';
 import {
   PAPER_STAGE, WEEKDAYS, addBox, allFollowups, changeTasks, editPaper, editProject, exportIcs,
   editable, isGoal, loadPlanner, moveTask, newTask, reminderRow, ring, taskRow,
-  toggleTask, weekStart, projectTopic, topicChip, freshId, noteBar, paperNoteStats, PAPER_NOTES, openPaperNotes, paperNoteCount,
+  toggleTask, weekStart, projectTopic, topicChip, changePlanner, freshId, noteBar, paperNoteStats, PAPER_NOTES, openPaperNotes, paperNoteCount,
 } from './planner.js';
 import { openNewExperiment } from './pages.js';
 import { openExport } from './printing.js';
@@ -440,29 +440,32 @@ export function homeRails() {
     clipN = await clipCounts();
     // 课题与基金
     const topics = topicsOf(doc); const tOf = (x) => projectTopic(x, topics);
-    const byTopic = (a, b) => { const k = (x) => { const i = topics.findIndex((t) => t.id === tOf(x)?.id); return i < 0 ? 99 : i; }; return k(a) - k(b); };
     const active = projects.filter((x) => !['想法', '调研', '已结束'].includes(x.stage || '想法'));
     const early = (st) => projects.filter((x) => (x.stage || '想法') === st).length;
-    const pj = railCard('课题与基金', `${active.length} 个在推进 · 想法 ${early('想法')} · 调研 ${early('调研')}`,
+    const pj = railCard('课题与基金', `${active.length} 个在推进 · 构想 ${early('想法') + early('调研')} 个在课题手记`,
       active.length ? h('ul', { class: 'board-list' }, [...active].sort((a, b) => String(a.due || '9').localeCompare(String(b.due || '9'))).map((x) => h('li', { class: 'board-item', onclick: (e) => { if (!e.target.closest('a')) editProject(x); } },
         h('div', { class: 'bi-top' }, h('span', { class: 'bi-kind' }, x.kind || '课题'), h('b', null, x.title), topicChip(tOf(x))),
         h('div', { class: 'bi-meta' }, h('span', { class: 'bi-stage' }, x.stage), x.next ? h('span', null, `下一步：${x.next}`) : null, dueTag(x.due)),
         (x.vols || []).length ? h('div', { class: 'bi-vols' }, x.vols.map((id) => lib.volume(id)).filter(Boolean).flatMap((v) => [h('a', { href: `#/v/${v.id}` }, v.title), h('a', { class: 'bi-m', href: `#/v/${v.id}/methods` }, '方法细节')])) : null)))
-        : h('p', { class: 'muted small' }, '还没有在推进的课题。'),
-      ...['调研', '想法'].map((st) => {
-        const list = projects.filter((x) => (x.stage || '想法') === st).sort(byTopic);
-        return list.length ? h('div', { class: 'pj-early' }, h('h4', null, `${st} ${list.length}`),
-          h('ul', { class: 'idea-list' }, list.map((x) => h('li', { onclick: () => editProject(x), title: x.why || '点击修改' },
-            h('b', null, x.title), topicChip(tOf(x)), x.why ? h('span', { class: 'idea-why' }, x.why) : null, x.next ? h('span', { class: 'idea-why' }, `下一步：${x.next}`) : null)))) : null;
-      }),
+        : h('p', { class: 'muted small' }, '还没有在推进的课题。初步的构想记在课题手记的「课题构想」里，成熟后推进到“申请中 / 进行中”就会出现在这里。'),
       h('div', { class: 'rail-actions' },
         h('a', { class: 'btn small', href: '#/projects' }, '课题看板 ›'),
-        h('button', { class: 'btn small ghost', type: 'button', onclick: () => editProject(null, { stage: '想法' }) }, icon('plus', 14), '记一个想法')));
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => editProject(null, { stage: '进行中' }) }, icon('plus', 14), '新建课题')));
     // 论文与投稿
     // 论文与投稿: a section of its own under the week — one card per paper with where it stands and what is still open.
     const STAGE_COLOR = { 构思: '#8e8e93', 写作中: '#5e5ce6', 已投稿: '#0a84ff', 审稿中: '#00a3a3', 返修: '#c77c02', 接收: '#30a46c', 已发表: '#1a7f4b' };
     const ppStat = (n, label, sub, attrs, warn) => h(attrs.href ? 'a' : 'button', { class: `pp-stat${warn ? ' open' : ''}${attrs.cls ? ` ${attrs.cls}` : ''}`, ...(attrs.href ? { href: attrs.href } : { type: 'button' }), title: attrs.title, onclick: (e) => { e.stopPropagation(); attrs.run?.(); } },
       h('b', null, String(n)), h('span', null, label), h('i', null, sub));
+    // Progress is your own estimate: drag the dot. Until it is set, it starts from the stage.
+    const progress = (x, k) => {
+      const v0 = Number.isFinite(x.progress) ? x.progress : Math.round((k / (PAPER_STAGE.length - 1)) * 20) * 5;
+      const out = h('b', null, `${v0}%`);
+      const input = h('input', { type: 'range', min: '0', max: '100', step: '5', value: String(v0), 'aria-label': '我估计的进度', title: '拖动：我估计这篇论文完成了多少' });
+      const box = h('div', { class: `pp-progress${Number.isFinite(x.progress) ? '' : ' auto'}`, style: { '--p': `${v0}%` }, onclick: (e) => e.stopPropagation() }, input, out);
+      input.addEventListener('input', () => { out.textContent = `${input.value}%`; box.style.setProperty('--p', `${input.value}%`); box.classList.remove('auto'); });
+      input.addEventListener('change', () => { const v = Number(input.value); changePlanner((d) => { const y = d.papers.find((z) => z.id === x.id); if (y) y.progress = v; }, 'Board: paper progress'); });
+      return box;
+    };
     const paperCard = (x) => {
       const k = Math.max(0, PAPER_STAGE.indexOf(x.stage));
       const nm = paperMethods.filter((m) => (m.papers || []).includes(x.id));
@@ -471,7 +474,7 @@ export function homeRails() {
       return h('li', { class: 'pp-card paper', style: { '--k': tp?.color || '#8e8e93' }, tabindex: '0', onclick: () => editPaper(x), onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) editPaper(x); } },
         h('div', { class: 'pp-top' }, h('span', { class: 'pp-stage' }, x.stage || PAPER_STAGE[0]), tp ? h('span', { class: 'pp-topic' }, tp.name) : null, x.journal ? h('i', { class: 'pp-journal' }, x.journal) : null, dueTag(x.due)),
         h('h3', null, x.title),
-        h('ol', { class: 'pp-track', 'aria-label': `进度：${x.stage}` }, PAPER_STAGE.map((st, i) => h('li', { class: i < k ? 'done' : i === k ? 'now' : null, title: st }, i === k ? h('span', null, st) : null))),
+        progress(x, k),
         x.note ? h('p', { class: 'pp-note' }, x.note) : null,
         h('div', { class: 'pp-stats' },
           ppStat(nm.length, '方法卡片', nm.length ? `${nm.filter((m) => m.status === '待写入').length} 张待写入` : '写 Methods 用', { href: `#/methods/a/${x.id}`, title: '这篇文章的方法卡片' }, false),

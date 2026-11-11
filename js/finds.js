@@ -7,7 +7,7 @@ import { addDays, putSection, sectionOf } from './lab.js';
 import { updatePage } from './pages.js';
 import { h, icon } from './util.js';
 import { lib, menu, modal, toast, view } from './core.js';
-import { freshId, PIN_SVG, TASKS_PATH, WEEKDAYS, changePlanner, editable, loadPlanner, planDoc, queuePlanner, weekStart } from './planner.js';
+import { editProject, freshId, PIN_SVG, projectTopic, TASKS_PATH, WEEKDAYS, changePlanner, editable, loadPlanner, planDoc, queuePlanner, weekStart } from './planner.js';
 import { redrawHome } from './home.js';
 import { route } from './app.js';
 
@@ -210,6 +210,7 @@ export function findsCard(doc, draw) {
       : h('p', { class: 'nt-empty' }, '还没有。实验时注意到的小现象、小规律，随手记一句。'),
     myFinds.length > shown.length ? h('p', { class: 'muted small' }, `更早的 ${myFinds.length - shown.length} 条在「每日发现」卷里。`) : null);
   // experiments to do
+  const seeds = (doc.projects || []).filter((p) => ['想法', '调研'].includes(p.stage || '想法') && (cur === ALL || (projectTopic(p, topics)?.id || NO_TOPIC) === cur));
   const isIdea = (m) => m.kind === 'idea';
   const move = (m) => h('button', { class: 'nt-move', type: 'button', title: isIdea(m) ? '这是要做的实验：移到「待做实验」' : '这不是实验：移到「零散想法」', onclick: () => updM(m.id, (x) => { if (isIdea(x)) delete x.kind; else { x.kind = 'idea'; delete x.done; delete x.doneAt; } }, 'Notes: move between lists') }, isIdea(m) ? '→ 实验' : '→ 想法');
   const myIdeas = memos.filter((m) => inTab(m) && isIdea(m)).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || String(b.updated || b.created).localeCompare(String(a.updated || a.created)));
@@ -237,7 +238,14 @@ export function findsCard(doc, draw) {
       move(m),
       h('button', { class: 'memo-pin', type: 'button', 'aria-pressed': String(!!m.pinned), 'aria-label': m.pinned ? '取消置顶' : '置顶', title: m.pinned ? '取消置顶' : '置顶', html: PIN_SVG, onclick: () => updM(m.id, (x) => { x.pinned = !x.pinned; }, 'Notes: pin') }),
       h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Notes: remove', draw) }, icon('close', 14)))))
-      : h('p', { class: 'nt-empty' }, '还没有。和实验无关或还不成形的念头，记在这里。'));
+      : h('p', { class: 'nt-empty' }, '还没有。和实验无关或还不成形的念头，记在这里。'),
+    // 课题构想: projects still at the idea or survey stage. They live here, under their topic, until they are pursued.
+    h('div', { class: 'nt-pj' },
+      h('h4', null, '课题构想', h('span', null, seeds.length ? String(seeds.length) : ''), h('a', { href: '#/projects', title: '全部课题：构想 → 调研 → 申请 → 进行 → 结题' }, '课题看板 ›')),
+      seeds.length ? h('ul', { class: 'nt-seeds' }, seeds.map((p) => h('li', { tabindex: '0', title: '点击修改；成熟后把阶段推进到“申请中 / 进行中”', onclick: () => editProject(p), onkeydown: (e) => { if (e.key === 'Enter') editProject(p); } },
+        h('b', null, p.title), h('span', { class: `nt-stage${p.stage === '调研' ? ' survey' : ''}` }, p.stage === '调研' ? '调研中' : '构想'), showChip && projectTopic(p, topics) ? h('span', { class: 'nt-topic', style: { '--k': projectTopic(p, topics).color } }, projectTopic(p, topics).name) : null,
+        p.why ? h('span', { class: 'nt-why' }, p.why) : null))) : null,
+      h('button', { class: 'wb-add-btn nt-seed-add', type: 'button', onclick: () => editProject(null, { stage: '想法', ...(addTo ? { topic: addTo } : {}) }) }, icon('plus', 14), '记一个课题构想')));
   const unfiled = finds.filter((f) => !f.filed).length;
   const vol = dailyVolume();
   const sat = addDays(weekStart(t), 5);
