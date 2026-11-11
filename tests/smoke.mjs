@@ -73,7 +73,7 @@ try {
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: `${BASE}?demo#/` });
 
-  await check('home', async () => { await waitFor("document.querySelector('.wb-col.is-today') && document.querySelectorAll('.rail-card').length >= 4"); await sleep(600); await evaluate(clean); await shot('home'); });
+  await check('home', async () => { await waitFor("document.querySelector('.wb-col.is-today') && document.querySelectorAll('.rail-card').length >= 3 && document.querySelector('.pp-main .pp-card')"); await sleep(600); await evaluate(clean); await shot('home'); });
   await check('home-wide', async () => { await shot('home-wide', { width: 1920, height: 1100 }); });
   await check('phone-width', async () => {
     await send('Emulation.setDeviceMetricsOverride', { width: 375, height: 812, deviceScaleFactor: 1, mobile: true });
@@ -91,7 +91,7 @@ try {
   });
   await check('countdown-basis', async () => {
     await waitFor("document.querySelector('.dl-hero .dl-card') && document.querySelector('.dl-hero .dl-sub')");
-    const order = await evaluate("const y = (q) => document.querySelector(q).getBoundingClientRect().top; return { ok: y('.dl-hero') < y('.wb') && y('.wb') < y('.notes-card') && y('.notes-card') < y('.shelf') && y('.shelf') < y('.home-boards'), gone: !document.querySelector('.cont-card') && !document.querySelector('.tile.recent'), cols: document.querySelectorAll('.notes-card .nt-col').length };");
+    const order = await evaluate("const y = (q) => document.querySelector(q).getBoundingClientRect().top; return { ok: y('.dl-hero') < y('.wb') && y('.wb') < y('.pp-main') && y('.pp-main') < y('.notes-card') && y('.notes-card') < y('.shelf') && y('.shelf') < y('.home-boards'), gone: !document.querySelector('.cont-card') && !document.querySelector('.tile.recent'), cols: document.querySelectorAll('.notes-card .nt-col').length };");
     if (!order.ok || !order.gone || order.cols !== 3) throw new Error(JSON.stringify(order));
     const t = await evaluate("return document.querySelector('.dl-hero .dl-sub').textContent;");
     if (!/北京时间|本机时间/.test(t)) throw new Error(`basis missing: ${t}`);
@@ -394,10 +394,10 @@ try {
     return `quick entry → ${r.filed} 过程记录; existing finding attached`;
   });
   await check('paper-notes', async () => {
-    await go('#/', "document.querySelectorAll('.board-item.paper .bi-notes').length >= 2");
+    await go('#/', "document.querySelectorAll('.pp-card.paper .bi-notes').length >= 2");
     const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const p = await import('./js/planner.js');
-      const papers = [...document.querySelectorAll('.board-item.paper')]; const every = papers.every((li) => li.querySelectorAll('.bi-notes').length === 2 && /Figures \\d+/.test(li.textContent) && /Manuscript \\d+/.test(li.textContent));
-      const li = papers.find((e) => /Figures 2/.test(e.textContent)); const btn = [...li.querySelectorAll('.bi-notes')].find((b) => b.textContent.startsWith('Manuscript'));
+      const papers = [...document.querySelectorAll('.pp-card.paper')]; const every = papers.every((li) => li.querySelectorAll('.bi-notes').length === 2 && /\\dFigures/.test(li.textContent) && /\\dManuscript/.test(li.textContent) && /\\d方法卡片/.test(li.textContent));
+      const li = papers.find((e) => /2Figures/.test(e.textContent)); const btn = [...li.querySelectorAll('.bi-notes')].find((b) => b.textContent.includes('Manuscript'));
       btn.click(); await wait(300);
       const editOpened = !!document.querySelector('#pp-title');
       document.querySelector('#pn-where').value = 'p. 3';
@@ -407,7 +407,7 @@ try {
       document.querySelector('.pn-list .tick').click(); await wait(400);
       const doc = await p.loadPlanner(); const paper = doc.papers.find((x) => (x.ms || []).length);
       [...document.querySelectorAll('.modal-root .btn')].find((b) => b.textContent.trim() === '关闭').click(); await wait(400);
-      const label = [...document.querySelectorAll('.board-item.paper .bi-notes')].find((b) => b.textContent === 'Manuscript 2');
+      const label = [...document.querySelectorAll('.pp-card.paper .bi-notes')].find((b) => /^2Manuscript/.test(b.textContent));
       return { every, editOpened, rows, ms: paper.ms.map((n) => [n.text, n.where, n.by, !!n.done].join('|')), label: !!label, open: label?.classList.contains('open') };`);
     if (!r.every || r.editOpened || r.rows !== 2 || r.ms.length !== 2 || r.ms[0] !== 'Shorten the abstract|p. 3|导师|true' || r.ms[1] !== '这一段逻辑不顺|p. 3|导师|false' || !r.label || !r.open) throw new Error(JSON.stringify(r));
     await evaluate(clean);

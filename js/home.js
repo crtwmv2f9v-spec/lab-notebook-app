@@ -128,7 +128,7 @@ export function viewHome() {
 
   homeHooks.clear();
   // Top to bottom: the week (goals, today, each day) → quick notes → what to pick up → the side boards → the notebooks.
-  const { left, right, top } = homeRails();
+  const { left, right, top, papers: papersBoard } = homeRails();
   const shelf = h('section', { class: 'shelf', 'aria-label': '卷' });
   for (const v of vols) shelf.append(cover(v));
   shelf.append(thinkCover());
@@ -138,6 +138,7 @@ export function viewHome() {
     hero(),
     top,
     weekBoard({ hooks: homeHooks, redraw: redrawHome }),
+    papersBoard,
     h('h2', { class: 'section-title' }, '课题手记', h('span', null, '按课题记：碎片发现 · 待做实验 · 零散想法')),
     dashboard(),
     h('h2', { class: 'section-title' }, '记录本', h('span', null, `${vols.length} 卷 · ${lib.allPages().length} 页`)),
@@ -430,6 +431,7 @@ export function homeRails() {
   const left = h('aside', { class: 'rail rail-left', 'aria-label': '科研主线' });
   const right = h('aside', { class: 'rail rail-right', 'aria-label': '时间与日常' });
   const top = h('section', { class: 'dl-hero', 'aria-label': '截止日倒计时' });
+  const papersEl = h('section', { class: 'pp-main', 'aria-label': '论文与投稿' });
   const draw = async () => {
     let doc; try { doc = await loadPlanner(); } catch { return; }
     const focused = document.activeElement?.closest?.('.rail') ? document.activeElement.dataset.k : null;
@@ -457,20 +459,35 @@ export function homeRails() {
         h('a', { class: 'btn small', href: '#/projects' }, '课题看板 ›'),
         h('button', { class: 'btn small ghost', type: 'button', onclick: () => editProject(null, { stage: '想法' }) }, icon('plus', 14), '记一个想法')));
     // 论文与投稿
-    const counts = PAPER_STAGE.map((st) => [st, papers.filter((x) => x.stage === st).length]).filter(([, n]) => n);
-    const pp = railCard('论文与投稿', counts.length ? counts.map(([st, n]) => `${st} ${n}`).join(' · ') : '构思 → 写作 → 投稿 → 返修 → 接收',
-      h('ol', { class: 'paper-steps' }, PAPER_STAGE.slice(0, 6).map((st) => h('li', { class: papers.some((x) => x.stage === st) ? 'on' : null }, st))),
-      h('ul', { class: 'board-list' }, [...papers].sort((a, b) => PAPER_STAGE.indexOf(a.stage) - PAPER_STAGE.indexOf(b.stage)).map((x) => h('li', { class: `board-item paper st-${x.stage}`, onclick: () => editPaper(x) },
-        h('div', { class: 'bi-top' }, h('span', { class: 'bi-kind' }, x.stage), h('b', null, x.title)),
-        h('div', { class: 'bi-meta' }, x.journal ? h('i', null, x.journal) : null, dueTag(x.due),
-          h('a', { class: 'bi-m', href: `#/methods/a/${x.id}`, title: '这篇文章的方法卡片', onclick: (e) => e.stopPropagation() }, `方法卡片 ${paperMethods.filter((m) => (m.papers || []).includes(x.id)).length}`),
-          ...Object.entries(PAPER_NOTES).map(([k, [name, label]]) => { const open = (x[k] || []).filter((n) => !n.done).length; return h('button', { class: `bi-m bi-notes${open ? ' open' : ''}`, type: 'button', title: `${label}：共 ${paperNoteCount(x, k)} 条${open ? `，${open} 条未处理` : ''}`, onclick: (e) => { e.stopPropagation(); openPaperNotes(x.id, k); } }, `${name} ${paperNoteCount(x, k)}`); }))))),
-      h('button', { class: 'btn small rail-add', type: 'button', onclick: () => editPaper(null) }, icon('plus', 14), '新建论文'));
-    for (const [card, key] of [[pj, 'pj'], [pp, 'pp']]) { const ul = card.querySelector('ul.board-list'); if (ul) foldList(ul, key); }
+    // 论文与投稿: a section of its own under the week — one card per paper with where it stands and what is still open.
+    const STAGE_COLOR = { 构思: '#8e8e93', 写作中: '#5e5ce6', 已投稿: '#0a84ff', 审稿中: '#00a3a3', 返修: '#c77c02', 接收: '#30a46c', 已发表: '#1a7f4b' };
+    const ppStat = (n, label, sub, attrs, warn) => h(attrs.href ? 'a' : 'button', { class: `pp-stat${warn ? ' open' : ''}${attrs.cls ? ` ${attrs.cls}` : ''}`, ...(attrs.href ? { href: attrs.href } : { type: 'button' }), title: attrs.title, onclick: (e) => { e.stopPropagation(); attrs.run?.(); } },
+      h('b', null, String(n)), h('span', null, label), h('i', null, sub));
+    const paperCard = (x) => {
+      const k = Math.max(0, PAPER_STAGE.indexOf(x.stage));
+      const nm = paperMethods.filter((m) => (m.papers || []).includes(x.id));
+      return h('li', { class: 'pp-card paper', style: { '--k': STAGE_COLOR[x.stage] || '#8e8e93' }, tabindex: '0', onclick: () => editPaper(x), onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) editPaper(x); } },
+        h('div', { class: 'pp-top' }, h('span', { class: 'pp-stage' }, x.stage || PAPER_STAGE[0]), x.journal ? h('i', { class: 'pp-journal' }, x.journal) : null, dueTag(x.due)),
+        h('h3', null, x.title),
+        h('ol', { class: 'pp-track', 'aria-label': `进度：${x.stage}` }, PAPER_STAGE.map((st, i) => h('li', { class: i < k ? 'done' : i === k ? 'now' : null, title: st }, i === k ? h('span', null, st) : null))),
+        x.note ? h('p', { class: 'pp-note' }, x.note) : null,
+        h('div', { class: 'pp-stats' },
+          ppStat(nm.length, '方法卡片', nm.length ? `${nm.filter((m) => m.status === '待写入').length} 张待写入` : '写 Methods 用', { href: `#/methods/a/${x.id}`, title: '这篇文章的方法卡片' }, false),
+          ...Object.entries(PAPER_NOTES).map(([key, [name, label]]) => { const open = (x[key] || []).filter((n) => !n.done).length; const all = paperNoteCount(x, key); return ppStat(all, name, all ? (open ? `${open} 条未处理` : '都已处理') : '记意见', { cls: 'bi-notes', title: `${label}：共 ${all} 条${open ? `，${open} 条未处理` : ''}`, run: () => openPaperNotes(x.id, key) }, open > 0); })));
+    };
+    const live = papers.filter((x) => x.stage !== '已发表');
+    papersEl.replaceChildren(
+      h('div', { class: 'pp-head' },
+        h('div', null, h('h2', null, '论文与投稿'), h('p', null, papers.length ? `${live.length} 篇在推进${papers.length - live.length ? ` · ${papers.length - live.length} 篇已发表` : ''}` : '构思 → 写作 → 投稿 → 返修 → 接收')),
+        h('ol', { class: 'pp-pipe', 'aria-hidden': 'true' }, PAPER_STAGE.map((st) => { const n = papers.filter((x) => x.stage === st).length; return h('li', { class: n ? 'on' : null, style: { '--k': STAGE_COLOR[st] } }, st, n ? h('b', null, String(n)) : null); })),
+        h('button', { class: 'btn small', type: 'button', onclick: () => editPaper(null) }, icon('plus', 14), '新建论文')),
+      h('ul', { class: 'pp-cards' }, [...papers].sort((a, b) => Number(a.stage === '已发表') - Number(b.stage === '已发表') || String(a.due || '9').localeCompare(String(b.due || '9')) || PAPER_STAGE.indexOf(b.stage) - PAPER_STAGE.indexOf(a.stage)).map(paperCard),
+        papers.length ? null : h('li', { class: 'pp-card pp-empty', onclick: () => editPaper(null) }, icon('plus', 22), h('span', null, '新建第一篇论文'))));
+    { const ul = pj.querySelector('ul.board-list'); if (ul) foldList(ul, 'pj'); }
     const rd = catList(tasks, '文献', { placeholder: '粘贴 DOI、链接、题目或公众号文章链接' });
     setTimeout(fillPaperRefs, 300);
     left.replaceChildren(
-      h('p', { class: 'rail-title' }, '科研主线'), pj, pp,
+      h('p', { class: 'rail-title' }, '科研主线'), pj,
       railCard('文献待读', rd.open.length ? `${rd.open.length} 篇待读` : '读完打勾', ...rd.el));
     // 截止日倒计时：自己的截止项 + 课题、论文的日期
     const t = todayISO();
@@ -508,7 +525,7 @@ export function homeRails() {
   };
   homeHooks.add(draw);
   draw().then(() => autoFileFinds());
-  return { left, right, top };
+  return { left, right, top, papers: papersEl };
 }
 
 // Home: today's to-dos (your own + experiment reminders) and this week's plan, each with progress.
