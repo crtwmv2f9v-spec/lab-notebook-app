@@ -89,7 +89,7 @@ export function viewVolume(id) {
     pages.length ? { icon: 'print', label: '打印整卷 / 存为 PDF', run: () => printVolume(id) } : null,
     { icon: 'search', label: '在本卷中搜索', run: () => openSearch('', id) },
     { icon: 'download', label: '导出（按日期，PDF / Word）', run: () => openExport(id) },
-    pages.length ? { icon: 'list', label: '把已有的页归入系列…', run: () => openBulkSeries(id) } : null,
+    pages.length ? { icon: 'list', label: '把已有的页归入实验主题…', run: () => openBulkSeries(id) } : null,
     pages.length ? { icon: 'trash', label: '批量永久删除页面…', run: () => openBulkDelete(id) } : null,
     { icon: 'trash', label: '删除这个卷…', run: () => openDeleteVolume(v) },
   ]) }, icon('more'));
@@ -108,19 +108,33 @@ export function viewVolume(id) {
   if (!pages.length) {
     sheet.append(h('div', { class: 'empty' }, h('p', null, '还没有页面。'), h('a', { class: 'btn', href: `#/v/${id}/new` }, icon('write', 18), '写第 1 页')));
   } else {
-    sheet.append(h('table', { class: 'toc-table' },
-      h('thead', null, h('tr', null, h('th', { scope: 'col', class: 'c-no' }, '页'), h('th', { scope: 'col', class: 'c-date' }, '日期'), h('th', { scope: 'col' }, '标题'), h('th', { scope: 'col', class: 'c-sig' }, '已签名'))),
-      h('tbody', null, tocRows(pages).map((p) => (p.seriesRow ? h('tr', { class: 'series-row', onclick: () => { location.hash = `#/series/${encodeURIComponent(p.name)}`; } },
-        h('td', { class: 'c-no' }, p.nums),
+    // By 实验主题 (default): the pages of one experiment done over several days sit together under its name.
+    // By date: every page in page order.
+    let mode = 'topic'; try { mode = localStorage.getItem('labnote-toc-mode') || 'topic'; } catch { /* private window */ }
+    const tbody = h('tbody');
+    const pageRow = (p, { child = false, chip = false } = {}) => h('tr', { class: `${p.void ? 'voided' : ''}${p.outcome ? ` oc-${p.outcome}` : ''}${child ? ' toc-child' : ''}` || null, onclick: (e) => { if (!e.target.closest('a, button')) location.hash = `#/v/${id}/${p.num}`; } },
+      h('td', { class: 'c-no' }, p.num),
+      h('td', { class: 'c-date' }, fmtDate(p.date)),
+      h('td', null, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, h('a', { href: `#/v/${id}/${p.num}` }, p.title), p.void ? h('span', { class: 'void-tag' }, '已作废') : null, outcomeTag(p),
+        p.pending ? h('span', { class: 'pending-tag' }, '待同步') : null,
+        chip && p.series ? h('a', { class: 'series-tag toc-chip', href: `#/series/${encodeURIComponent(p.series)}` }, p.series) : null,
+        !child && !p.series && !p.pending ? h('button', { class: 'toc-join no-print', type: 'button', title: '同一个实验分几天做的页，归到同一个实验主题下', onclick: () => setSeries(id, p.num, p) }, '归入主题') : null,
+        p.tags.length ? h('span', { class: 'toc-tags' }, p.tags.map((t) => `#${t}`).join(' ')) : null),
+      h('td', { class: 'c-sig' }, p.signed ? h('span', { class: 'initials', title: `Signed ${fmtDate(p.signed)}` }, initials(p.signer || signerName())) : h('span', { class: 'sr' }, '未签名')));
+    const drawToc = () => {
+      if (mode === 'date') { tbody.replaceChildren(...pages.map((p) => pageRow(p, { chip: true }))); return; }
+      tbody.replaceChildren(...tocRows(pages).flatMap((p) => (p.seriesRow ? [h('tr', { class: 'series-row', onclick: () => { location.hash = `#/series/${encodeURIComponent(p.name)}`; } },
+        h('td', { class: 'c-no' }),
         h('td', { class: 'c-date' }, p.range),
-        h('td', null, h('span', { class: 'series-tag' }, '系列'), h('a', { href: `#/series/${encodeURIComponent(p.name)}` }, p.name), h('span', { class: 'toc-tags' }, `${p.count} 次实验`), p.ok ? h('span', { class: 'oc-tag ok' }, `可重复 ${p.ok}`) : null, p.fail ? h('span', { class: 'oc-tag fail' }, `行不通 ${p.fail}`) : null),
-        h('td', { class: 'c-sig' })) : h('tr', { class: `${p.void ? 'voided' : ''}${p.outcome ? ` oc-${p.outcome}` : ''}` || null, onclick: (e) => { if (!e.target.closest('a')) location.hash = `#/v/${id}/${p.num}`; } },
-        h('td', { class: 'c-no' }, p.num),
-        h('td', { class: 'c-date' }, fmtDate(p.date)),
-        h('td', null, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, h('a', { href: `#/v/${id}/${p.num}` }, p.title), p.void ? h('span', { class: 'void-tag' }, '已作废') : null, outcomeTag(p),
-          p.pending ? h('span', { class: 'pending-tag' }, '待同步') : null,
-          p.tags.length ? h('span', { class: 'toc-tags' }, p.tags.map((t) => `#${t}`).join(' ')) : null),
-        h('td', { class: 'c-sig' }, p.signed ? h('span', { class: 'initials', title: `Signed ${fmtDate(p.signed)}` }, initials(p.signer || signerName())) : h('span', { class: 'sr' }, '未签名'))))))));
+        h('td', null, h('span', { class: 'series-tag' }, '主题'), h('a', { href: `#/series/${encodeURIComponent(p.name)}` }, p.name), h('span', { class: 'toc-tags' }, `${p.count} 次`), p.ok ? h('span', { class: 'oc-tag ok' }, `可重复 ${p.ok}`) : null, p.fail ? h('span', { class: 'oc-tag fail' }, `行不通 ${p.fail}`) : null),
+        h('td', { class: 'c-sig' })), ...p.pages.map((x) => pageRow(x, { child: true }))] : [pageRow(p)])));
+    };
+    const seg = h('div', { class: 'toc-mode no-print', role: 'group', 'aria-label': '目录排列' });
+    const drawSeg = () => seg.replaceChildren(...[['topic', '按实验主题'], ['date', '按日期']].map(([k, l]) => h('button', { type: 'button', class: `chip${mode === k ? ' on' : ''}`, 'aria-pressed': String(mode === k), onclick: () => { mode = k; try { localStorage.setItem('labnote-toc-mode', k); } catch { /* private window */ } drawSeg(); drawToc(); } }, l)));
+    drawSeg(); drawToc();
+    sheet.append(seg, h('table', { class: 'toc-table' },
+      h('thead', null, h('tr', null, h('th', { scope: 'col', class: 'c-no' }, '页'), h('th', { scope: 'col', class: 'c-date' }, '日期'), h('th', { scope: 'col' }, '标题'), h('th', { scope: 'col', class: 'c-sig' }, '已签名'))),
+      tbody));
   }
   root.append(sheet);
   return root;
@@ -244,7 +258,7 @@ export async function buildPageSheet(vol, num, { forPrint = false, body: only = 
         field('日期', fmtDate(fm.date))),
       fm.id ? h('div', { class: 'form-row' }, field('实验编号', h('button', { class: 'linkish xid', type: 'button', title: '复制编号', onclick: () => copyText(fm.id) }, fm.id), 'grow'))
         : h('div', { class: 'form-row no-print' }, field('实验编号', h('span', { class: 'no-xid' }, h('span', { class: 'muted' }, '普通页，没有实验编号 '),
-          h('button', { class: 'btn small', type: 'button', title: '分配编号后可以挂接原始数据、记录数据指纹、给样品编号、加入系列', onclick: () => makeExperiment(vol, num, fm) }, '设为实验')), 'grow')),
+          h('button', { class: 'btn small', type: 'button', title: '分配编号后可以挂接原始数据、记录数据指纹、给样品编号、加入实验主题', onclick: () => makeExperiment(vol, num, fm) }, '设为实验')), 'grow')),
       entry?.series ? seriesRow(entry) : null),
     fm.void ? h('div', { class: 'void-banner' }, h('strong', null, '已作废'), ` ${fm.void}`) : null,
     outcomeBanner(fm),
@@ -278,7 +292,7 @@ export function recordSheet(vol, num, fm, panel, content) {
       h('div', { class: 'rh-cell rh-when' }, h('span', { class: 'rh-lbl' }, '日期'), h('span', { class: 'rh-date' }, fm.date || '')),
       fm.id || fm.series ? h('div', { class: 'rh-meta' },
         fm.id ? h('span', null, h('span', { class: 'rh-lbl' }, '编号'), h('span', { class: 'rh-id' }, fm.id)) : null,
-        fm.series ? h('span', null, h('span', { class: 'rh-lbl' }, '系列'), h('span', { class: 'rh-series' }, `${fm.series}${k >= 0 ? `　第 ${k + 1} / ${ps.length} 次` : ''}`)) : null,
+        fm.series ? h('span', null, h('span', { class: 'rh-lbl' }, '实验主题'), h('span', { class: 'rh-series' }, `${fm.series}${k >= 0 ? `　第 ${k + 1} / ${ps.length} 次` : ''}`)) : null,
         fm.protocol ? h('span', null, h('span', { class: 'rh-lbl' }, 'SOP'), h('span', { class: 'rh-id' }, fm.protocol)) : null) : null),
     fm.void ? h('div', { class: 'void-banner' }, h('strong', null, '已作废'), ` ${fm.void}`) : null,
     outcomeBanner(fm),
@@ -315,7 +329,7 @@ export async function viewPage(vol, num, params) {
     { icon: 'history', label: '历史版本', run: () => openHistory(vol, num) },
     { icon: 'print', label: '打印纸质记录卡', run: () => printCard(vol, num) },
     fm.id ? { icon: 'copy', label: '命名助手（数据/照片文件名）', run: () => openNaming(fm, num) } : null,
-    { icon: 'list', label: fm.series ? '更改所属系列…' : '加入系列…', run: () => setSeries(vol, num, fm) },
+    { icon: 'list', label: fm.series ? '更改所属实验主题…' : '加入实验主题…', run: () => setSeries(vol, num, fm) },
     { icon: 'list', label: '录入操作步骤（用量、容器、条件）', run: () => openStepsEditor(vol, num) },
     { icon: 'link', label: '引用另一次实验（步骤完全相同时）…', run: () => openQuoteDialog(vol, num, null) },
     { icon: 'book', label: '引用假设（本实验要检验的）…', run: () => openCiteHypothesis(vol, num, null) },
@@ -469,9 +483,9 @@ export function openBulkSeries(volId) {
   const name = h('input', { id: 'bs-name', list: 'bs-list', placeholder: '例如：PEDOT:PSS 配方优化' });
   const checks = pages.map((p) => ({ p, box: h('input', { type: 'checkbox', checked: false }) }));
   modal({
-    title: '把已有的页归入系列',
+    title: '把已有的页归入实验主题',
     body: h('div', { class: 'form' },
-      h('label', { for: 'bs-name' }, '系列名称（可选已有的）'), name,
+      h('label', { for: 'bs-name' }, '实验主题名称（可选已有的）'), name,
       h('datalist', { id: 'bs-list' }, names.map((n) => h('option', { value: n }))),
       h('span', { class: 'label' }, '勾选要归入的页'),
       h('div', { class: 'pick-list' }, checks.map(({ p, box }) => h('label', { class: 'check' }, box, ' ',
@@ -483,10 +497,10 @@ export function openBulkSeries(volId) {
       run: async () => {
         const n = name.value.trim();
         const sel = checks.filter((c) => c.box.checked).map((c) => c.p);
-        if (!n) { toast('写一个系列名称。'); return false; }
+        if (!n) { toast('写一个实验主题名称。'); return false; }
         if (!sel.length) { toast('至少勾选一页。'); return false; }
         try {
-          for (const p of sel) await updatePage(p.vol || volId, p.num, ({ fm: f, body }) => { f.series = n; return { fm: f, body }; }, `Series of p. ${p.num}`, `归入系列“${n}”`);
+          for (const p of sel) await updatePage(p.vol || volId, p.num, ({ fm: f, body }) => { f.series = n; return { fm: f, body }; }, `Series of p. ${p.num}`, `归入实验主题“${n}”`);
           toast(`${sel.length} 页已归入“${n}”。`);
         } catch (e) { toast(saveError(e)); return false; }
       },
@@ -624,7 +638,7 @@ export function tocRows(pages) {
     if (seen.has(p.series)) continue;
     seen.add(p.series);
     const ps = pages.filter((x) => x.series === p.series);
-    out.push({ seriesRow: true, name: p.series, count: ps.length, ok: ps.filter((x) => x.outcome === 'ok').length, fail: ps.filter((x) => x.outcome === 'fail').length, range: dateRange([...ps].sort((a, b) => String(a.date).localeCompare(String(b.date)))), nums: ps.length <= 4 ? ps.map((x) => x.num).join(', ') : `${ps[0].num}, ${ps[1].num} … ${ps[ps.length - 1].num}` });
+    out.push({ seriesRow: true, name: p.series, count: ps.length, pages: [...ps].sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.num - b.num), ok: ps.filter((x) => x.outcome === 'ok').length, fail: ps.filter((x) => x.outcome === 'fail').length, range: dateRange([...ps].sort((a, b) => String(a.date).localeCompare(String(b.date)))), nums: ps.length <= 4 ? ps.map((x) => x.num).join(', ') : `${ps[0].num}, ${ps[1].num} … ${ps[ps.length - 1].num}` });
   }
   return out;
 }
@@ -633,7 +647,7 @@ export function seriesRow(entry) {
   const ps = allSeries().find((x) => x.name === entry.series)?.pages || [];
   const i = ps.findIndex((x) => x.vol === entry.vol && x.num === entry.num);
   const link = (x, label) => (x ? h('a', { class: 'btn small ghost', href: `#/v/${x.vol}/${x.num}` }, label) : null);
-  return h('div', { class: 'form-row' }, field('系列', h('span', { class: 'series-line' },
+  return h('div', { class: 'form-row' }, field('实验主题', h('span', { class: 'series-line' },
     h('a', { href: `#/series/${encodeURIComponent(entry.series)}` }, entry.series),
     h('span', { class: 'muted' }, ` 第 ${i + 1} / ${ps.length} 次`),
     link(ps[i - 1], '‹ 上一次'), link(ps[i + 1], '下一次 ›')), 'grow'));
@@ -642,11 +656,14 @@ export function seriesRow(entry) {
 export async function viewSeries(raw) {
   const name = decodeURIComponent(raw);
   const ps = allSeries().find((x) => x.name === name)?.pages || [];
-  if (!ps.length) return viewMissing(`没有名为“${name}”的系列。`);
+  if (!ps.length) return viewMissing(`没有名为“${name}”的实验主题。`);
   // Merge every experiment's sample table into one, columns in first-seen order.
   const conds = []; const results = []; const rows = [];
+  const concl = new Map();
   for (const p of ps) {
-    const t = readSamples(parseFrontMatter(await lib.readPage(p.vol, p.num)).body);
+    const pageBody = parseFrontMatter(await lib.readPage(p.vol, p.num)).body;
+    concl.set(p, ['结论', '结果'].map((n) => (sectionOf(pageBody, n) || '').split('\n').map((x) => x.replace(/^[-*>\s]+/, '').trim()).find(Boolean)).find(Boolean) || '');
+    const t = readSamples(pageBody);
     if (!t) { rows.push({ p, no: '', vals: {} }); continue; }
     for (const c of t.cols.slice(1)) {
       if (c === '备注') continue;
@@ -679,32 +696,34 @@ export async function viewSeries(raw) {
   const first = ps[0]; const lastP = ps[ps.length - 1];
   const nSamples = rows.filter((r) => r.no).length;
   return h('div', { class: 'view library series' },
-    topbar({ back: `#/v/${lastP.vol}`, backLabel: '目录', title: name, sub: `系列 · ${ps.length} 次实验 · ${nSamples} 个样品`, actions: [
-      h('button', { class: 'btn danger', type: 'button', title: '解散或删除这个系列', onclick: () => openDeleteSeries(name, ps) }, icon('trash', 18), h('span', { class: 'wide-only' }, '删除系列')),
+    topbar({ back: `#/v/${lastP.vol}`, backLabel: '目录', title: name, sub: `实验主题 · ${ps.length} 次实验 · ${nSamples} 个样品`, actions: [
+      h('button', { class: 'btn danger', type: 'button', title: '解散或删除这个实验主题', onclick: () => openDeleteSeries(name, ps) }, icon('trash', 18), h('span', { class: 'wide-only' }, '删除实验主题')),
       h('button', { class: 'btn', type: 'button', onclick: () => exportSeries(name, ps) }, icon('download', 18), h('span', { class: 'wide-only' }, '导出')),
-      h('button', { class: 'btn primary', type: 'button', onclick: () => openNewExperiment(lastP.vol, { series: name }) }, icon('plus', 18), h('span', null, '在此系列中新建'))] }),
+      h('button', { class: 'btn primary', type: 'button', onclick: () => openNewExperiment(lastP.vol, { series: name }) }, icon('plus', 18), h('span', null, '在此实验主题中新建'))] }),
     demoBanner(),
     h('article', { class: 'sheet plain wide-sheet' },
       h('p', { class: 'series-meta' }, `${dateRange(ps)}　·　${lib.volume(first.vol)?.title || ''}　·　SOP ${[...new Set(ps.map((x) => x.protocol).filter(Boolean))].join('、') || '—'}`),
-      h('h2', null, '全部条件与结果'),
+      h('h2', null, '历程：哪天试了什么，结论如何'),
+      h('table', { class: 'samples series-course' },
+        h('thead', null, h('tr', null, h('th', null, '日期'), h('th', null, '这次做了什么'), h('th', null, '结论'), h('th', null, '这条路'))),
+        h('tbody', null, ps.map((p) => h('tr', { class: `${p.void ? 'voided' : ''}${p.outcome ? ` oc-${p.outcome}` : ''}`, onclick: (e) => { if (!e.target.closest('a')) location.hash = `#/v/${p.vol}/${p.num}`; } },
+          h('td', { class: 'c-date' }, p.date), h('td', null, h('a', { href: `#/v/${p.vol}/${p.num}` }, p.title), p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null),
+          h('td', null, concl.get(p) || h('span', { class: 'muted' }, '还没写')), h('td', null, outcomeTag(p) || h('span', { class: 'muted' }, '未判定')))))),
+      rows.some((r) => r.no) ? h('h2', null, '全部条件与结果') : null,
       h('div', { class: 'search-row' }, filter, sortBtn),
       h('div', { class: 'samples-wrap' }, h('table', { class: 'samples series-table' },
         h('thead', null,
           h('tr', { class: 'group' }, h('th', { colspan: 2 }), conds.length ? h('th', { colspan: conds.length }, '条件') : null, results.length ? h('th', { colspan: results.length, class: 'res' }, '结果') : null, h('th')),
           h('tr', null, h('th', null, '日期'), h('th', null, '实验 / 样品'), cols.map((c) => h('th', { class: isResultCol(c) ? 'res' : null }, colLabel(c))), h('th', null, '备注'))),
         body)),
-      h('h2', null, '各次实验'),
-      h('ol', { class: 'ledger-rows series-list' }, [...ps].reverse().map((p) => h('li', null, h('a', { href: `#/v/${p.vol}/${p.num}` },
-        h('span', { class: 'l-date' }, p.date),
-        h('span', { class: 'l-title' }, p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, p.title, p.void ? h('span', { class: 'void-tag' }, '已作废') : null, outcomeTag(p)),
-        h('span', { class: 'l-where' }, `${(p.samples || []).length} 个样品`)))))));
+      null));
 }
 
 export function exportSeries(name, ps) {
   const live = ps.filter((p) => !p.void);
   const a = live[0]?.date || ''; const b = live[live.length - 1]?.date || '';
   modal({
-    title: `导出系列“${name}”`,
+    title: `导出实验主题“${name}”`,
     body: h('p', null, `共 ${live.length} 次实验（${a} ~ ${b}），已作废的不导出。`),
     buttons: [{ label: '取消' },
       { label: '导出 Word', run: () => exportWord(live, a, b, { title: name }) },
@@ -718,30 +737,30 @@ export function openDeleteSeries(name, ps) {
   const radio = (v, title, note, checked) => h('label', { class: 'check choice' }, h('input', { type: 'radio', name: 'ds-mode', value: v, checked }), ' ',
     h('span', null, h('b', null, title), h('br'), h('span', { class: 'muted' }, note)));
   const word = h('input', { id: 'ds-word', autocomplete: 'off', placeholder: name });
-  const wordRow = h('div', { class: 'form', hidden: true }, h('label', { for: 'ds-word' }, `请输入系列名称“${name}”确认`), word);
+  const wordRow = h('div', { class: 'form', hidden: true }, h('label', { for: 'ds-word' }, `请输入实验主题名称“${name}”确认`), word);
   const body = h('div', { class: 'form' },
-    h('p', null, `系列“${name}”共 ${ps.length} 页${signed ? `（其中 ${signed} 页已签名）` : ''}：`),
+    h('p', null, `实验主题“${name}”共 ${ps.length} 页${signed ? `（其中 ${signed} 页已签名）` : ''}：`),
     h('ol', { class: 'pick-list small' }, ps.map((p) => h('li', null, h('span', { class: 'c-date' }, `p. ${p.num}　${p.date}`), ' ', p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null, ' ', p.title))),
-    radio('dissolve', '解散系列（保留全部实验页）', `只去掉这些页上的“系列”标签，内容不动。${signed ? '已签名的页会在修订记录里写明“解散系列”。' : ''}`, true),
-    radio('delete', `永久删除系列及其全部 ${ps.length} 页`, DELETE_NOTE, false),
+    radio('dissolve', '解散实验主题（保留全部实验页）', `只去掉这些页上的“实验主题”标签，内容不动。${signed ? '已签名的页会在修订记录里写明“解散实验主题”。' : ''}`, true),
+    radio('delete', `永久删除实验主题及其全部 ${ps.length} 页`, DELETE_NOTE, false),
     wordRow);
   body.addEventListener('change', () => { wordRow.hidden = body.querySelector('input[name=ds-mode]:checked').value !== 'delete'; });
   modal({
-    title: `删除系列“${name}”`, wide: true, body,
+    title: `删除实验主题“${name}”`, wide: true, body,
     buttons: [{ label: '取消' }, {
       label: '确定', danger: true,
       run: () => {
         const mode = body.querySelector('input[name=ds-mode]:checked').value;
-        if (mode === 'delete' && word.value.trim() !== name) { toast('输入的系列名称不一致。'); return false; }
+        if (mode === 'delete' && word.value.trim() !== name) { toast('输入的实验主题名称不一致。'); return false; }
         setTimeout(() => (mode === 'delete' ? deleteSeriesPages(ps) : dissolveSeries(name, ps)), 50);
       },
     }],
   });
 }
 export async function dissolveSeries(name, ps) {
-  toast('正在解散系列…');
+  toast('正在解散实验主题…');
   try {
-    for (const p of ps) await updatePage(p.vol, p.num, ({ fm: f, body }) => { delete f.series; return { fm: f, body }; }, `Remove p. ${p.num} from series`, `解散系列“${name}”`);
+    for (const p of ps) await updatePage(p.vol, p.num, ({ fm: f, body }) => { delete f.series; return { fm: f, body }; }, `Remove p. ${p.num} from series`, `解散实验主题“${name}”`);
     toast(`已解散“${name}”，${ps.length} 页保留。`);
     location.hash = `#/v/${ps[0].vol}`;
   } catch (e) { toast(saveError(e)); }
@@ -752,19 +771,28 @@ export async function deleteSeriesPages(ps) {
   toast('正在删除并重新编页…');
   try {
     for (const [vol, nums] of byVol) await lib.deletePages(vol, nums);
-    toast(`已删除系列的 ${ps.length} 页，页码已重新连续编号。`);
+    toast(`已删除实验主题的 ${ps.length} 页，页码已重新连续编号。`);
     location.hash = `#/v/${ps[0].vol}`; route({ quiet: true });
   } catch (e) { toast(saveError(e)); }
 }
 
 export async function setSeries(vol, num, fm) {
-  const names = allSeries().map((x) => x.name);
-  const v = window.prompt(`所属系列名称（留空表示不属于任何系列）${names.length ? `\n已有：${names.join('、')}` : ''}`, fm.series || '');
-  if (v == null) return;
-  try {
-    await updatePage(vol, num, ({ fm: f, body }) => { if (v.trim()) f.series = v.trim(); else delete f.series; return { fm: f, body }; }, `Series of p. ${num}`, v.trim() ? `归入系列“${v.trim()}”` : '移出系列');
-    toast(v.trim() ? `已归入“${v.trim()}”。` : '已移出系列。');
-  } catch (e) { toast(saveError(e)); }
+  const names = allSeries().filter((x) => x.pages.some((p) => p.vol === vol)).map((x) => x.name);
+  const input = h('input', { id: 'ss-name', value: fm.series || '', placeholder: '例如：p(g2T-TT) 溶解实验', autocomplete: 'off' });
+  const chips = h('div', { class: 'clip-chips' }, names.map((n) => h('button', { type: 'button', class: 'chip', onclick: () => { input.value = n; input.focus(); } }, n)));
+  const save = async () => {
+    const v = input.value.trim();
+    try {
+      await updatePage(vol, num, ({ fm: f, body }) => { if (v) f.series = v; else delete f.series; return { fm: f, body }; }, `Series of p. ${num}`, v ? `归入实验主题“${v}”` : '移出实验主题');
+      toast(v ? `已归入“${v}”。` : '已移出实验主题。');
+    } catch (e) { toast(saveError(e)); return false; }
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); document.querySelector('.modal-root .btn.primary')?.click(); } });
+  modal({ title: `这一页属于哪个实验主题`, body: h('div', { class: 'form' },
+    h('label', { for: 'ss-name' }, '实验主题（同一个实验分几天做，填同一个名字；留空 = 不属于任何主题）'), input,
+    names.length ? h('span', { class: 'label' }, '本卷已有的主题') : null, names.length ? chips : null),
+  buttons: [{ label: '取消' }, { label: '保存', primary: true, run: save }] });
+  setTimeout(() => input.focus(), 40);
 }
 
 export async function openDeleteVolume(v) {
@@ -858,7 +886,7 @@ export const newXid = (vol, date) => expId(date, volCode(vol), nextSeq(lib.allPa
 export async function makeExperiment(vol, num, fm) {
   const date = String(fm.date || todayISO()).slice(0, 10);
   const xid = newXid(vol, date);
-  const ok = await choose(`设为实验：${xid}`, `按页面日期（${date}）和卷代码（${volCode(vol)}）分配实验编号。分配后这一页可以挂接原始数据（labsync）、记录数据指纹、给样品编号、加入系列。内容不变。`, [['yes', '分配编号'], ['no', '取消']]);
+  const ok = await choose(`设为实验：${xid}`, `按页面日期（${date}）和卷代码（${volCode(vol)}）分配实验编号。分配后这一页可以挂接原始数据（labsync）、记录数据指纹、给样品编号、加入实验主题。内容不变。`, [['yes', '分配编号'], ['no', '取消']]);
   if (ok !== 'yes') return;
   try {
     await updatePage(vol, num, ({ fm: f, body }) => { if (!f.id) f.id = xid; return { fm: f, body }; }, `Experiment number for p. ${num}`, `分配实验编号 ${xid}`);
@@ -946,7 +974,7 @@ export async function openNewExperiment(volId, { series: presetSeries = '' } = {
         h('label', { for: 'ne-vol' }, '放在哪个卷'), volSel,
         h('div', { class: 'pair' }, h('div', null, h('label', { for: 'ne-date' }, '日期'), date), h('div', null, h('label', { for: 'ne-topic' }, '主题代码'), topic)),
         h('p', { class: 'id-line' }, '实验编号 ', idOut),
-        h('label', { for: 'ne-series' }, '所属系列（可选）'), seriesIn, seriesList,
+        h('label', { for: 'ne-series' }, '所属实验主题（可选）'), seriesIn, seriesList,
         h('label', { for: 'ne-title' }, '标题'), title,
         h('label', { for: 'ne-hyp' }, '检验的假设（思维笔记本）'), hypSel,
         h('label', { for: 'ne-purpose' }, '目的'), purpose,

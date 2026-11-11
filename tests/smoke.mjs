@@ -355,7 +355,19 @@ try {
   await check('think', async () => { await go('#/think', "document.querySelector('.hyp-card')"); await evaluate(clean); });
   await check('hypothesis', async () => { await go('#/think/H-0001', "document.querySelector('.ev-chain')"); await evaluate(clean); });
   await check('plan', async () => { await go('#/plan', "document.querySelectorAll('.wb-page .wb-col').length === 8"); await evaluate(clean); await shot('plan'); });
-  await check('series', async () => { await go(`#/series/${encodeURIComponent('PEDOT:PSS 配方优化')}`, "document.querySelector('.series-table tbody tr')"); await evaluate(clean); });
+  await check('series', async () => { await go(`#/series/${encodeURIComponent('PEDOT:PSS 配方优化')}`, "document.querySelector('.series-table tbody tr') && document.querySelectorAll('.series-course tbody tr').length === 2 && document.querySelector('.series-course tr.oc-fail .oc-tag.fail')"); await evaluate(clean); });
+  await check('toc-by-topic', async () => {
+    await go('#/v/oect', "document.querySelector('.toc-table .series-row') && document.querySelector('.toc-mode .chip')");
+    const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const rows = [...document.querySelectorAll('.toc-table tbody tr')].map((e) => e.className.includes('series-row') ? 'T' : e.className.includes('toc-child') ? 'c' : 'p').join('');
+      const join = !!document.querySelector('.toc-table tr:not(.toc-child):not(.series-row) .toc-join');
+      [...document.querySelectorAll('.toc-mode .chip')][1].click(); await wait(100);
+      const flat = [...document.querySelectorAll('.toc-table tbody tr .c-no')].map((e) => e.textContent).join(','); const chips = document.querySelectorAll('.toc-table .toc-chip').length;
+      [...document.querySelectorAll('.toc-mode .chip')][0].click(); await wait(100);
+      return { rows, join, flat, chips, back: !!document.querySelector('.toc-table .series-row') };`);
+    if (!/Tcc/.test(r.rows) || !r.join || r.flat !== '1,2,3' || r.chips !== 2 || !r.back) throw new Error(JSON.stringify(r));
+    return `by topic ${r.rows}; by date ${r.flat}`;
+  });
   await check('settings', async () => { await go('#/settings', "document.querySelector('#s-font')"); await evaluate(clean); });
   await check('search', async () => {
     await go('#/', "document.querySelector('.wb-col.is-today')");

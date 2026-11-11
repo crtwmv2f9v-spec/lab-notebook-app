@@ -2243,3 +2243,21 @@ input.find-text { white-space: normal; }
 .wrapup textarea { width: 100%; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .wrap-bar.ok, :root:not([data-theme="light"]) .wrap-bar.fail { color: #222; } }
 .wx-link { color: #07c160 !important; font-weight: 600; margin-right: 6px; }
+/* v53: contents grouped by 实验主题 */
+.toc-mode { display: flex; gap: 6px; margin: -8px var(--sheet-pad) 10px; }
+.toc-table tr.series-row td { background: color-mix(in srgb, var(--form) 9%, transparent); border-bottom: 0; }
+.toc-table tr.series-row td a { font-weight: 650; }
+.toc-table tr.toc-child td:nth-child(3) { padding-left: 22px; }
+.toc-table tr.toc-child td a { font-size: 15.5px; }
+.toc-chip { margin-left: 8px; font-size: 12px !important; text-decoration: none; }
+.toc-join { margin-left: 8px; padding: 1px 8px; border: 1px dashed var(--rule); border-radius: 980px; background: none; color: var(--ink-3); font: 500 12px/1.6 var(--font-ui); cursor: pointer; opacity: 0; }
+.toc-table tr:hover .toc-join, .toc-join:focus { opacity: 1; }
+@media (hover: none) { .toc-join { opacity: 1; } }
+table.series-course { width: 100%; margin-bottom: 18px; } table.series-course tbody tr { cursor: pointer; }
+table.series-course tr.oc-ok > td:first-child { box-shadow: inset 4px 0 0 #30a46c; } table.series-course tr.oc-fail > td:first-child { box-shadow: inset 4px 0 0 #e5484d; }
+table.series-course .xid-tag { margin-left: 8px; }
+.toc-mode { margin: 6px var(--sheet-pad) 12px; }
+.toc-mode .chip { padding: 4px 12px; border: 1px solid var(--rule); border-radius: 980px; background: none; color: var(--ink-2); font: 500 13px/1.4 var(--font-ui); cursor: pointer; box-shadow: none; }
+.toc-mode .chip.on { background: var(--form); border-color: var(--form); color: #fff; }
+.toc-table tr.series-row .toc-tags { display: inline; margin-left: 10px; }
+.toc-table tr.series-row .oc-tag { margin-left: 6px; }
