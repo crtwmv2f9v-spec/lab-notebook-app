@@ -23,6 +23,7 @@ import { methodsBtn } from './methods.js';
 import { editSolution } from './libraries.js';
 import { openSearch } from './searchui.js';
 import { route } from './app.js';
+import { goalCard, loadGoals } from './optimize.js';
 
 // ----- 可行 / 行不通: the verdict on a record, shown wherever the page is listed -----
 export const OUTCOME = { ok: ['可重复', '这条路可行，条件可以继续用'], fail: ['行不通', '这个条件不可行，以后不再用'] };
@@ -330,6 +331,7 @@ export async function viewPage(vol, num, params) {
     { icon: 'print', label: '打印纸质记录卡', run: () => printCard(vol, num) },
     fm.id ? { icon: 'copy', label: '命名助手（数据/照片文件名）', run: () => openNaming(fm, num) } : null,
     { icon: 'list', label: fm.series ? '更改所属实验主题…' : '加入实验主题…', run: () => setSeries(vol, num, fm) },
+    { icon: 'table', label: '参数表：条件与结果（每个样品一行）', run: () => openSamplesEditor(vol, num) },
     { icon: 'list', label: '录入操作步骤（用量、容器、条件）', run: () => openStepsEditor(vol, num) },
     { icon: 'link', label: '引用另一次实验（步骤完全相同时）…', run: () => openQuoteDialog(vol, num, null) },
     { icon: 'book', label: '引用假设（本实验要检验的）…', run: () => openCiteHypothesis(vol, num, null) },
@@ -722,6 +724,9 @@ export async function viewSeries(raw) {
   draw();
   const first = ps[0]; const lastP = ps[ps.length - 1];
   const nSamples = rows.filter((r) => r.no).length;
+  const optBox = h('div', { class: 'opt-box' });
+  const fillGoal = async () => { try { optBox.replaceChildren(goalCard(name, { conds, results, rows }, (await loadGoals()).topics[name], fillGoal)); } catch (e) { console.warn(e); } };
+  fillGoal();
   return h('div', { class: 'view library series' },
     topbar({ back: `#/v/${lastP.vol}`, backLabel: '目录', title: name, sub: `实验主题 · ${ps.length} 次实验 · ${nSamples} 个样品`, actions: [
       h('button', { class: 'btn danger', type: 'button', title: '解散或删除这个实验主题', onclick: () => openDeleteSeries(name, ps) }, icon('trash', 18), h('span', { class: 'wide-only' }, '删除实验主题')),
@@ -736,6 +741,7 @@ export async function viewSeries(raw) {
         h('tbody', null, ps.map((p) => h('tr', { class: `${p.void ? 'voided' : ''}${p.outcome ? ` oc-${p.outcome}` : ''}`, onclick: (e) => { if (!e.target.closest('a')) location.hash = `#/v/${p.vol}/${p.num}`; } },
           h('td', { class: 'c-date' }, p.date), h('td', null, h('a', { href: `#/v/${p.vol}/${p.num}` }, p.title), p.xid ? h('span', { class: 'xid-tag' }, p.xid) : null),
           h('td', null, concl.get(p) || h('span', { class: 'muted' }, '还没写')), h('td', null, outcomeTag(p) || h('span', { class: 'muted' }, '未判定')))))),
+      optBox,
       rows.some((r) => r.no) ? h('h2', null, '全部条件与结果') : null,
       h('div', { class: 'search-row' }, filter, sortBtn),
       h('div', { class: 'samples-wrap' }, h('table', { class: 'samples series-table' },

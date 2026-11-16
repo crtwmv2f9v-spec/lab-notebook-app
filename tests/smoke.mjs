@@ -456,6 +456,27 @@ try {
     await evaluate(clean);
     return `progress dragged to ${r.live}; ${r.seeds.length} project ideas under 课题手记`;
   });
+  await check('optimization-goal', async () => {
+    await go(`#/series/${encodeURIComponent('PEDOT:PSS 配方优化')}`, "document.querySelector('.opt-card .opt-stats')");
+    const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const card = () => document.querySelector('.opt-card');
+      const before = { target: card().querySelector('.opt-target').textContent, vars: card().querySelectorAll('.opt-chip.var').length,
+        stats: [...card().querySelectorAll('.opt-stat b')].map((e) => e.textContent).join('/') };
+      card().querySelector('.opt-head .btn').click(); await wait(200);
+      const dir = document.querySelector('#og-dir'); dir.value = 'min'; dir.dispatchEvent(new Event('change'));
+      [...document.querySelectorAll('.modal-foot .btn')].find((b) => b.textContent === '保存').click(); await wait(900);
+      const after = { target: card().querySelector('.opt-target').textContent, best: card().querySelector('.opt-stat.best b').textContent };
+      const o = await import('./js/optimize.js'); const saved = (await o.loadGoals()).topics['PEDOT:PSS 配方优化'];
+      const l = await import('./js/lab.js');
+      const added = l.writeSamples('## 目的\\n\\nx\\n\\n## 过程记录\\n\\n- a\\n', { cols: ['编号', '结果: gm_max (µS)', '备注'], rows: [['#01', '20', '']] });
+      return { before, after, dir: saved.dir, kept: saved.vars.length, added, num: [o.num('2.8×10⁴'), o.num('2.81e+04'), o.num('−0.30 V'), o.num('abc')] };`);
+    const order = r.added.indexOf('## 条件与结果') > r.added.indexOf('## 目的') && r.added.indexOf('## 条件与结果') < r.added.indexOf('## 过程记录');
+    if (!/gm_max \(mS\) 越大越好/.test(r.before.target) || !/on\/off ≥ 100/.test(r.before.target) || r.before.vars !== 2 || r.before.stats !== '5/4/2/4.4'
+      || !/越小越好/.test(r.after.target) || r.after.best !== '3.1' || r.dir !== 'min' || r.kept !== 3 || !order
+      || r.num.join() !== '28000,28100,-0.3,') throw new Error(JSON.stringify(r));
+    await evaluate(clean);
+    return `goal card ${r.before.stats} (有目标值/满足约束/行不通/最好); switched to min → best ${r.after.best}; table added before 过程记录`;
+  });
   await check('toc-by-topic', async () => {
     await go('#/v/oect', "document.querySelector('.toc-table .series-row') && document.querySelector('.toc-mode .chip')");
     const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));

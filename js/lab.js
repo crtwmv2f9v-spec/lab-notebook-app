@@ -71,7 +71,16 @@ export function readSamples(body) {
 }
 export function writeSamples(body, table) {
   const block = `\`\`\`samples\n${toCSV([table.cols, ...table.rows]).trimEnd()}\n\`\`\``;
-  return SAMPLES_RE.test(body) ? body.replace(SAMPLES_RE, () => block) : `${String(body || '').trimEnd()}\n\n${block}\n`;
+  if (SAMPLES_RE.test(body)) return body.replace(SAMPLES_RE, () => block);
+  // A page without a table gets a 「条件与结果」 section right before the steps / log / results.
+  const text = String(body || '');
+  const at = text.search(/^##\s+(条件与结果|实验步骤|操作步骤|过程记录|结果)\s*$/m);
+  if (at >= 0 && /^##\s+条件与结果\s*$/m.test(text.slice(at, at + 40))) {
+    const end = text.indexOf('\n', at) + 1;
+    return `${text.slice(0, end)}\n${block}\n${text.slice(end)}`;
+  }
+  if (at >= 0) return `${text.slice(0, at)}## 条件与结果\n\n${block}\n\n${text.slice(at)}`;
+  return `${text.trimEnd()}\n\n## 条件与结果\n\n${block}\n`;
 }
 export function samplesTemplate(numbers, variables, results) {
   const cols = ['编号', ...variables, ...results.map((r) => `结果: ${r}`), '备注'];
