@@ -293,12 +293,50 @@ export function catList(tasks, cat, { placeholder, dated = false, dateRequired =
   const wk = weekStart(todayISO());
   const add = dated
     ? addDated(placeholder, (text, date) => changeTasks((l) => l.push(newTask(text, date ? weekStart(date) : wk, date, cat)), `Planner: add ${cat}`, redrawHome), { dateRequired })
-    : addBox(placeholder, (text) => changeTasks((l) => l.push({ ...newTask(text, wk, null, cat), ...(cat === '文献' ? wechat(text) : {}) }), `Planner: add ${cat}`, redrawHome).then(() => { if (cat === '文献') fillPaperRefs(); }));
+    : cat === '文献' ? readingAdd(placeholder, wk)
+    : addBox(placeholder, (text) => changeTasks((l) => l.push(newTask(text, wk, null, cat)), `Planner: add ${cat}`, redrawHome));
   add.querySelector('input').dataset.k = `cat-${cat}`;
   const row = (x) => (cat === '文献' ? paperRow(x) : taskRow(x, { redraw: redrawHome, showCat: false, meta: linkMeta(x.text) }));
   const rows = [...open.map(row), ...done.map(row)];
   return { open, done, el: [add, foldList(h('ul', { class: 'tasks rail-tasks' }, rows), `cat-${cat}`)] };
 }
+// ----- reading list: why each paper is on it (`why`), asked when it is added and shown under it -----
+function readingAdd(placeholder, wk) {
+  const input = h('input', { class: 'add-input', placeholder, enterkeyhint: 'next', 'aria-label': placeholder });
+  const why = h('input', { class: 'add-input why-input', placeholder: '为什么要读这篇？例如：找 GOPS 交联的退火条件（可不填）', enterkeyhint: 'done', 'aria-label': '为什么要读这篇' });
+  const go = () => {
+    const v = input.value.trim(); if (!v) { input.focus(); return; }
+    const w = why.value.trim(); input.value = ''; why.value = '';
+    changeTasks((l) => l.push({ ...newTask(v, wk, null, '文献'), ...wechat(v), ...(w ? { why: w } : {}) }), 'Planner: add 文献', redrawHome).then(() => fillPaperRefs());
+    input.focus();
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (why.value.trim()) go(); else why.focus(); } });
+  why.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } if (e.key === 'Escape') why.blur(); });
+  return h('div', { class: 'add-row reading-add' }, h('span', { class: 'add-plus' }, icon('plus', 16)),
+    h('div', { class: 'reading-add-in' }, input, why), h('button', { class: 'btn small add-btn', type: 'button', onclick: go }, '添加'));
+}
+// The reason, under the entry; click to write or change it, empty to remove.
+function whyLine(x) {
+  const save = (v) => changeTasks((l) => { const y = l.find((z) => z.id === x.id); if (!y) return; if (v) y.why = v; else delete y.why; }, 'Planner: reading reason', redrawHome);
+  const shown = x.why ? h('span', { class: 'paper-why', tabindex: '0', title: '点击修改为什么要读' }, h('b', null, '为什么读'), x.why)
+    : h('button', { class: 'paper-why empty', type: 'button', title: '写一句为什么要读这篇' }, '＋ 为什么读这篇');
+  const start = () => {
+    const input = h('input', { class: 'paper-why-input', value: x.why || '', placeholder: '为什么要读这篇？', 'aria-label': '为什么要读这篇' });
+    let done = false;
+    const finish = (ok) => { if (done) return; done = true; const v = input.value.trim(); input.replaceWith(shown); if (ok && v !== (x.why || '')) save(v); };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
+    input.addEventListener('blur', () => finish(true));
+    shown.replaceWith(input); input.focus();
+  };
+  shown.addEventListener('click', (e) => { e.stopPropagation(); start(); });
+  shown.addEventListener('keydown', (e) => { if (e.key === 'Enter' && shown.tagName !== 'BUTTON') { e.preventDefault(); start(); } });
+  return shown;
+}
+function withWhy(li, x) {
+  if (x.why || !x.done) li.querySelector('.task-main')?.append(whyLine(x));
+  return li;
+}
+
 // ----- reading list: a pasted link or DOI shows as title · authors · journal · year -----
 // Looked up once from Crossref (or DataCite for arXiv) and stored on the entry as `ref`, so it also works offline later.
 const triedRefs = new Set();
@@ -400,7 +438,8 @@ export function wechat(text) {
   return { text: title || '公众号文章（点这里写题目）', wx: m[0] };
 }
 const wxLink = (x) => (x.wx ? h('a', { class: 'wx-link', href: x.wx, target: '_blank', rel: 'noopener', title: '打开微信公众号原文' }, '公众号') : null);
-function paperRow(x) {
+function paperRow(x) { return withWhy(paperRowBase(x), x); }
+function paperRowBase(x) {
   const href = x.ref?.doi ? `https://doi.org/${x.ref.doi}` : linkMeta(x.text)?.href;
   if (!x.ref && x.wx) { const li = taskRow(x, { redraw: redrawHome, showCat: false, meta: h('span', { class: 'paper-meta' }, wxLink(x), paperKey(x.text) ? '正在查找原文…' : '题目里加上原文 DOI 可自动补全') }); if (!x.date) li.querySelector('.date-chip')?.remove(); return li; }
   if (!x.ref) return taskRow(x, { redraw: redrawHome, showCat: false, meta: paperKey(x.text) ? h('span', { class: 'paper-meta' }, '正在查找题目…', linkMeta(x.text)) : linkMeta(x.text) });

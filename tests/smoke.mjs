@@ -228,6 +228,25 @@ try {
     await evaluate(clean);
     return `moved to ${r.to}, then back to 待安排`;
   });
+  await check('reading-why', async () => {
+    await go('#/', "document.querySelector('.reading-add .why-input') && document.querySelector('.paper-why')");
+    const r = await evaluate(`const p = await import('./js/planner.js'); const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const shown = document.querySelector('.paper-why:not(.empty)')?.textContent;
+      const a = document.querySelector('.reading-add .add-input:not(.why-input)'); const w = document.querySelector('.reading-add .why-input');
+      a.value = '测试文献 A'; a.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      const movedFocus = document.activeElement === w;
+      w.value = '看他们的退火温度'; w.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(600);
+      const x = (await p.loadPlanner()).tasks.find((y) => y.text === '测试文献 A');
+      const row = () => [...document.querySelectorAll('.rail-tasks .task')].find((e) => /测试文献 A/.test(e.textContent));
+      const inRow = row()?.querySelector('.paper-why')?.textContent;
+      row().querySelector('.paper-why').click(); await wait(50);
+      const inp = row().querySelector('.paper-why-input'); inp.value = ''; inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(600);
+      const cleared = (await p.loadPlanner()).tasks.find((y) => y.id === x.id).why; const empty = row()?.querySelector('.paper-why.empty')?.textContent;
+      await p.removeTask(x.id); await wait(300);
+      return { shown, movedFocus, why: x.why, inRow, cleared: cleared ?? null, empty };`);
+    if (!/^为什么读找 OECT/.test(r.shown || '') || r.inRow !== '为什么读看他们的退火温度' || r.cleared !== null || r.empty !== '＋ 为什么读这篇') throw new Error(JSON.stringify(r));
+    return 'reason asked on add, shown under the entry, edited, cleared';
+  });
   await check('must-do', async () => {
     await go('#/', "document.querySelectorAll('.wb-must .wb-mustcard').length >= 3 && document.querySelector('.nt-promote')");
     const r = await evaluate(`const p = await import('./js/planner.js'); const wait = (ms) => new Promise((r) => setTimeout(r, ms));

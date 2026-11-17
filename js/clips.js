@@ -410,7 +410,7 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
         fs.state !== 'unsupported' ? h('button', { class: 'btn primary', type: 'button', onclick: () => fileIn.click() }, icon('plus', 18), h('span', null, '加图片')) : null].filter(Boolean) }),
     demoBanner(),
     h('div', { class: 'clip-wrap' }, folderBar,
-      pTask ? h('p', { class: 'clip-paper' }, h('span', { class: 'm-art-kicker' }, '文献'), pTask.ref ? `${pTask.ref.title}（${[pTask.ref.authors, pTask.ref.journal, pTask.ref.year].filter(Boolean).join(' · ')}）` : pTask.text, ' ', h('a', { href: '#/clips' }, '看全部')) : null,
+      pTask ? h('p', { class: 'clip-paper' }, h('span', { class: 'm-art-kicker' }, '文献'), pTask.ref ? `${pTask.ref.title}（${[pTask.ref.authors, pTask.ref.journal, pTask.ref.year].filter(Boolean).join(' · ')}）` : pTask.text, ' ', h('a', { href: '#/clips' }, '看全部'), pTask.why ? h('span', { class: 'clip-why' }, `　为什么读：${pTask.why}`) : null) : null,
       h('div', { class: 'clip-layout' }, side, h('div', null, h('div', { class: 'search-row' }, q), grid)), fileIn));
 }
 

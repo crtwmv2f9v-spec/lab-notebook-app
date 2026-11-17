@@ -67,7 +67,7 @@ tags: [oect, transfer]
         { id: 'td2', text: '组会汇报 GOPS 稳定性', week: day(0), date: day(1), cat: '截止', done: false, created: `${day(-3)}T09:00:00+08:00` },
         { id: 'td3', text: 'Keithley 4200 14:00–17:00', week: day(0), date: day(0), cat: '仪器', done: false, created: `${day(-1)}T09:00:00+08:00` },
         { id: 'td4', text: '双光子打印机 9:00–12:00', week: day(0), date: day(2), cat: '仪器', done: false, created: `${day(-1)}T09:00:00+08:00` },
-        { id: 'td5', text: 'Rivnay 2018 Nat. Rev. Mater. OECT 综述 10.1038/natrevmats.2017.86', week: day(0), cat: '文献', done: false, created: `${day(-2)}T09:00:00+08:00` },
+        { id: 'td5', text: 'Rivnay 2018 Nat. Rev. Mater. OECT 综述 10.1038/natrevmats.2017.86', week: day(0), cat: '文献', why: '找 OECT 跨导和体积电容的标准定义，写 Introduction 用', done: false, created: `${day(-2)}T09:00:00+08:00` },
         { id: 'td6', text: '报销 PEDOT:PSS 发票', week: day(0), date: day(3), cat: '杂事', done: false, created: `${day(-2)}T09:00:00+08:00` },
         { id: 'tg1', text: '完成 GOPS 7 天稳定性数据', week: monday(), topic: 'v:oect', done: false, created: `${day(-1)}T09:00:00+08:00` },
         { id: 'tg2', text: '栅极面积对比出图', week: monday(), topic: 'v:oect', done: true, doneAt: `${day(0)}T10:00:00+08:00`, created: `${day(-1)}T09:00:00+08:00` },
