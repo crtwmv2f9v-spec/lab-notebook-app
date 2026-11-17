@@ -228,6 +228,36 @@ try {
     await evaluate(clean);
     return `moved to ${r.to}, then back to 待安排`;
   });
+  await check('must-do', async () => {
+    await go('#/', "document.querySelectorAll('.wb-must .wb-mustcard').length >= 3 && document.querySelector('.nt-promote')");
+    const r = await evaluate(`const p = await import('./js/planner.js'); const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const texts = () => [...document.querySelectorAll('.wb-must .wb-mustcard')].map((e) => e.querySelector('.wb-rank').textContent + ' ' + e.querySelector('.task-text').textContent);
+      const before = texts(); const age = document.querySelector('.wb-must .wb-age').textContent; const topic = document.querySelector('.wb-must .wb-must-topic')?.textContent;
+      const below = document.querySelector('.wb-nag').nextElementSibling === document.querySelector('.wb-must');
+      const btn = [...document.querySelectorAll('.nt-todos .task')].find((e) => /不加 GOPS/.test(e.textContent)).querySelector('.nt-promote'); btn.click(); await wait(700);
+      const promoted = texts(); const memoLeft = [...document.querySelectorAll('.nt-todos .task')].some((e) => /不加 GOPS/.test(e.textContent));
+      const find = (re) => [...document.querySelectorAll('.wb-must .wb-mustcard')].find((e) => re.test(e.textContent));
+      const dt = new DataTransfer(); const li = find(/不加 GOPS/); li.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true }));
+      find(/补做 GOPS/).dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); li.dispatchEvent(new DragEvent('dragend', { bubbles: true })); await wait(700);
+      const reordered = texts();
+      const input = document.querySelector('.wb-must .add-input'); input.value = '测试必做实验'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(600);
+      const added = texts();
+      const x = (await p.loadPlanner()).tasks.find((y) => y.text === '测试必做实验');
+      find(/测试必做实验/).querySelector('.tick').click(); await wait(600);
+      const ticked = find(/测试必做实验/)?.querySelector('.wb-rank').textContent;
+      await p.removeTask(x.id); await wait(300);
+      find(/不加 GOPS/).querySelector('.wb-must-more').click(); await wait(100);
+      [...document.querySelectorAll('.menu .menu-item')].find((b) => /退回/.test(b.textContent)).click(); await wait(700);
+      const back = [...document.querySelectorAll('.nt-todos .task')].some((e) => /不加 GOPS/.test(e.textContent)) && !find(/不加 GOPS/);
+      const legend = [...document.querySelectorAll('.wb-legend span')].map((e) => e.textContent).join(',');
+      return { before, age, topic, below, promoted, memoLeft, reordered, added, cat: x.cat, ticked, back, legend, nullText: document.querySelector('.wb-must').innerText.includes('null') };`);
+    const ok = r.before.join('|') === '01 补做 GOPS 1 wt% 的 7 天稳定性对照|02 p(g2T-TT) 双光子打印阈值功率扫描|03 人工唾液中 MMP-8 浓度梯度测试' && r.age === '挂了 16 天' && r.topic && r.below
+      && r.promoted[3] === '04 补一组不加 GOPS 的对照' && !r.memoLeft && r.reordered[0] === '01 补一组不加 GOPS 的对照' && r.reordered[1] === '02 补做 GOPS 1 wt% 的 7 天稳定性对照'
+      && r.added[4] === '05 测试必做实验' && r.cat === '必做' && r.ticked === '✓' && r.back && /必做/.test(r.legend) && !r.nullText;
+    if (!ok) throw new Error(JSON.stringify(r));
+    await shot('must-do', { width: 1440, height: 1000 });
+    return `3 ranked, oldest ${r.age}; promoted from 待做实验 → 04, dragged to 01; added 05, ticked; sent back to 待做实验`;
+  });
   await check('nag-strip', async () => {
     await go('#/', "document.querySelector('.wb-nag .add-input') && document.querySelector('.wb-col.is-today')");
     const r = await evaluate(`const p = await import('./js/planner.js'); const m = await import('./js/model.js');

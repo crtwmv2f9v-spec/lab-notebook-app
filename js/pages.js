@@ -927,7 +927,7 @@ export async function makeExperiment(vol, num, fm) {
   } catch (e) { toast(saveError(e)); }
 }
 
-export async function openNewExperiment(volId, { series: presetSeries = '' } = {}) {
+export async function openNewExperiment(volId, { series: presetSeries = '', title: presetTitle = '' } = {}) {
   const vols = lib.volumes();
   if (!vols.length) { toast('先建一个卷（项目），再在里面新建实验。'); openNewVolume(); return; }
   const protocols = await loadProtocols(lib).catch(() => []);
@@ -936,7 +936,7 @@ export async function openNewExperiment(volId, { series: presetSeries = '' } = {
   const date = h('input', { id: 'ne-date', type: 'date', value: todayISO() });
   const topic = h('input', { id: 'ne-topic', placeholder: '例如 OECT、GLU3E、H2O2', autocapitalize: 'characters' });
   const idOut = h('code', { class: 'exp-id' });
-  const title = h('input', { id: 'ne-title', placeholder: '例如：GOPS 浓度对 PEDOT:PSS 沟道稳定性的影响' });
+  const title = h('input', { id: 'ne-title', value: presetTitle, placeholder: '例如：GOPS 浓度对 PEDOT:PSS 沟道稳定性的影响' });
   const seriesIn = h('input', { id: 'ne-series', list: 'ne-series-list', value: presetSeries, placeholder: '例如：PEDOT:PSS 配方优化（同一主题多天的实验归到一起）' });
   const seriesList = h('datalist', { id: 'ne-series-list' }, allSeries().map((x) => h('option', { value: x.name })));
   const purpose = h('textarea', { id: 'ne-purpose', rows: 2, placeholder: '一两句话写清楚想回答的问题' });

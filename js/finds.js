@@ -7,7 +7,7 @@ import { addDays, putSection, sectionOf } from './lab.js';
 import { updatePage } from './pages.js';
 import { h, icon } from './util.js';
 import { lib, menu, modal, toast, view } from './core.js';
-import { editProject, freshId, PIN_SVG, projectTopic, TASKS_PATH, WEEKDAYS, changePlanner, editable, loadPlanner, planDoc, queuePlanner, weekStart } from './planner.js';
+import { editProject, freshId, PIN_SVG, projectTopic, TASKS_PATH, WEEKDAYS, changePlanner, editable, loadPlanner, newTask, planDoc, queuePlanner, weekStart } from './planner.js';
 import { redrawHome } from './home.js';
 import { route } from './app.js';
 import { candidatesBlock } from './roadmap.js';
@@ -216,6 +216,13 @@ export function findsCard(doc, draw) {
   const move = (m) => h('button', { class: 'nt-move', type: 'button', title: isIdea(m) ? '这是要做的实验：移到「待做实验」' : '这不是实验：移到「零散想法」', onclick: () => updM(m.id, (x) => { if (isIdea(x)) delete x.kind; else { x.kind = 'idea'; delete x.done; delete x.doneAt; } }, 'Notes: move between lists') }, isIdea(m) ? '→ 实验' : '→ 想法');
   const myIdeas = memos.filter((m) => inTab(m) && isIdea(m)).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || String(b.updated || b.created).localeCompare(String(a.updated || a.created)));
   const myMemos = memos.filter((m) => inTab(m) && !isIdea(m)).sort((a, b) => Number(!!a.done) - Number(!!b.done) || Number(!!b.pinned) - Number(!!a.pinned) || String(b.updated || b.created).localeCompare(String(a.updated || a.created)));
+  // ↑ 必做: this one has to be done — it leaves 待做实验 for the 必做实验 strip at the top of the week (last in its order)
+  const promote = (m) => h('button', { class: 'nt-move nt-promote', type: 'button', title: '一定要做：升为「必做实验」，放到本周日程上方', onclick: () => changePlanner((d) => {
+    const mem = d.memos.find((x) => x.id === m.id); if (!mem) return;
+    d.memos = d.memos.filter((x) => x.id !== m.id);
+    const rank = Math.max(0, ...d.tasks.filter((x) => x.cat === '必做' && !x.done && Number.isFinite(x.rank)).map((x) => x.rank)) + 1;
+    d.tasks.push({ ...newTask(mem.text, weekStart(todayISO()), null, '必做'), rank, from: mem.id, ...(mem.topic && mem.topic !== NO_TOPIC ? { topic: mem.topic } : {}) });
+  }, 'Notes: promote to must-do', () => { draw(); redrawHome(); toast('已升为必做实验，在本周日程上方。'); }) }, '↑ 必做');
   const updM = (id, f, msg) => changePlanner((d) => { const m = d.memos.find((x) => x.id === id); if (m) f(m); }, msg, draw);
   const openN = myMemos.filter((m) => !m.done).length;
   const todoCol = h('div', { class: 'nt-col' },
@@ -225,6 +232,7 @@ export function findsCard(doc, draw) {
       h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!m.done), 'aria-label': m.done ? '标为未做' : '标为已做', onclick: () => updM(m.id, (x) => { x.done = !x.done; if (x.done) x.doneAt = nowISO(); else delete x.doneAt; }, 'Notes: tick') }),
       h('span', { class: 'task-main' }, editable(m.text, (v) => updM(m.id, (x) => { x.text = v; x.updated = nowISO(); }, 'Notes: edit'), 'task-text'),
         h('span', { class: 'task-meta' }, showChip ? topicChip(m, 'memos') : null, zoned(m.updated || m.created).day.slice(5))),
+      m.done ? null : promote(m),
       move(m),
       h('button', { class: 'memo-pin', type: 'button', 'aria-pressed': String(!!m.pinned), 'aria-label': m.pinned ? '取消置顶' : '置顶', title: m.pinned ? '取消置顶' : '置顶', html: PIN_SVG, onclick: () => updM(m.id, (x) => { x.pinned = !x.pinned; }, 'Notes: pin') }),
       h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Notes: remove', draw) }, icon('close', 14)))))

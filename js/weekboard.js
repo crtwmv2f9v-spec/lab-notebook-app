@@ -13,10 +13,13 @@ const FLOAT = ['杂事', '生活']; // side-list items that may wait without a d
 // shown in a strip above the days whatever week is on screen, oldest first, with how long each has waited.
 export const NAG = '催办';
 const NAG_SHOW = 8;
+// 必做实验: one level above 待做实验 — experiments that have to be done, in the order they matter.
+// Undated or scheduled, they stay in this strip (under 催办) until ticked; a scheduled one also shows on its day.
+export const MUST = '必做';
 let nagAll = false;
 const waited = (x, today) => Math.max(0, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${zoned(x.created || `${today}T00:00:00+08:00`).day}T00:00:00Z`)) / 864e5));
 // Every item on a day sits under its kind, in this order, each with its own colour.
-const KINDS = [['截止', '#e5484d'], ['科研', '#0a84ff'], ['待办', '#5e5ce6'], ['杂事', '#c77c02'], ['生活', '#30a46c'], ['提醒', '#8e8e93']];
+const KINDS = [['截止', '#e5484d'], ['必做', '#1d3461'], ['科研', '#0a84ff'], ['待办', '#5e5ce6'], ['杂事', '#c77c02'], ['生活', '#30a46c'], ['提醒', '#8e8e93']];
 // Items filed as 仪器 before the kind was renamed are 科研.
 const ADD_KINDS = ['待办', '科研', '截止', '杂事', '生活'];
 const kindOf = (x) => (x.cat === '仪器' ? '科研' : KINDS.some(([k]) => k === x.cat) ? x.cat : '待办');
@@ -72,7 +75,7 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
     const topicOf = (x) => topics.find((y) => y.id === x.topic) || null;
     // Every card can be refiled: a dated item under another kind, a weekly goal under another topic.
     const refile = (x) => {
-      if (x.cat === NAG && !x.date) return null;
+      if ((x.cat === NAG && !x.date) || x.cat === MUST) return null;
       const goal = !x.date && !x.cat;
       if (!goal && !x.date) return null;
       const b = h('button', { class: 'wb-refile', type: 'button', title: goal ? '改到别的课题' : '改类别' }, goal ? '课题' : kindOf(x));
@@ -154,7 +157,7 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
         const id = e.dataTransfer.getData('text/x-task'); if (!id) return;
         const x = tasks.find((y) => y.id === id); if (!x) return;
         if ((x.date || null) === (day || null) && (day || x.week === wk)) return;
-        if (!day && x.cat === NAG) { move(id, null); return; }
+        if (!day && (x.cat === NAG || x.cat === MUST)) { move(id, null); return; }
         if (!day && x.cat && !FLOAT.includes(x.cat)) { toast(`「${x.cat}」事项需要一个日期，不能取消日期。`); return; }
         move(id, day);
       });
@@ -210,6 +213,89 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
       changeTasks((l) => { const y = l.find((z) => z.id === id); if (!y) return; y.cat = NAG; delete y.date; delete y.time; delete y.end; }, 'Planner: move to nag list', again);
     });
 
+    // 必做实验 strip
+    const rankOf = (x) => (Number.isFinite(x.rank) ? x.rank : 1e9);
+    const musts = tasks.filter((x) => x.cat === MUST && (!x.done || zoned(x.doneAt || '').day === t))
+      .sort((a, b) => Number(a.done) - Number(b.done) || rankOf(a) - rankOf(b) || String(a.created).localeCompare(String(b.created)));
+    const mustOpen = musts.filter((x) => !x.done);
+    // write the order shown as ranks 1…n, with `id` moved to position `at`
+    const reorder = (id, at) => changeTasks((l) => {
+      const open = l.filter((x) => x.cat === MUST && !x.done).sort((a, b) => rankOf(a) - rankOf(b) || String(a.created).localeCompare(String(b.created)));
+      const i = open.findIndex((x) => x.id === id); const it = i >= 0 ? open.splice(i, 1)[0] : l.find((x) => x.id === id);
+      if (!it) return;
+      open.splice(Math.max(0, Math.min(at, open.length)), 0, it);
+      open.forEach((x, k) => { x.rank = k + 1; });
+    }, 'Planner: must-do order', again);
+    const mustCard = (x, i) => {
+      const n = waited(x, t);
+      const li = card(x);
+      li.classList.add('wb-mustcard');
+      if (!x.done && i === 0) li.classList.add('first');
+      li.prepend(h('span', { class: 'wb-rank', 'aria-label': `第 ${i + 1} 位` }, x.done ? '✓' : String(i + 1).padStart(2, '0')));
+      const tp = topicOf(x);
+      li.querySelector('.task-main')?.append(h('span', { class: 'wb-must-meta' },
+        tp ? h('span', { class: 'wb-must-topic', style: { '--k': tp.color } }, tp.name) : null,
+        h('span', { class: `wb-age${n >= 14 ? ' long' : ''}`, title: `${zoned(x.created).day} 列入必做` }, x.done ? '已完成' : n ? `挂了 ${n} 天` : '今天列入')));
+      const more = h('button', { class: 'wb-must-more', type: 'button', 'aria-label': '更多操作', title: '更多' }, icon('more', 16));
+      more.addEventListener('click', (e) => {
+        e.stopPropagation();
+        menu(more, [
+          i > 0 && !x.done ? { icon: 'flag', label: '放到第一位', run: () => reorder(x.id, 0) } : null,
+          i > 0 && !x.done ? { icon: 'back', label: '上移一位', run: () => reorder(x.id, i - 1) } : null,
+          i < mustOpen.length - 1 && !x.done ? { icon: 'next', label: '下移一位', run: () => reorder(x.id, i + 1) } : null,
+          !x.done && x.date !== t ? { icon: 'calendar', label: '排到今天', run: () => moveTask(x.id, t, again) } : null,
+          { icon: 'plus', label: '开始做：新建实验页', run: () => import('./pages.js').then((m) => m.openNewExperiment('', { title: x.text })) },
+          { icon: 'go', label: '退回「待做实验」', run: () => changePlanner((d) => {
+            d.tasks = d.tasks.filter((z) => z.id !== x.id);
+            d.memos ||= []; d.memos.push({ id: x.from || `m${Date.now().toString(36)}`, text: x.text, pinned: false, created: x.created || new Date().toISOString(), ...(x.topic ? { topic: x.topic } : {}) });
+          }, 'Planner: must-do back to to-do', again) },
+        ].filter(Boolean));
+      });
+      li.querySelector('.task-del')?.before(more);
+      // drop another card on this one: it takes this place
+      li.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('text/x-task') && !x.done) { e.preventDefault(); e.stopPropagation(); li.classList.add('drop-before'); } });
+      li.addEventListener('dragleave', () => li.classList.remove('drop-before'));
+      li.addEventListener('drop', (e) => {
+        if (x.done) return;
+        e.preventDefault(); e.stopPropagation(); li.classList.remove('drop-before'); mustBox.classList.remove('over');
+        const id = e.dataTransfer.getData('text/x-task'); const y = tasks.find((z) => z.id === id); if (!y || id === x.id) return;
+        if (y.cat !== MUST) changeTasks((l) => { const z = l.find((q) => q.id === id); if (z) { z.cat = MUST; z.created = z.created || new Date().toISOString(); delete z.time; delete z.end; } }, 'Planner: move to must-do', () => reorder(id, i));
+        else { const j = mustOpen.findIndex((z) => z.id === id); reorder(id, j >= 0 && j < i ? i - 1 : i); }
+      });
+      return li;
+    };
+    let mustTopic = goalTopic;
+    const mustInput = h('input', { class: 'add-input', placeholder: '加一项必做实验：一定要做、比待做实验更重要的。回车保存', enterkeyhint: 'done', 'data-k': 'must', 'aria-label': '添加必做实验' });
+    const mustTsel = h('select', { class: 'wb-kind', 'aria-label': '课题', title: '属于哪个课题' }, [{ id: '', name: '未分类' }, ...topics].map((o) => h('option', { value: o.id, selected: mustTopic === o.id }, o.name)));
+    mustTsel.addEventListener('change', () => { mustTopic = mustTsel.value; goalTopic = mustTsel.value; });
+    mustInput.addEventListener('keydown', (e) => {
+      if (e.isComposing) return;
+      if (e.key === 'Enter') {
+        e.preventDefault(); const v = mustInput.value.trim(); if (!v) return; mustInput.value = '';
+        const tp = topics.some((o) => o.id === mustTsel.value) ? mustTsel.value : '';
+        changePlanner((d) => { if (tp) pinTopicsIn(d); const rank = Math.max(0, ...d.tasks.filter((x) => x.cat === MUST && !x.done).map(rankOf).filter(Number.isFinite).filter((r) => r < 1e9)) + 1; d.tasks.push({ ...newTask(v, weekStart(t), null, MUST), rank, ...(tp ? { topic: tp } : {}) }); }, 'Planner: add must-do', again);
+      }
+      if (e.key === 'Escape') { mustInput.value = ''; mustInput.blur(); }
+    });
+    const mustOld = mustOpen.length ? Math.max(...mustOpen.map((x) => waited(x, t))) : 0;
+    const mustBox = h('div', { class: 'wb-must' },
+      h('div', { class: 'wb-must-head' },
+        h('span', { class: 'wb-must-kicker' }, 'MUST-DO · 必须完成'),
+        h('span', { class: 'wb-must-t' }, '必做实验'),
+        h('span', { class: 'wb-must-s' }, '比「待做实验」高一级：一定要做，按重要性排序'),
+        h('span', { class: 'wb-must-n' }, mustOpen.length ? h('b', null, String(mustOpen.length)) : null, mustOpen.length ? ` 项未完成${mustOld ? ` · 最久挂了 ${mustOld} 天` : ''}` : '全部完成')),
+      h('div', { class: 'wb-must-body' },
+        musts.length ? h('ol', { class: 'tasks wb-must-list' }, musts.map(mustCard)) : h('p', { class: 'wb-must-empty' }, '还没有。从「课题手记 › 待做实验」点「↑ 必做」，或把任一张卡片拖到这里。'),
+        h('div', { class: 'wb-must-add' }, mustInput, mustTsel)));
+    mustBox.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('text/x-task')) { e.preventDefault(); mustBox.classList.add('over'); } });
+    mustBox.addEventListener('dragleave', (e) => { if (!mustBox.contains(e.relatedTarget)) mustBox.classList.remove('over'); });
+    mustBox.addEventListener('drop', (e) => {
+      e.preventDefault(); mustBox.classList.remove('over');
+      const id = e.dataTransfer.getData('text/x-task'); const x = tasks.find((y) => y.id === id);
+      if (!x || x.cat === MUST) return;
+      changeTasks((l) => { const y = l.find((z) => z.id === id); if (!y) return; y.cat = MUST; y.rank = Math.max(0, ...l.filter((z) => z.cat === MUST && !z.done && z.id !== id).map(rankOf).filter((r) => r < 1e9)) + 1; delete y.time; delete y.end; }, 'Planner: move to must-do', again);
+    });
+
     const lateRem = isThis ? fus.filter((x) => !x.done && x.date < t) : [];
     const cols = days.map((day, k) => {
       const mine = dated.filter((x) => x.date === day).sort((a, b) => String(a.time || '99').localeCompare(String(b.time || '99')) || Number(a.done) - Number(b.done) || String(a.created).localeCompare(String(b.created)));
@@ -242,7 +328,7 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
       h('div', { class: 'wb-top' },
         h('div', null,
           h('h2', { class: 'wb-title' }, standalone ? '一周日程' : '本周日程'),
-          h('p', { class: 'wb-sub' }, `${fmtMD(wk)} – ${fmtMD(days[6])} · 东八区 ${zoned(new Date().toISOString()).time}${total ? ` · 完成 ${done}/${total}` : ''}${overdue.length ? ` · 之前没做完 ${overdue.length}` : ''}${nagOpen.length ? ` · 催办 ${nagOpen.length}` : ''}`)),
+          h('p', { class: 'wb-sub' }, `${fmtMD(wk)} – ${fmtMD(days[6])} · 东八区 ${zoned(new Date().toISOString()).time}${total ? ` · 完成 ${done}/${total}` : ''}${overdue.length ? ` · 之前没做完 ${overdue.length}` : ''}${nagOpen.length ? ` · 催办 ${nagOpen.length}` : ''}${mustOpen.length ? ` · 必做实验 ${mustOpen.length}` : ''}`)),
         h('div', { class: 'wb-legend', 'aria-hidden': 'true' }, KINDS.map(([k, c]) => h('span', { style: { '--k': c } }, k))),
         h('div', { class: 'wb-nav' },
           h('button', { class: 'btn small ghost', type: 'button', 'aria-label': '上一周', onclick: () => go(addDays(wk, -7)) }, '‹'),
@@ -259,8 +345,9 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
           } }, '加到日历'),
           standalone ? null : h('a', { class: 'btn small', href: `#/plan/${wk}` }, '周计划与历史 ›'))),
       nagBox,
+      mustBox,
       h('div', { class: 'wb-grid' }, planCol, cols),
-      h('p', { class: 'wb-foot muted small' }, '拖动卡片换到别的日子；点文字修改；拖到「本周目标」即取消日期；拖进「催办」就变成不设截止日的催办事项。手机上点卡片右侧的日期改天。'));
+      h('p', { class: 'wb-foot muted small' }, '拖动卡片换到别的日子；点文字修改；拖到「本周目标」即取消日期；拖进「催办」就变成不设截止日的催办事项；拖进「必做实验」就列为必须做的实验，拖到某一项上即排在它前面。手机上点卡片右侧的日期改天。'));
     // Narrow screens scroll sideways: start at today.
     if (!scrolled && isThis) {
       scrolled = true;
