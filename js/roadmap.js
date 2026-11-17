@@ -1,9 +1,10 @@
 // 候选清单 and 长期目标.
 // 候选清单: under a 课题, named lists of things to try (e.g. 可双光子打印的有机聚合物半导体: BBL, p(g2T-TT), P-90, PTHS),
 //   each with where it stands and, once tried, the 实验主题 that holds its experiments.
-// 长期目标: the applications to get to in the end (反相器, 逻辑电路, 光电传感器 …), always on top of the home page,
-//   with the next step and how long since it last moved.
-// Both live in planner/tasks.json: `cands` and `aims`.
+// 长期目标: the applications to get to in the end (反相器, 逻辑电路, 光电传感器 …), with the next step and how long
+//   since it last moved, grouped into 目标集合 (e.g. 双光子 P3HT 打印应用) shown as the last part of 课题手记:
+//   one card per set, click it to open its goals.
+// All live in planner/tasks.json: `cands`, `aims` (each with `set`) and `aimSets`.
 import { nowISO, todayISO, zoned } from './model.js';
 import { daysFrom } from './lab.js';
 import { h, icon } from './util.js';
@@ -122,30 +123,105 @@ const AIM_COLOR = { 未开始: '#8e8e93', 准备中: '#c77c02', 进行中: '#5e5
 const STALE = 14; // days without a move before the card asks for attention
 const lastMove = (a) => zoned(a.moved || a.updated || a.created).day;
 
-export function aimsStrip(doc, draw) {
+const OPEN_KEY = 'labnote-aimset-open';
+const openSet = { get: () => { try { return localStorage.getItem(OPEN_KEY) || ''; } catch { return ''; } }, set: (v) => { try { localStorage.setItem(OPEN_KEY, v); } catch { /* private window */ } } };
+const LOOSE_SET = '_';
+
+// cur: the topic tab shown in 课题手记 ('*' = all, '' = 未分类)
+export function aimsBlock(doc, cur, draw) {
   const topics = topicsOf(doc);
-  const tOf = (a) => topics.find((t) => t.id === a.topic) || null;
-  const aims = (doc.aims || []).filter((a) => a.stage !== '已实现');
-  const done = (doc.aims || []).filter((a) => a.stage === '已实现');
+  const tOf = (id) => topics.find((t) => t.id === id) || null;
   const t = todayISO();
-  const upd = (id, f, msg) => changePlanner((d) => { const x = (d.aims || []).find((y) => y.id === id); if (x) { f(x); x.updated = nowISO(); } }, msg, draw);
+  const sets = doc.aimSets || [];
+  const setIds = new Set(sets.map((x) => x.id));
+  const inTab = (topic) => cur === '*' || (tOf(topic) ? topic : '') === cur;
+  const groups = [
+    ...sets.filter((x) => inTab(x.topic)).map((x) => ({ set: x, aims: (doc.aims || []).filter((a) => a.set === x.id) })),
+  ];
+  const loose = (doc.aims || []).filter((a) => !setIds.has(a.set) && inTab(a.topic));
+  if (loose.length) groups.push({ set: { id: LOOSE_SET, title: '未归入集合', topic: '' }, aims: loose });
+  let open = openSet.get();
+  const idleOf = (a) => -daysFrom(lastMove(a), t);
   const card = (a) => {
-    const idle = -daysFrom(lastMove(a), t);
-    const tp = tOf(a);
-    return h('li', { class: `aim${idle >= STALE ? ' stale' : ''}`, style: { '--k': tp?.color || LOOSE_COLOR }, tabindex: '0', onclick: (e) => { if (!e.target.closest('button')) editAim(a, doc, draw); }, onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) editAim(a, doc, draw); } },
+    const idle = idleOf(a);
+    const tp = tOf(a.topic);
+    return h('li', { class: `aim${idle >= STALE && a.stage !== '已实现' ? ' stale' : ''}${a.stage === '已实现' ? ' done' : ''}`, style: { '--k': tp?.color || LOOSE_COLOR }, tabindex: '0', onclick: (e) => { if (!e.target.closest('button')) editAim(a, doc, draw); }, onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) editAim(a, doc, draw); } },
       h('div', { class: 'aim-top' }, h('b', null, a.title), h('span', { class: 'aim-stage', style: { '--s': AIM_COLOR[a.stage] || AIM_COLOR.未开始 } }, a.stage || '未开始')),
-      tp ? h('span', { class: 'aim-topic' }, tp.name) : null,
       h('p', { class: 'aim-next' }, a.next ? [h('span', null, '下一步 '), a.next] : h('span', { class: 'muted' }, '还没写下一步')),
       h('div', { class: 'aim-foot' },
-        h('span', { class: 'aim-idle' }, idle <= 0 ? '今天推进过' : idle >= STALE ? `${idle} 天没推进` : `${idle} 天前推进`),
-        h('button', { class: 'btn small ghost aim-move', type: 'button', title: '记一笔进展，并写下新的下一步', onclick: () => moveAim(a, draw) }, '推进一步')));
+        h('span', { class: 'aim-idle' }, a.stage === '已实现' ? '已实现' : idle <= 0 ? '今天推进过' : idle >= STALE ? `${idle} 天没推进` : `${idle} 天前推进`),
+        a.stage === '已实现' ? null : h('button', { class: 'btn small ghost aim-move', type: 'button', title: '记一笔进展，并写下新的下一步', onclick: () => moveAim(a, draw) }, '推进一步')));
   };
-  return h('section', { class: 'aims', 'aria-label': '长期目标' },
-    h('div', { class: 'aims-head' }, h('h2', null, '长期目标', h('span', null, '最终要做出来的应用')),
-      h('button', { class: 'wb-add-btn', type: 'button', onclick: () => editAim(null, doc, draw) }, icon('plus', 14), '长期目标')),
-    aims.length ? h('ul', { class: 'aims-row' }, aims.map(card))
-      : h('p', { class: 'nt-empty' }, '还没有。写下最终要做出来的应用，例如反相器、逻辑电路、光电传感器。它们会一直留在这里，超过两周没推进会变红提醒你。'),
-    done.length ? h('p', { class: 'aims-done muted small' }, `已实现：${done.map((a) => a.title).join('、')}`) : null);
+  const setCard = ({ set, aims }) => {
+    const tp = tOf(set.topic);
+    const live = aims.filter((a) => a.stage !== '已实现');
+    const stale = live.filter((a) => idleOf(a) >= STALE).length;
+    const n = (st) => aims.filter((a) => (a.stage || '未开始') === st).length;
+    const isOpen = open === set.id;
+    return h('button', { type: 'button', class: `aimset${isOpen ? ' open' : ''}${stale ? ' stale' : ''}`, style: { '--k': tp?.color || LOOSE_COLOR }, 'aria-expanded': String(isOpen),
+      onclick: () => { open = isOpen ? '' : set.id; openSet.set(open); paint(); } },
+      h('span', { class: 'aimset-kicker' }, tp ? tp.name : set.id === LOOSE_SET ? '' : '未分类'),
+      h('b', { class: 'aimset-t' }, set.title),
+      h('span', { class: 'aimset-names' }, aims.length ? aims.map((a) => a.title).join(' · ') : '还没有目标'),
+      h('span', { class: 'aimset-foot' },
+        h('span', null, `${aims.length} 个目标`),
+        ...AIM_STAGES.filter((st) => n(st)).map((st) => h('span', { class: 'aimset-st', style: { '--s': AIM_COLOR[st] } }, `${st} ${n(st)}`)),
+        stale ? h('span', { class: 'aimset-stale' }, `${stale} 个两周没推进`) : null),
+      h('span', { class: 'aimset-chev', 'aria-hidden': 'true' }, isOpen ? '收起' : '点开 ›'));
+  };
+  const detail = (g) => {
+    const { set, aims } = g;
+    const order = (a) => AIM_STAGES.indexOf(a.stage || '未开始');
+    const sorted = [...aims].sort((a, b) => Number(a.stage === '已实现') - Number(b.stage === '已实现') || order(b) - order(a));
+    return h('div', { class: 'aimset-detail', style: { '--k': tOf(set.topic)?.color || LOOSE_COLOR } },
+      h('div', { class: 'aimset-dh' },
+        h('h4', null, set.title, set.note ? h('span', null, set.note) : null),
+        h('button', { class: 'wb-add-btn', type: 'button', onclick: () => editAim(null, doc, draw, { set: set.id === LOOSE_SET ? '' : set.id, topic: set.topic || (cur !== '*' ? cur : '') }) }, icon('plus', 14), '长期目标'),
+        set.id === LOOSE_SET ? null : h('button', { class: 'btn small ghost', type: 'button', onclick: () => editAimSet(set, doc, draw) }, icon('edit', 14), ' 改集合')),
+      sorted.length ? h('ul', { class: 'aims-row' }, sorted.map(card)) : h('p', { class: 'nt-empty' }, '这个集合还没有目标。点「＋ 长期目标」，例如反相器、逻辑电路、光电传感器。'));
+  };
+  const box = h('div', { class: 'aims-block' });
+  const paint = () => {
+    const shown = groups.find((g) => g.set.id === open);
+    const total = groups.reduce((k, g) => k + g.aims.filter((a) => a.stage !== '已实现').length, 0);
+    box.replaceChildren(...[
+      h('div', { class: 'cd-head' }, h('h3', { class: 'nt-h', style: { '--k': '#b4432b' } }, '长期目标', h('span', null, total ? `${total} 个在推进 · 最终要做出来的应用` : '最终要做出来的应用')),
+        h('button', { class: 'wb-add-btn', type: 'button', onclick: () => editAimSet(null, doc, draw, { topic: cur !== '*' ? cur : '' }) }, icon('plus', 14), '新集合')),
+      groups.length ? h('div', { class: 'aimsets' }, groups.map(setCard))
+        : h('p', { class: 'nt-empty' }, '还没有。先建一个集合（一个应用方向），例如「双光子 P3HT 打印应用」，点进去再加反相器、逻辑电路、光电传感器这些长期目标。超过两周没推进的会变红提醒你。'),
+      shown ? detail(shown) : null].filter(Boolean));
+  };
+  paint();
+  return box;
+}
+
+export function editAimSet(set, doc, draw, preset = {}) {
+  const isNew = !set;
+  const x = set ? { ...set } : { id: rid('S'), created: nowISO(), ...preset };
+  const topics = topicsOf(doc);
+  const body = h('div', { class: 'form' },
+    h('label', { for: 'as-title' }, '集合（一个应用方向）'), h('input', { id: 'as-title', value: x.title || '', placeholder: '例如：双光子 P3HT 打印应用', autofocus: true }),
+    h('label', { for: 'as-topic' }, '课题'), h('select', { id: 'as-topic' }, [{ id: '', name: '未分类' }, ...topics].map((t) => h('option', { value: t.id, selected: (x.topic || '') === t.id }, t.name))),
+    h('label', { for: 'as-note' }, '说明（可不填）'), h('input', { id: 'as-note', value: x.note || '', placeholder: '例如：用 2PP 打印的 P3HT 做成器件和电路' }));
+  modal({
+    title: isNew ? '新目标集合' : x.title, body,
+    buttons: [isNew ? null : { label: '删除集合', danger: true, run: async () => {
+      if ((await choose(`删除集合“${x.title}”？`, '里面的长期目标不会删，会移到「未归入集合」。', [['yes', '删除'], ['no', '取消']])) !== 'yes') return false;
+      changePlanner((d) => { d.aimSets = (d.aimSets || []).filter((y) => y.id !== x.id); (d.aims || []).forEach((a) => { if (a.set === x.id) delete a.set; }); }, 'Aims: remove set', draw);
+    } },
+    { label: '取消' }, { label: '保存', primary: true, run: () => {
+      const v = (k) => body.querySelector(`#as-${k}`).value.trim();
+      if (!v('title')) { toast('写一个集合名。'); return false; }
+      const fields = { title: v('title'), topic: v('topic') || undefined, note: v('note') || undefined, updated: nowISO() };
+      changePlanner((d) => {
+        if (fields.topic) pinTopicsIn(d);
+        d.aimSets = d.aimSets || [];
+        const k = d.aimSets.findIndex((y) => y.id === x.id);
+        if (k >= 0) d.aimSets[k] = { ...d.aimSets[k], ...fields }; else d.aimSets.push({ ...x, ...fields });
+      }, `Aims: ${isNew ? 'add' : 'edit'} set`, draw);
+      if (isNew) openSet.set(x.id);
+    } }],
+  });
 }
 
 function moveAim(a, draw) {
@@ -163,13 +239,15 @@ function moveAim(a, draw) {
   });
 }
 
-export function editAim(a, doc, draw) {
+export function editAim(a, doc, draw, preset = {}) {
   const isNew = !a;
-  const x = a ? { ...a } : { id: rid('G'), stage: '未开始', created: nowISO() };
+  const x = a ? { ...a } : { id: rid('G'), stage: '未开始', created: nowISO(), ...preset };
+  const sets = doc.aimSets || [];
   const topics = topicsOf(doc);
   const inp = (k, ph) => h('input', { id: `ai-${k}`, value: x[k] || '', placeholder: ph });
   const body = h('div', { class: 'form' },
     h('label', { for: 'ai-title' }, '长期目标'), inp('title', '例如：反相器 / 逻辑电路 / 光电传感器'),
+    h('label', { for: 'ai-set' }, '属于哪个集合'), h('select', { id: 'ai-set' }, [h('option', { value: '' }, '未归入集合'), ...sets.map((y) => h('option', { value: y.id, selected: x.set === y.id }, y.title))]),
     h('div', { class: 'pair' },
       h('div', null, h('label', { for: 'ai-topic' }, '课题'), h('select', { id: 'ai-topic' }, [{ id: '', name: '未分类' }, ...topics].map((t) => h('option', { value: t.id, selected: (x.topic || '') === t.id }, t.name)))),
       h('div', null, h('label', { for: 'ai-stage' }, '阶段'), h('select', { id: 'ai-stage' }, AIM_STAGES.map((s) => h('option', { selected: (x.stage || '未开始') === s }, s))))),
@@ -186,7 +264,7 @@ export function editAim(a, doc, draw) {
     { label: '取消' }, { label: '保存', primary: true, run: () => {
       const v = (k) => body.querySelector(`#ai-${k}`).value.trim();
       if (!v('title')) { toast('写一个目标。'); return false; }
-      const fields = { title: v('title'), topic: v('topic'), stage: v('stage'), next: v('next') || undefined, need: v('need') || undefined, updated: nowISO() };
+      const fields = { title: v('title'), set: v('set') || undefined, topic: v('topic'), stage: v('stage'), next: v('next') || undefined, need: v('need') || undefined, updated: nowISO() };
       if (fields.stage !== (x.stage || '未开始') || fields.next !== x.next) fields.moved = nowISO();
       changePlanner((d) => {
         if (fields.topic) pinTopicsIn(d);

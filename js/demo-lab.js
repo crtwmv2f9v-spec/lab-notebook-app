@@ -87,9 +87,10 @@ tags: [oect, transfer]
         { id: 'cd2', list: '可打印的沟道材料', name: 'BBL', kind: 'n 型', topic: 'v:oect', stage: 'get', note: '溶于甲磺酸，要找替代溶剂', created: `${day(-3)}T10:00:00+08:00` },
         { id: 'cd3', list: '可打印的沟道材料', name: 'p(g2T-TT)', kind: 'p 型', topic: 'v:oect', stage: 'todo', created: `${day(-3)}T10:00:00+08:00` },
       ],
+      aimSets: [{ id: 'gs1', title: '打印 OECT 电路应用', topic: 'v:oect', note: '从单个器件走到电路和传感' }],
       aims: [
-        { id: 'ga1', title: '互补反相器', topic: 'v:oect', stage: '进行中', next: '做出 n 型 BBL 器件，和 PEDOT:PSS 配对', created: `${day(-30)}T10:00:00+08:00`, moved: `${day(-2)}T10:00:00+08:00` },
-        { id: 'ga2', title: '光电传感器', topic: 'v:oect', stage: '未开始', created: `${day(-20)}T10:00:00+08:00` },
+        { id: 'ga1', set: 'gs1', title: '互补反相器', topic: 'v:oect', stage: '进行中', next: '做出 n 型 BBL 器件，和 PEDOT:PSS 配对', created: `${day(-30)}T10:00:00+08:00`, moved: `${day(-2)}T10:00:00+08:00` },
+        { id: 'ga2', set: 'gs1', title: '光电传感器', topic: 'v:oect', stage: '未开始', created: `${day(-20)}T10:00:00+08:00` },
       ],
       finds: [
         { id: 'fd1', text: '银在盖玻片上可以打印，但碰到溶剂会溶解。可能是多孔、附着不好。', at: `${day(0)}T09:41:00+08:00`, topic: 'v:oect' },

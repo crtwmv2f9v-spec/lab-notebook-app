@@ -18,7 +18,6 @@ import { openExport } from './printing.js';
 import { thinkCover } from './think.js';
 import { openSearch } from './searchui.js';
 import { route } from './app.js';
-import { aimsStrip } from './roadmap.js';
 import { opsCard, openQuickOp } from './ops.js';
 
 export const CLOTHS = [
@@ -135,7 +134,7 @@ export function viewHome() {
 
   homeHooks.clear();
   // Top to bottom: the week (goals, today, each day) → quick notes → what to pick up → the side boards → the notebooks.
-  const { left, right, top, aims, papers: papersBoard } = homeRails();
+  const { left, right, top, papers: papersBoard } = homeRails();
   const shelf = h('section', { class: 'shelf', 'aria-label': '卷' });
   for (const v of vols) shelf.append(cover(v));
   shelf.append(thinkCover());
@@ -144,11 +143,10 @@ export function viewHome() {
   root.append(
     hero(),
     top,
-    aims,
     weekBoard({ hooks: homeHooks, redraw: redrawHome }),
     opsCard(),
     papersBoard,
-    h('h2', { class: 'section-title' }, '课题手记', h('span', null, '按课题记：碎片发现 · 待做实验 · 零散想法 · 候选清单')),
+    h('h2', { class: 'section-title' }, '课题手记', h('span', null, '按课题记：碎片发现 · 待做实验 · 零散想法 · 候选清单 · 长期目标')),
     dashboard(),
     h('h2', { class: 'section-title' }, '记录本', h('span', null, `${vols.length} 卷 · ${lib.allPages().length} 页`)),
     shelf);
@@ -480,7 +478,6 @@ export function homeRails() {
   const right = h('aside', { class: 'rail rail-right', 'aria-label': '时间与日常' });
   const top = h('section', { class: 'dl-hero', 'aria-label': '截止日倒计时' });
   const papersEl = h('section', { class: 'pp-main', 'aria-label': '论文与投稿' });
-  const aimsEl = h('div', { class: 'aims-wrap' });
   const draw = async () => {
     let doc; try { doc = await loadPlanner(); } catch { return; }
     const focused = document.activeElement?.closest?.('.rail') ? document.activeElement.dataset.k : null;
@@ -568,7 +565,6 @@ export function homeRails() {
       dl.length ? h('ul', { class: 'dl-cards' }, (dlAll ? dl : dl.slice(0, DL_SHOW)).map(dlCard),
         dl.length > DL_SHOW ? h('li', { class: 'dl-more' }, h('button', { class: 'btn small ghost', type: 'button', onclick: () => { dlAll = !dlAll; draw(); } }, dlAll ? '收起' : `还有 ${dl.length - DL_SHOW} 项`)) : null) : null);
     top.classList.toggle('empty', !dl.length);
-    aimsEl.replaceChildren(aimsStrip(doc, draw));
     const st = await weekStats();
     const stat = (n, label) => h('div', { class: 'ws' }, h('b', null, String(n)), h('span', null, label));
     const clipsWk = (await loadClips().catch(() => [])).filter((c) => c.kind === 'img' && String(c.created).slice(0, 10) >= weekStart(t)).length;
@@ -581,7 +577,7 @@ export function homeRails() {
   };
   homeHooks.add(draw);
   draw().then(() => autoFileFinds());
-  return { left, right, top, aims: aimsEl, papers: papersEl };
+  return { left, right, top, papers: papersEl };
 }
 
 // Home: today's to-dos (your own + experiment reminders) and this week's plan, each with progress.
