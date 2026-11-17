@@ -19,6 +19,7 @@ import { thinkCover } from './think.js';
 import { openSearch } from './searchui.js';
 import { route } from './app.js';
 import { aimsStrip } from './roadmap.js';
+import { opsCard, openQuickOp } from './ops.js';
 
 export const CLOTHS = [
   ['墨绿', '#24453a'], ['酒红', '#5b2228'], ['藏青', '#22335a'],
@@ -93,6 +94,7 @@ export function viewHome() {
     h('a', { class: 'btn ghost lib-link', href: '#/lib/protocols' }, '步骤库'),
     h('a', { class: 'btn ghost lib-link', href: '#/methods', title: '全部方法卡片：写论文 Experimental 用的细节' }, '方法细节'),
     h('a', { class: 'btn ghost lib-link', href: '#/clips', title: '文献图和杂项（template 框线、作图参数…），按分类' }, '素材库'),
+    h('a', { class: 'btn ghost lib-link', href: '#/ops', title: '配溶液、做电极、烘烤……一步一条；当天的打成一页 A4（O 记一笔）' }, '小实验'),
     h('a', { class: 'btn ghost lib-link', href: '#/tables', title: 'Claude 给的表格、整理过的对比：存一次，以后搜得到' }, '资料表'),
     h('button', { class: 'btn ghost lib-link', type: 'button', onclick: () => openExport('') }, '导出'),
     // Narrow screens: the same links folded into one menu, so the bar fits a phone.
@@ -102,6 +104,8 @@ export function viewHome() {
       { icon: 'list', label: '步骤库', run: () => { location.hash = '#/lib/protocols'; } },
       { icon: 'list', label: '方法细节', run: () => { location.hash = '#/methods'; } },
       { icon: 'image', label: '素材库', run: () => { location.hash = '#/clips'; } },
+      { icon: 'flask', label: '小实验', run: () => { location.hash = '#/ops'; } },
+      { icon: 'plus', label: '记一笔小实验', run: () => openQuickOp() },
       { icon: 'table', label: '资料表', run: () => { location.hash = '#/tables'; } },
       { icon: 'download', label: '导出', run: () => openExport('') },
     ]) }, '资料库'),
@@ -142,6 +146,7 @@ export function viewHome() {
     top,
     aims,
     weekBoard({ hooks: homeHooks, redraw: redrawHome }),
+    opsCard(),
     papersBoard,
     h('h2', { class: 'section-title' }, '课题手记', h('span', null, '按课题记：碎片发现 · 待做实验 · 零散想法 · 候选清单')),
     dashboard(),

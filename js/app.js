@@ -13,6 +13,7 @@ import { viewProtocol, viewProtocols, viewReagents, viewSolutions } from './libr
 import { openSearch } from './searchui.js';
 import { viewClips, viewReading } from './clips.js';
 import { viewTable, viewTables } from './tables.js';
+import { openQuickOp, viewOps } from './ops.js';
 import { mountFindButton, openQuickFind } from './finds.js';
 
 export async function boot() {
@@ -67,6 +68,10 @@ export function globalKeys(e) {
   if (lib && !e.isComposing && !e.altKey && !e.shiftKey && (((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') || (!typing && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === 'n' && !document.querySelector('.modal-root')))) {
     e.preventDefault(); openQuickFind(); return;
   }
+  // O: note down a small step (配溶液、烘烤……).
+  if (lib && !typing && !e.isComposing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'o' && !document.querySelector('.modal-root')) {
+    e.preventDefault(); openQuickOp(); return;
+  }
   if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'h' && !document.querySelector('.modal-root') && location.hash.replace(/^#\/?/, '')) {
     e.preventDefault(); markReturn(); location.hash = '#/'; return;
   }
@@ -98,6 +103,7 @@ export async function route(opts = {}) {
   if (a === 'series' && b) return show('library', () => viewSeries(b));
   if (a === 'reading') return show('reading', () => viewReading(b));
   if (a === 'clips') return show('clips', () => viewClips(b || '', params));
+  if (a === 'ops') return show('ops', () => viewOps(params));
   if (a === 'tables' && !b) return show('tables', () => viewTables(params));
   if (a === 'tables' && b) return show('tables', () => viewTable(b));
   if (a === 'plan') return show('plan', () => viewPlan(b));

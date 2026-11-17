@@ -514,6 +514,36 @@ try {
     await evaluate(clean);
     return `pasted HTML table → Markdown, saved as ${r.at.slice(9)}, found by search ("乙醇")`;
   });
+  await check('small-steps', async () => {
+    await go('#/ops', "document.querySelector('.ops-day.today .op-row')");
+    const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const o = await import('./js/ops.js');
+      const today = document.querySelectorAll('.ops-day.today .op-row').length;
+      const p1 = o.parseQuick('中午手工制作了银电极，并且烘烤了4个小时 120度 13:00到17:00', '2026-11-17');
+      const p2 = o.parseQuick('明天 下午3点 配制 100 mM 葡萄糖溶液 10 mL', '2026-11-17');
+      await o.openQuickOp(); await wait(300);
+      document.querySelector('.op-quick .seg-btn:last-child').click();
+      const line = document.querySelector('#oq-line'); line.value = '13:00-17:00 烘烤银电极 120°C'; line.dispatchEvent(new Event('input'));
+      const prev = document.querySelector('.oq-prev').textContent;
+      line.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(1200);
+      const saved = (await o.loadOps({ from: new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10) })).find((x) => x.title === '烘烤银电极');
+      document.querySelector('.modal-root')?.close?.(); await wait(300);
+      const after = document.querySelectorAll('.ops-day.today .op-row').length;
+      await o.openOpsPrint(); await wait(900);
+      const info = document.querySelector('.op-print .muted.small:last-child')?.textContent || '';
+      const sheet = document.querySelector('.ops-prev .ops-page'); const inner = sheet.firstChild;
+      const cards = sheet.querySelectorAll('.oc:not(.blank)').length; const blanks = sheet.querySelectorAll('.oc.blank').length;
+      const bars = sheet.querySelectorAll('.tl-bar').length; const fill = sheet.querySelectorAll('td.oc-a').length;
+      const over = inner.scrollHeight - sheet.clientHeight;
+      document.querySelector('.modal-root')?.close?.();
+      return { today, p1, p2, prev, saved, after, info, cards, blanks, bars, fill, over };`);
+    const ok = r.today === 5 && r.after === 6 && r.p1.title === '手工制作银电极，烘烤' && r.p1.dur === 240 && r.p1.kind === '烘烤' && r.p1.params[0].v === '120 °C'
+      && r.p2.date === '2026-11-18' && r.p2.start === '15:00' && r.p2.title === '配制葡萄糖溶液' && r.p2.params.map((p) => p.v).join() === '100 mM,10 mL'
+      && /4 h/.test(r.prev) && r.saved?.status === 'plan' && r.saved?.dur === 240 && /-OP-06$/.test(r.saved?.id)
+      && /一页 A4/.test(r.info) && r.cards === 6 && r.bars >= 4 && r.fill > 5 && r.over <= 0;
+    if (!ok) throw new Error(JSON.stringify(r));
+    await evaluate(clean);
+    return `one line → ${r.saved.id} (13:00–17:00, 4 h, 120 °C, 计划); A4 sheet: ${r.cards} cards + ${r.blanks} blank, ${r.info}`;
+  });
   await check('toc-by-topic', async () => {
     await go('#/v/oect', "document.querySelector('.toc-table .series-row') && document.querySelector('.toc-mode .chip')");
     const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));

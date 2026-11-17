@@ -59,6 +59,7 @@ tags: [oect, transfer]
     'clips/F-0001.json': `${JSON.stringify({ id: 'F-0001', kind: 'note', title: 'Nature 作图 template', cats: ['画图/template'], note: '框线 0.5 pt，坐标轴字号 7 pt\n单栏图宽 89 mm，双栏 183 mm', src: {}, created: `${day(-2)}T10:00:00+08:00`, updated: `${day(-2)}T10:00:00+08:00` }, null, 1)}\n`,
     'clips/F-0002.json': `${JSON.stringify({ id: 'F-0002', kind: 'img', title: '垂直 OECT 截面结构', cats: ['v-OECTs结构'], note: '', file: 'F-0002_v-OECTs结构_Rivnay2018_Fig._2a.png', src: { zotero: 'zotero://open-pdf/library/items/ABCD1234', page: '3', fig: 'Fig. 2a', cite: 'Rivnay et al. 2018', task: 'td5' }, created: `${day(-1)}T10:00:00+08:00`, updated: `${day(-1)}T10:00:00+08:00` }, null, 1)}\n`,
     'tables/T-0001.md': `---\ntitle: 可双光子打印的有机半导体候选\ndate: ${day(-1)}\nid: T-0001\ntags: [2pp, n型, 溶剂]\ntopic: v:oect\nsource: Claude 对话\nquestion: 哪些 n 型聚合物可能用双光子打印？溶剂和交联方式？\n---\n\n| 材料 | 类型 | 常用溶剂 | 交联 / 固化 | 备注 |\n| --- | --- | --- | --- | --- |\n| BBL | n 型 | 甲磺酸 | 酸去除后自凝 | 溶剂腐蚀性强 |\n| p(g2T-TT) | p 型 | 氯仿 | 光引发剂 | 已做溶剂筛选 |\n\n优先试 BBL 的替代溶剂。\n`,
+    ...demoOps(),
     'optimize/goals.json': `${JSON.stringify({ version: 1, topics: { 'PEDOT:PSS 配方优化': { target: '结果: gm_max (mS)', dir: 'max', constraints: [{ col: '结果: on/off', op: '>=', value: 100 }], vars: [{ col: 'GOPS (wt%)', lo: 0.5, hi: 2, step: 0.25 }, { col: '退火 (°C)', fixed: true, value: '140' }, { col: '旋涂 (rpm)', lo: 1000, hi: 3000, step: 500 }], batch: 4, note: '3000 rpm 膜太薄，不再试。', updated: `${day(-1)}T10:00:00+08:00` } } }, null, 1)}\n`,
     'planner/tasks.json': `${JSON.stringify({
       tasks: [
@@ -117,4 +118,24 @@ tags: [oect, transfer]
       `title: 栅极面积对比\ndate: ${d1}\nid: ${x2}\ntags: [oect, gate]\nprotocol: SOP-DEMO-OECT-TR-v1\nreagents: [R-0003, R-0004]`,
       `## 目的\n\n\`\`\`hypothesis\nH-0001 P2\n退火升温速率由 10 °C/min 降到 2 °C/min，其余条件不变\n\`\`\`\n\n比较 Ø 3 mm 与 Ø 5 mm 碳栅极；升温方案按 [[H-0001#P2]]。\n\n## 条件与结果\n\n\`\`\`samples\n编号,栅极直径 (mm),结果: gm_max (mS),结果: Vth (V),备注\n#01,3,,,\n#02,5,,,\n\`\`\`\n\n## 与 SOP 的偏离\n\n- \n\n## 现象与讨论\n\n\n## 结论\n\n升温速率降到 2 °C/min 后气泡明显减少。\n\n## 照片\n`),
   };
+}
+
+// 小实验 for ?demo: yesterday's done steps, today's plan (one running), tomorrow's plan.
+function demoOps() {
+  const t = todayISO(); const y = day(-1); const n = day(1);
+  const id = (d, i) => `${compact(d)}-OP-${String(i).padStart(2, '0')}`;
+  const P = (k, v, a) => ({ k, v, ...(a ? { a } : {}) });
+  const items = [
+    { id: id(y, 1), date: y, start: '09:30', end: '10:00', dur: 30, kind: '配溶液', title: '配制葡萄糖溶液', status: 'done', params: [P('溶质', '葡萄糖'), P('溶剂', 'PBS 1×'), P('浓度', '100 mM'), P('体积', '10 mL'), P('质量', '180.2 mg'), P('存放', '4 °C 冰箱 A2')] },
+    { id: id(y, 2), date: y, start: '13:00', end: '17:00', dur: 240, kind: '烘烤', title: '手工制作银电极，烘烤', status: 'done', params: [P('温度', '120 °C', '125 °C'), P('设备', '烘箱 1'), P('气氛', '空气')], note: '6 根，表面有少量裂纹' },
+    { id: id(t, 1), date: t, start: '09:00', end: '09:15', dur: 15, kind: '清洗', title: '超声清洗玻璃基底', status: 'done', params: [P('对象', '玻璃片 × 8'), P('方法', '丙酮 → 乙醇 → 去离子水'), P('时长', '各 5 min')] },
+    { id: id(t, 2), date: t, start: '10:00', end: '', kind: '涂膜', title: '旋涂 PEDOT:PSS', status: 'plan', params: [P('材料', 'R-0001'), P('转速', '3000 rpm'), P('体积', '50 μL'), P('基底', '玻璃')], link: '' },
+    { id: id(t, 3), date: t, start: '10:30', end: '12:30', dur: 120, kind: '烘烤', title: '退火 PEDOT:PSS 膜', status: 'plan', params: [P('温度', '140 °C'), P('设备', '热台'), P('气氛', '空气')] },
+    { id: id(t, 4), date: t, start: '14:00', end: '', kind: '配溶液', title: '配制 10 mM 葡萄糖溶液（稀释）', status: 'plan', params: [P('溶质', '葡萄糖 100 mM 母液'), P('溶剂', 'PBS 1×'), P('浓度', '10 mM'), P('体积', '5 mL')] },
+    { id: id(t, 5), date: t, start: '', end: '', kind: '测试', title: 'Keithley 转移曲线', status: 'plan', params: [P('仪器', 'Keithley 4200'), P('样品', 'OECT-1 ~ 4')] },
+    { id: id(n, 1), date: n, start: '09:30', end: '', kind: '打印', title: 'DIW 打印银电极', status: 'plan', params: [P('墨水', 'R-0004'), P('针头', '27 G'), P('压力', '30 kPa')] },
+  ];
+  const out = {};
+  for (const o of items) (out[`ops/${o.date.slice(0, 7)}.json`] ??= []).push({ ...o, at: `${o.date}T08:00:00+08:00` });
+  return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, `${JSON.stringify({ version: 1, items: v }, null, 1)}\n`]));
 }
