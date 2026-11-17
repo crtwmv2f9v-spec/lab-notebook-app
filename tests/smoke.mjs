@@ -496,6 +496,24 @@ try {
     await evaluate(clean);
     return `aims ${r.aims.join(' / ')} (1 stale → 0 after 推进一步); candidate added to ${r.list}; series link "${r.linked}"`;
   });
+  await check('saved-tables', async () => {
+    await go('#/tables', "document.querySelector('.tb-card')");
+    const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const t = await import('./js/tables.js');
+      const cards = document.querySelectorAll('.tb-card').length;
+      const html = '<p>对比如下：</p><table><thead><tr><th>材料</th><th>溶剂</th></tr></thead><tbody><tr><td><strong>PTHS</strong></td><td>水 | 乙醇</td></tr><tr><td>P-90</td><td>氯仿</td></tr></tbody></table><ul><li>先试 PTHS</li></ul>';
+      const md = t.htmlToMarkdown(html); const tsv = t.textToMarkdown('a\\tb\\n1\\t2');
+      t.editTable(null, { body: md }); await wait(400);
+      document.querySelector('#tb-title').value = '水溶性候选的溶剂'; document.querySelector('#tb-tags').value = '溶剂，2PP';
+      const shape = document.querySelector('.tb-shape').textContent; const prevRows = document.querySelectorAll('.tb-preview tbody tr').length;
+      [...document.querySelectorAll('.modal-foot .btn')].find((b) => b.textContent === '保存').click(); await wait(1200);
+      const at = location.hash; const rows = document.querySelectorAll('.tb-body table tbody tr').length; const head = [...document.querySelectorAll('.tb-body thead th')].map((e) => e.textContent).join(',');
+      const items = await t.tableSearchItems(); const found = items.filter((x) => /乙醇/.test(x.text)).map((x) => x.tag);
+      return { cards, md, tsv, shape, prevRows, at, rows, head, found, tables: t.tablesIn(md) };`);
+    if (r.cards !== 1 || !/\| \*\*PTHS\*\* \| 水 \\\| 乙醇 \|/.test(r.md) || !/^- 先试 PTHS$/m.test(r.md) || r.tsv !== '| a | b |\n| --- | --- |\n| 1 | 2 |'
+      || !/2 行 × 2 列/.test(r.shape) || r.prevRows !== 2 || r.at !== '#/tables/T-0002' || r.rows !== 2 || r.head !== '材料,溶剂' || r.found.join() !== 'T-0002' || r.tables[0][1][1] !== '水 | 乙醇') throw new Error(JSON.stringify(r));
+    await evaluate(clean);
+    return `pasted HTML table → Markdown, saved as ${r.at.slice(9)}, found by search ("乙醇")`;
+  });
   await check('toc-by-topic', async () => {
     await go('#/v/oect', "document.querySelector('.toc-table .series-row') && document.querySelector('.toc-mode .chip')");
     const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));

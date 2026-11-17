@@ -12,6 +12,7 @@ import { viewMethod, viewMethods } from './methods.js';
 import { viewProtocol, viewProtocols, viewReagents, viewSolutions } from './libraries.js';
 import { openSearch } from './searchui.js';
 import { viewClips, viewReading } from './clips.js';
+import { viewTable, viewTables } from './tables.js';
 import { mountFindButton, openQuickFind } from './finds.js';
 
 export async function boot() {
@@ -97,6 +98,8 @@ export async function route(opts = {}) {
   if (a === 'series' && b) return show('library', () => viewSeries(b));
   if (a === 'reading') return show('reading', () => viewReading(b));
   if (a === 'clips') return show('clips', () => viewClips(b || '', params));
+  if (a === 'tables' && !b) return show('tables', () => viewTables(params));
+  if (a === 'tables' && b) return show('tables', () => viewTable(b));
   if (a === 'plan') return show('plan', () => viewPlan(b));
   if (a === 'methods') return show('methods', () => viewMethods('', b === 'a' && c ? c : ''));
   if (a === 'm' && b) return show('methods', () => viewMethod(b));

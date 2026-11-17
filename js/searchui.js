@@ -5,6 +5,7 @@ import { h, esc } from './util.js';
 import { loadMethods, loadHypotheses, loadReagents, loadSolutions, loadProtocols } from './lab.js';
 import { loadPlanner, editPaper } from './planner.js';
 import { lib, modal } from './core.js';
+import { tableSearchItems } from './tables.js';
 
 export function openPagePicker(curVol, onPick) {
   const input = h('input', { type: 'search', placeholder: '按标题、编号或文字搜索', autofocus: true, 'aria-label': '找页面' });
@@ -84,9 +85,10 @@ function snip(text, words) {
 }
 async function loadPool() {
   const safe = (p) => p.catch(() => []);
-  const [methods, hyps, reagents, solutions, protocols, plan] = await Promise.all([safe(loadMethods(lib)), safe(loadHypotheses(lib)), safe(loadReagents(lib)), safe(loadSolutions(lib)), safe(loadProtocols(lib)), loadPlanner().catch(() => ({}))]);
+  const [methods, hyps, reagents, solutions, protocols, plan, tables] = await Promise.all([safe(loadMethods(lib)), safe(loadHypotheses(lib)), safe(loadReagents(lib)), safe(loadSolutions(lib)), safe(loadProtocols(lib)), loadPlanner().catch(() => ({})), safe(tableSearchItems())]);
   const vals = (o) => Object.values(o).filter((v) => typeof v === 'string').join(' ');
   return [
+    { label: '资料表', items: tables },
     { label: '方法卡片', items: methods.map((m) => ({ tag: m.id, title: m.title, href: `#/m/${m.id}`, text: `${m.id} ${m.title} ${m.cat} ${(m.tags || []).join(' ')} ${(m.params || []).map((p) => `${p.k} ${p.v}`).join(' ')} ${m.body || ''}` })) },
     { label: '假设', items: hyps.map((x) => ({ tag: x.id, title: x.title, href: `#/think/${x.id}`, text: `${x.id} ${x.title} ${x.description || ''} ${(x.predictions || []).join(' ')} ${(x.evidence || []).map((e) => e.text).join(' ')}` })) },
     { label: '课题', items: (plan.projects || []).map((x) => ({ tag: x.stage, title: x.title, href: '#/projects', text: `${x.title} ${x.kind || ''} ${x.stage || ''} ${x.next || ''} ${x.why || ''} ${x.note || ''}` })) },

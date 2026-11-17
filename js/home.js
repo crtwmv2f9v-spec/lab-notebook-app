@@ -93,6 +93,7 @@ export function viewHome() {
     h('a', { class: 'btn ghost lib-link', href: '#/lib/protocols' }, '步骤库'),
     h('a', { class: 'btn ghost lib-link', href: '#/methods', title: '全部方法卡片：写论文 Experimental 用的细节' }, '方法细节'),
     h('a', { class: 'btn ghost lib-link', href: '#/clips', title: '文献图和杂项（template 框线、作图参数…），按分类' }, '素材库'),
+    h('a', { class: 'btn ghost lib-link', href: '#/tables', title: 'Claude 给的表格、整理过的对比：存一次，以后搜得到' }, '资料表'),
     h('button', { class: 'btn ghost lib-link', type: 'button', onclick: () => openExport('') }, '导出'),
     // Narrow screens: the same links folded into one menu, so the bar fits a phone.
     h('button', { class: 'btn ghost narrow-only', type: 'button', onclick: (e) => menu(e.currentTarget, [
@@ -101,6 +102,7 @@ export function viewHome() {
       { icon: 'list', label: '步骤库', run: () => { location.hash = '#/lib/protocols'; } },
       { icon: 'list', label: '方法细节', run: () => { location.hash = '#/methods'; } },
       { icon: 'image', label: '素材库', run: () => { location.hash = '#/clips'; } },
+      { icon: 'table', label: '资料表', run: () => { location.hash = '#/tables'; } },
       { icon: 'download', label: '导出', run: () => openExport('') },
     ]) }, '资料库'),
     h('button', { class: 'btn icon ghost', 'aria-label': '搜索', title: '搜索（/）', onclick: () => openSearch() }, icon('search')),

@@ -2478,3 +2478,28 @@ button.bi-m { padding: 0; border: 0; background: none; color: inherit; font: inh
 .aims-head h2 { display: flex; align-items: baseline; flex-wrap: wrap; }
 @media (max-width: 760px) { .view.home .aims-wrap { padding: 0 16px; } }
 .aims-head h2 { flex-wrap: nowrap; white-space: nowrap; font-size: 22px; }
+
+/* v64 资料表 */
+.tables .tb-wrap { max-width: 1200px; margin: 0 auto; padding: 18px 28px 40px; }
+.tables .clip-chips { margin: 10px 0 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+.tb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.tb-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; text-decoration: none; color: inherit; border-top: 3px solid #00a3a3; }
+.tb-card:hover { border-color: #00a3a3; }
+.tb-top { display: flex; justify-content: space-between; align-items: center; }
+.tb-title { font-size: 16px; line-height: 1.4; }
+.tb-q { margin: 0; font-size: 13px; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tb-cols { margin: 0; font-size: 12px; font-family: var(--font-mono, ui-monospace, monospace); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tb-foot { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: auto; }
+.tb-tag { font-size: 12px; color: #00a3a3; text-decoration: none; }
+.tb-sheet .tb-meta { margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line, #d9d4c7); }
+.tb-sheet .tb-q { -webkit-line-clamp: unset; display: block; font-size: 15px; color: var(--ink); }
+.tb-sheet .tb-q span { font-size: 12px; color: var(--ink-2); margin-right: 8px; }
+.tb-sheet .tb-tags { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 0; }
+.tb-body table, .tb-preview table { border-collapse: collapse; margin: 10px 0; font-size: 14px; }
+.tb-body th, .tb-body td, .tb-preview th, .tb-preview td { border: 1px solid var(--line, #d9d4c7); padding: 5px 9px; vertical-align: top; }
+.tb-body thead th, .tb-preview thead th { background: color-mix(in srgb, #00a3a3 10%, transparent); }
+.tb-form .tb-src { font-family: var(--font-mono, ui-monospace, monospace); font-size: 13px; width: 100%; box-sizing: border-box; }
+.tb-preview { max-height: 320px; overflow: auto; border: 1px dashed var(--line, #d9d4c7); border-radius: 8px; padding: 6px 12px; }
+.tb-shape { margin: 2px 0 8px; }
+@media (max-width: 760px) { .tables .tb-wrap { padding: 12px 16px 30px; } }
+.tb-sheet .tb-h { font-size: 24px; margin: 0 0 8px; } .tb-body table { font-size: 15px; }
