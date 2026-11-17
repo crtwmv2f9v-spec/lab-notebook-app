@@ -7,7 +7,7 @@ import { addDays, putSection, sectionOf } from './lab.js';
 import { updatePage } from './pages.js';
 import { h, icon } from './util.js';
 import { lib, menu, modal, toast, view } from './core.js';
-import { editProject, freshId, PIN_SVG, projectTopic, TASKS_PATH, WEEKDAYS, changePlanner, editable, loadPlanner, newTask, planDoc, queuePlanner, weekStart } from './planner.js';
+import { freshId, PIN_SVG, TASKS_PATH, WEEKDAYS, changePlanner, editable, loadPlanner, newTask, planDoc, queuePlanner, weekStart } from './planner.js';
 import { redrawHome } from './home.js';
 import { route } from './app.js';
 import { aimsBlock, candidatesBlock } from './roadmap.js';
@@ -28,6 +28,57 @@ const groupByDay = (list) => {
 };
 const bullet = (f, topic) => `- **${timeOf(f)}** ${topic ? `〔${topic}〕` : ''}${String(f.text).trim().split(/\n+/).map((l) => l.trim()).filter(Boolean).join('\n  ')}`;
 const INTRO = '当天的零碎发现，原文照录。之后可以分类、改写，或挪到对应课题的实验页。';
+const INTRO2 = '这一天的汇总：当天的实验记录、小实验和零碎发现。实验和小实验两节按记录本自动更新；碎片发现原文照录，可以改写。';
+const EXP_H = '当天的实验'; const OPS_H = '小实验'; const FIND_H = '碎片发现';
+const cell = (v) => String(v ?? '').replace(/\|/g, '\\|').replace(/\s*\n+\s*/g, ' ').trim();
+const firstLine = (md) => String(md || '').split('\n').map((x) => x.replace(/^[-*>#\s]+/, '').replace(/\*\*/g, '').trim()).find(Boolean) || '';
+// The day's experiment pages (other volumes) and 小实验, as Markdown for the 每日发现 page; '' when there are none.
+async function daySummary(l, dailyId, day) {
+  const pages = Object.values(l.pagesByKey).filter((p) => p.vol !== dailyId && p.date === day && !p.void && !p.pending)
+    .sort((a, b) => a.vol.localeCompare(b.vol) || a.num - b.num);
+  let exp = '';
+  if (pages.length) {
+    const rows = [];
+    for (const p of pages) {
+      let concl = ''; let purpose = '';
+      try { const { body } = parseFrontMatter(await l.readText(pagePath(p.vol, p.num))); concl = firstLine(sectionOf(body, '结论')); purpose = firstLine(sectionOf(body, '目的') || sectionOf(body, '实验目的')); } catch { /* unreadable page: title only */ }
+      const mark = p.outcome === 'ok' ? '可重复' : p.outcome === 'fail' ? '行不通' : '';
+      const vol = l.volume?.(p.vol)?.title || p.vol;
+      rows.push(`| [[${p.vol}/${p.num}|${p.xid || `${vol} 第 ${p.num} 页`}]] | ${cell(p.title)} | ${cell(vol)} | ${cell(concl ? `${concl}${mark ? `（${mark}）` : ''}` : mark || (purpose ? `目的：${purpose}` : '未写结论'))} |`);
+    }
+    exp = ['| 实验编号 | 标题 | 卷 | 结论 / 现状 |', '| --- | --- | --- | --- |', ...rows].join('\n');
+  }
+  let ops = '';
+  const items = ((await l.readJSON(`ops/${day.slice(0, 7)}.json`, {}))?.items || []).filter((o) => o.date === day && o.status !== 'skip')
+    .sort((a, b) => String(a.start || '99').localeCompare(String(b.start || '99')));
+  if (items.length) {
+    ops = items.map((o) => {
+      const when = o.start ? `**${o.start}${o.end ? `–${o.end}` : ''}** ` : '';
+      const ps = (o.params || []).filter((x) => x.v || x.a).map((x) => `${x.k} ${x.a || x.v}`).join(' · ');
+      return `- ${when}${o.title}${ps ? `（${ps}）` : ''}${o.status === 'done' ? '' : ' — 计划，未标已做'}${o.link ? ` → ${o.link}` : ''}${o.note ? `；${o.note}` : ''}`;
+    }).join('\n');
+  }
+  return { exp, ops };
+}
+const hasH = (body, name) => new RegExp(`^## ${name}\\s*$`, 'm').test(body);
+function dropSection(body, name) {
+  const lines = String(body).split('\n'); const i = lines.findIndex((x) => x.trim() === `## ${name}`);
+  if (i < 0) return body;
+  let j = i + 1; while (j < lines.length && !/^#{1,2}\s/.test(lines[j])) j++;
+  return [...lines.slice(0, i), ...lines.slice(j)].join('\n').replace(/\n{3,}/g, '\n\n');
+}
+// Lays out a 每日发现 page: intro, 当天的实验, 小实验, then the findings (older pages get the 碎片发现 heading added).
+function dailyLayout(body, { exp, ops }) {
+  let b = String(body || '');
+  if (!hasH(b, FIND_H)) {
+    const lines = b.split('\n'); const i = lines.findIndex((x) => /^\s*-\s/.test(x));
+    b = i < 0 ? `${b.trimEnd()}\n\n## ${FIND_H}\n` : [...lines.slice(0, i), `## ${FIND_H}`, '', ...lines.slice(i)].join('\n');
+  }
+  b = b.replace(INTRO, INTRO2);
+  b = exp ? putSection(b, EXP_H, exp, [OPS_H, FIND_H]) : dropSection(b, EXP_H);
+  b = ops ? putSection(b, OPS_H, ops, [FIND_H]) : dropSection(b, OPS_H);
+  return `${b.replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
+}
 
 // ----- topics: the sub-headings of 课题手记. Until the list is edited it mirrors the notebook's volumes. -----
 export const NO_TOPIC = '';
@@ -121,13 +172,14 @@ export function fileFinds(which) {
         // A page for this day that is still open gets the new lines; a signed one is left alone and a second page is made.
         const old = Object.values(l.pagesByKey).find((p) => p.vol === vol.id && p.date === day && String(p.title).startsWith(day) && !p.signed && !p.void && !p.pending);
         let num; let md;
+        const sum = await daySummary(l, vol.id, day);
         if (old) {
           num = old.num;
           const { fm, body } = parseFrontMatter(await l.readText(pagePath(vol.id, num)));
-          md = serializePage(fm, `${body.trimEnd()}\n${lines}\n`);
+          md = serializePage(fm, dailyLayout(`${dailyLayout(body, sum).trimEnd()}\n${lines}\n`, sum));
         } else {
           num = next++;
-          md = serializePage({ title: dayTitle(day), date: day, tags: ['碎片发现'] }, `${INTRO}\n\n${lines}\n`);
+          md = serializePage({ title: dayTitle(day), date: day, tags: ['碎片发现'] }, dailyLayout(`${INTRO2}\n\n## ${FIND_H}\n\n${lines}\n`, sum));
         }
         changes.push({ path: pagePath(vol.id, num), data: md });
         for (const f of list) f.filed = `${vol.id}/${num}`; // stays in its topic's list, linked to the page
@@ -140,8 +192,33 @@ export function fileFinds(which) {
   }).finally(() => { filing = null; });
   return filing;
 }
+// Keeps the 当天的实验 / 小实验 sections of the open 每日发现 pages (last 60 days) in step with the notebook.
+let refreshed = '';
+export async function refreshDailyPages() {
+  const vol = dailyVolume(); if (!vol) return 0;
+  const from = addDays(todayISO(), -60);
+  const targets = lib.allPages().filter((p) => p.vol === vol.id && p.date >= from && p.date < todayISO() && !p.signed && !p.void && !p.pending);
+  if (!targets.length) return 0;
+  return lib.commit('Daily pages: summary of the day\'s experiments', async (l) => {
+    const changes = []; const entries = {};
+    for (const p of targets) {
+      const path = pagePath(vol.id, p.num);
+      const raw = await l.readText(path);
+      const { fm, body } = parseFrontMatter(raw);
+      const nb = dailyLayout(body, await daySummary(l, vol.id, p.date));
+      if (nb.trim() === body.trim()) continue;
+      const md = serializePage(fm, nb);
+      changes.push({ path, data: md });
+      entries[`${vol.id}/${p.num}`] = makeEntry(vol.id, p.num, md, await gitSha(te.encode(md)));
+    }
+    if (!changes.length) return { changes: [], result: 0 };
+    changes.push({ path: volIndexPath(vol.id), data: JSON.stringify(l.volumeIndexData(vol.id, entries)) });
+    return { changes, result: changes.length - 1, after: () => Object.assign(l.pagesByKey, entries) };
+  });
+}
 // Runs when the home page opens.
 export async function autoFileFinds() {
+  if (refreshed !== todayISO()) { refreshed = todayISO(); refreshDailyPages().catch((e) => console.warn('daily pages', e)); }
   try {
     const doc = await loadPlanner();
     if (!(doc.finds || []).some((f) => !f.filed && dueForFiling(dayOf(f)))) return;
@@ -183,7 +260,9 @@ export function findsCard(doc, draw) {
     return h('div', { class: 'add-row find-add' }, h('span', { class: 'add-plus' }, icon('plus', 16)), input, h('button', { class: 'btn small add-btn', type: 'button', onclick: go }, '记下'));
   };
   // findings: newest day first; filed ones stay, linked to their page; only the latest 30 are listed
-  const myFinds = finds.filter(inTab).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  // filed ones (made into a 每日发现 page, or written into an experiment page) leave the list
+  const myFinds = finds.filter((f) => inTab(f) && !f.filed).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  const filedN = finds.filter((f) => inTab(f) && f.filed).length;
   const shown = myFinds.slice(0, 30);
   const days = [...groupByDay(shown)].reverse();
   const updF = (id, f, msg) => changePlanner((d) => { const x = (d.finds || []).find((y) => y.id === id); if (x) f(x); }, msg, draw);
@@ -209,9 +288,9 @@ export function findsCard(doc, draw) {
           f.filed ? h('a', { class: `find-page${f.inPage ? ' in-page' : ''}`, href: `#/v/${f.filed}`, title: f.inPage ? '已写进这次实验的「过程记录」' : '已整理进「每日发现」的这一页' }, f.inPage ? '已进实验页' : '已成页') : toPage(f)),
         h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: f.filed ? '从这里删除（每日发现页里的那一行不受影响）' : '删除', onclick: () => changePlanner((d) => { d.finds = (d.finds || []).filter((x) => x.id !== f.id); }, 'Notes: remove finding', draw) }, icon('close', 14)))))))
       : h('p', { class: 'nt-empty' }, '还没有。实验时注意到的小现象、小规律，随手记一句。'),
-    myFinds.length > shown.length ? h('p', { class: 'muted small' }, `更早的 ${myFinds.length - shown.length} 条在「每日发现」卷里。`) : null);
+    myFinds.length > shown.length ? h('p', { class: 'muted small' }, `还有更早的 ${myFinds.length - shown.length} 条。`) : null,
+    filedN ? h('p', { class: 'muted small nt-filed' }, `${filedN} 条已成页，在`, dailyVolume() ? h('a', { href: `#/v/${dailyVolume().id}` }, `「${DAILY_TITLE}」`) : `「${DAILY_TITLE}」`, '或对应的实验页里。') : null);
   // experiments to do
-  const seeds = (doc.projects || []).filter((p) => ['想法', '调研'].includes(p.stage || '想法') && (cur === ALL || (projectTopic(p, topics)?.id || NO_TOPIC) === cur));
   const isIdea = (m) => m.kind === 'idea';
   const move = (m) => h('button', { class: 'nt-move', type: 'button', title: isIdea(m) ? '这是要做的实验：移到「待做实验」' : '这不是实验：移到「零散想法」', onclick: () => updM(m.id, (x) => { if (isIdea(x)) delete x.kind; else { x.kind = 'idea'; delete x.done; delete x.doneAt; } }, 'Notes: move between lists') }, isIdea(m) ? '→ 实验' : '→ 想法');
   const myIdeas = memos.filter((m) => inTab(m) && isIdea(m)).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || String(b.updated || b.created).localeCompare(String(a.updated || a.created)));
@@ -247,14 +326,7 @@ export function findsCard(doc, draw) {
       move(m),
       h('button', { class: 'memo-pin', type: 'button', 'aria-pressed': String(!!m.pinned), 'aria-label': m.pinned ? '取消置顶' : '置顶', title: m.pinned ? '取消置顶' : '置顶', html: PIN_SVG, onclick: () => updM(m.id, (x) => { x.pinned = !x.pinned; }, 'Notes: pin') }),
       h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Notes: remove', draw) }, icon('close', 14)))))
-      : h('p', { class: 'nt-empty' }, '还没有。和实验无关或还不成形的念头，记在这里。'),
-    // 课题构想: projects still at the idea or survey stage. They live here, under their topic, until they are pursued.
-    h('div', { class: 'nt-pj' },
-      h('h4', null, '课题构想', h('span', null, seeds.length ? String(seeds.length) : ''), h('a', { href: '#/projects', title: '全部课题：构想 → 调研 → 申请 → 进行 → 结题' }, '课题看板 ›')),
-      seeds.length ? h('ul', { class: 'nt-seeds' }, seeds.map((p) => h('li', { tabindex: '0', title: '点击修改；成熟后把阶段推进到“申请中 / 进行中”', onclick: () => editProject(p), onkeydown: (e) => { if (e.key === 'Enter') editProject(p); } },
-        h('b', null, p.title), h('span', { class: `nt-stage${p.stage === '调研' ? ' survey' : ''}` }, p.stage === '调研' ? '调研中' : '构想'), showChip && projectTopic(p, topics) ? h('span', { class: 'nt-topic', style: { '--k': projectTopic(p, topics).color } }, projectTopic(p, topics).name) : null,
-        p.why ? h('span', { class: 'nt-why' }, p.why) : null))) : null,
-      h('button', { class: 'wb-add-btn nt-seed-add', type: 'button', onclick: () => editProject(null, { stage: '想法', ...(addTo ? { topic: addTo } : {}) }) }, icon('plus', 14), '记一个课题构想')));
+      : h('p', { class: 'nt-empty' }, '还没有。和实验无关或还不成形的念头，记在这里。'));
   const unfiled = finds.filter((f) => !f.filed).length;
   const vol = dailyVolume();
   const sat = addDays(weekStart(t), 5);

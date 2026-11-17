@@ -488,14 +488,23 @@ export function homeRails() {
     const topics = topicsOf(doc); const tOf = (x) => projectTopic(x, topics);
     const active = projects.filter((x) => !['想法', '调研', '已结束'].includes(x.stage || '想法'));
     const early = (st) => projects.filter((x) => (x.stage || '想法') === st).length;
-    const pj = railCard('课题与基金', `${active.length} 个在推进 · 构想 ${early('想法') + early('调研')} 个在课题手记`,
+    // 构想 / 调研 live only here (and on the 课题看板): one compact line each, under the projects being pursued
+    const seeds = projects.filter((x) => ['想法', '调研'].includes(x.stage || '想法'));
+    const seedBox = h('div', { class: 'pj-seeds' },
+      h('h4', null, '课题构想', h('span', null, seeds.length ? `${seeds.length} 个 · 构想 → 调研 → 申请` : '还没有')),
+      seeds.length ? h('ul', { class: 'pj-seed-list' }, seeds.map((p) => h('li', { tabindex: '0', title: '点击修改；成熟后把阶段推进到“申请中 / 进行中”', onclick: () => editProject(p), onkeydown: (e) => { if (e.key === 'Enter') editProject(p); } },
+        h('b', null, p.title), h('span', { class: `nt-stage${p.stage === '调研' ? ' survey' : ''}` }, p.stage === '调研' ? '调研中' : '构想'), topicChip(tOf(p)),
+        p.why ? h('span', { class: 'pj-seed-why' }, p.why) : null))) : null);
+    const pj = railCard('课题与基金', `${active.length} 个在推进${seeds.length ? ` · 构想 ${seeds.length} 个` : ''}`,
       active.length ? h('ul', { class: 'board-list' }, [...active].sort((a, b) => String(a.due || '9').localeCompare(String(b.due || '9'))).map((x) => h('li', { class: 'board-item', onclick: (e) => { if (!e.target.closest('a')) editProject(x); } },
         h('div', { class: 'bi-top' }, h('span', { class: 'bi-kind' }, x.kind || '课题'), h('b', null, x.title), topicChip(tOf(x))),
         h('div', { class: 'bi-meta' }, h('span', { class: 'bi-stage' }, x.stage), x.next ? h('span', null, `下一步：${x.next}`) : null, dueTag(x.due)),
         (x.vols || []).length ? h('div', { class: 'bi-vols' }, x.vols.map((id) => lib.volume(id)).filter(Boolean).flatMap((v) => [h('a', { href: `#/v/${v.id}` }, v.title), h('a', { class: 'bi-m', href: `#/v/${v.id}/methods` }, '方法细节')])) : null)))
-        : h('p', { class: 'muted small' }, '还没有在推进的课题。初步的构想记在课题手记的「课题构想」里，成熟后推进到“申请中 / 进行中”就会出现在这里。'),
+        : h('p', { class: 'muted small' }, '还没有在推进的课题。构想成熟后把阶段推进到“申请中 / 进行中”，就会列在上面。'),
+      seedBox,
       h('div', { class: 'rail-actions' },
         h('a', { class: 'btn small', href: '#/projects' }, '课题看板 ›'),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => editProject(null, { stage: '想法' }) }, icon('plus', 14), '记一个构想'),
         h('button', { class: 'btn small ghost', type: 'button', onclick: () => editProject(null, { stage: '进行中' }) }, icon('plus', 14), '新建课题')));
     // 论文与投稿
     // 论文与投稿: a section of its own under the week — one card per paper with where it stands and what is still open.

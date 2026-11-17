@@ -230,12 +230,13 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
       const n = waited(x, t);
       const li = card(x);
       li.classList.add('wb-mustcard');
+      if (!x.done) li.dataset.age = String(Math.min(6, Math.floor(n / 3))); // one shade deeper every 3 days, darkest from 18 days
       if (!x.done && i === 0) li.classList.add('first');
       li.prepend(h('span', { class: 'wb-rank', 'aria-label': `第 ${i + 1} 位` }, x.done ? '✓' : String(i + 1).padStart(2, '0')));
       const tp = topicOf(x);
       li.querySelector('.task-main')?.append(h('span', { class: 'wb-must-meta' },
         tp ? h('span', { class: 'wb-must-topic', style: { '--k': tp.color } }, tp.name) : null,
-        h('span', { class: `wb-age${n >= 14 ? ' long' : ''}`, title: `${zoned(x.created).day} 列入必做` }, x.done ? '已完成' : n ? `挂了 ${n} 天` : '今天列入')));
+        h('span', { class: `wb-age${n >= 9 ? ' long' : ''}`, title: `${zoned(x.created).day} 列入必做` }, x.done ? '已完成' : n ? `挂了 ${n} 天` : '今天列入')));
       const more = h('button', { class: 'wb-must-more', type: 'button', 'aria-label': '更多操作', title: '更多' }, icon('more', 16));
       more.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -283,7 +284,8 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
         h('span', { class: 'wb-must-kicker' }, 'MUST-DO · 必须完成'),
         h('span', { class: 'wb-must-t' }, '必做实验'),
         h('span', { class: 'wb-must-s' }, '比「待做实验」高一级：一定要做，按重要性排序'),
-        h('span', { class: 'wb-must-n' }, mustOpen.length ? h('b', null, String(mustOpen.length)) : null, mustOpen.length ? ` 项未完成${mustOld ? ` · 最久挂了 ${mustOld} 天` : ''}` : '全部完成')),
+        h('span', { class: 'wb-must-n' }, mustOpen.length ? h('b', null, String(mustOpen.length)) : null, mustOpen.length ? ` 项未完成${mustOld ? ` · 最久挂了 ${mustOld} 天` : ''}` : '全部完成'),
+        h('span', { class: 'wb-must-legend', title: '挂得越久颜色越深：每 3 天深一级' }, '新', [0, 10, 20, 31, 42, 53, 64].map((k) => h('i', { style: { '--heat': String(k) } })), '久')),
       h('div', { class: 'wb-must-body' },
         musts.length ? h('ol', { class: 'tasks wb-must-list' }, musts.map(mustCard)) : h('p', { class: 'wb-must-empty' }, '还没有。从「课题手记 › 待做实验」点「↑ 必做」，或把任一张卡片拖到这里。'),
         h('div', { class: 'wb-must-add' }, mustInput, mustTsel)));

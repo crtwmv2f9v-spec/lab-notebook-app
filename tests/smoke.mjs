@@ -392,8 +392,16 @@ try {
       await f.autoFileFinds();
       const pages2 = c.lib.allPages().filter((x) => x.vol === vol?.id);
       const body2 = await c.lib.readPage(vol.id, pages[pages.length - 1].num);
-      return { rule, vol: vol?.title, titles: pages.map((x) => x.title), dates: pages.map((x) => x.date), ok: body.includes('**10:05** 旧发现一') && body.includes('**16:30** 旧发现二'), left, n2: pages2.length, appended: body2.includes('**18:00** 补记') && body2.includes('旧发现一'), old };`);
-    if (r.rule !== 'false,true,false,true,true' || r.vol !== '每日发现' || r.titles.length !== 2 || !r.titles[1].startsWith(r.old) || !r.ok || r.left !== 2 || r.n2 !== 2 || !r.appended) throw new Error(JSON.stringify(r));
+      // a day with experiment records: its page lists them above the findings
+      const y = lab.addDays(t, -1);
+      await p.changePlanner((d) => { d.finds.push({ id: 'o5', text: '昨天的发现', at: y + 'T11:00:00+08:00' }); }, 'test');
+      await f.fileFinds((d) => d === y);
+      const yp = c.lib.allPages().find((x) => x.vol === vol.id && x.date === y);
+      const body3 = m.parseFrontMatter(await c.lib.readPage(vol.id, yp.num)).body;
+      const sum = { exp: body3.indexOf('## 当天的实验'), find: body3.indexOf('## 碎片发现'), rows: body3.split('| [[oect/').length - 1 };
+      return { rule, vol: vol?.title, titles: pages.map((x) => x.title), dates: pages.map((x) => x.date), ok: body.includes('**10:05** 旧发现一') && body.includes('**16:30** 旧发现二') && body.includes('## 碎片发现'), left, n2: pages2.length, appended: body2.includes('**18:00** 补记') && body2.includes('旧发现一'), old, sum };`);
+    if (r.rule !== 'false,true,false,true,true' || r.vol !== '每日发现' || r.titles.length !== 2 || !r.titles[1].startsWith(r.old) || !r.ok || r.left !== 2 || r.n2 !== 2 || !r.appended
+      || !(r.sum.exp > 0 && r.sum.find > r.sum.exp && r.sum.rows === 2)) throw new Error(JSON.stringify(r));
     return `${r.titles.join(' / ')}; today's 2 stay`;
   });
   await check('solutions', async () => { await go('#/lib/solutions', "document.querySelectorAll('.sol-table tbody tr').length > 0"); await evaluate(clean); });
@@ -439,8 +447,10 @@ try {
       const body2 = m.parseFrontMatter(await core.lib.readPage(page.vol, page.num)).body;
       return { kinds, filed: x?.filed, inPage: x?.inPage, topic: x?.topic, line, order, ok, old: old2.filed === page.vol + '/' + page.num && old2.inPage, has: body2.includes(old.text.split('\\n')[0]) };`);
     if (r.kinds.includes(false) || !r.filed || !r.inPage || !r.line || !r.order || !r.ok || !r.old || !r.has) throw new Error(JSON.stringify(r));
-    await go('#/', "document.querySelector('.notes-card .find-page.in-page')");
-    return `quick entry → ${r.filed} 过程记录; existing finding attached`;
+    await go('#/', "document.querySelector('.notes-card .nt-filed')");
+    const gone = await evaluate("return ![...document.querySelectorAll('.notes-card .find-text')].some((e) => /测试：挂到实验页的发现/.test(e.textContent));");
+    if (!gone) throw new Error('filed finding still listed');
+    return `quick entry → ${r.filed} 过程记录; existing finding attached; filed ones leave the list`;
   });
   await check('paper-notes', async () => {
     await go('#/', "document.querySelectorAll('.pp-card.paper .bi-notes').length >= 2 && document.querySelector('.pp-card .pp-prog')");
@@ -491,19 +501,19 @@ try {
     return `left home at ${r.y0}px, back button → ${r.y1}px, browser back → ${r.y2}px`;
   });
   await check('paper-progress-and-seeds', async () => {
-    await go('#/', "document.querySelector('.pp-card .pp-progress input') && document.querySelector('.notes-card .nt-pj')");
+    await go('#/', "document.querySelector('.pp-card .pp-progress input') && document.querySelector('.pj-seeds')");
     const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const p = await import('./js/planner.js');
       const card = [...document.querySelectorAll('.pp-card.paper')].find((e) => /2Figures/.test(e.textContent)); const input = card.querySelector('.pp-progress input');
       const auto = card.querySelector('.pp-progress').classList.contains('auto');
       input.value = '65'; input.dispatchEvent(new Event('input', { bubbles: true })); const live = card.querySelector('.pp-progress b').textContent;
       input.dispatchEvent(new Event('change', { bubbles: true })); await wait(500);
       const saved = (await p.loadPlanner()).papers.find((x) => x.id === 'A1').progress; const noDialog = !document.querySelector('#pp-title');
-      const seeds = [...document.querySelectorAll('.notes-card .nt-seeds li b')].map((e) => e.textContent);
-      const early = !document.querySelector('.home-boards .pj-early');
+      const seeds = [...document.querySelectorAll('.pj-seeds .pj-seed-list li b')].map((e) => e.textContent);
+      const early = !document.querySelector('.notes-card .nt-pj, .notes-card .nt-seeds');
       return { auto, live, saved, noDialog, seeds, early };`);
     if (!r.auto || r.live !== '65%' || r.saved !== 65 || !r.noDialog || r.seeds.length !== 2 || !r.early) throw new Error(JSON.stringify(r));
     await evaluate(clean);
-    return `progress dragged to ${r.live}; ${r.seeds.length} project ideas under 课题手记`;
+    return `progress dragged to ${r.live}; ${r.seeds.length} project ideas in 课题与基金 (not in 课题手记)`;
   });
   await check('optimization-goal', async () => {
     await go(`#/series/${encodeURIComponent('PEDOT:PSS 配方优化')}`, "document.querySelector('.opt-card .opt-stats')");
