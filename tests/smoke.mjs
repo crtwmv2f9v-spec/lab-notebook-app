@@ -477,6 +477,25 @@ try {
     await evaluate(clean);
     return `goal card ${r.before.stats} (有目标值/满足约束/行不通/最好); switched to min → best ${r.after.best}; table added before 过程记录`;
   });
+  await check('candidates-and-aims', async () => {
+    await go('#/', "document.querySelector('.aims .aim') && document.querySelector('.cd-block .cd-card')");
+    const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const p = await import('./js/planner.js');
+      const aims = [...document.querySelectorAll('.aims .aim b')].map((e) => e.textContent); const stale = document.querySelectorAll('.aims .aim.stale').length;
+      const tab = [...document.querySelectorAll('.nt-tab')].find((e) => e.textContent.startsWith('全部')); tab?.click(); await wait(300);
+      const input = document.querySelector('.cd-add-input'); input.value = 'P-90'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(700);
+      const names = [...document.querySelectorAll('.cd-card b')].map((e) => e.textContent);
+      const linked = document.querySelector('.cd-series')?.textContent || '';
+      const doc = await p.loadPlanner(); const added = doc.cands.find((c) => c.name === 'P-90');
+      [...document.querySelectorAll('.aims .aim')].find((e) => /光电/.test(e.textContent)).querySelector('.aim-move').click(); await wait(200);
+      document.querySelector('#am-what').value = '查了三篇文献'; document.querySelector('#am-next').value = '定 P3HT 光电对照';
+      [...document.querySelectorAll('.modal-foot .btn')].find((b) => b.textContent === '保存').click(); await wait(700);
+      const g = (await p.loadPlanner()).aims.find((a) => a.id === 'ga2');
+      return { aims, stale, names, linked, list: added?.list, topic: added?.topic, stage: g.stage, next: g.next, log: (g.log || []).length, staleAfter: document.querySelectorAll('.aims .aim.stale').length };`);
+    if (r.aims.join() !== '互补反相器,光电传感器' || r.stale !== 1 || !r.names.includes('P-90') || r.list !== '可打印的沟道材料' || r.topic !== 'v:oect'
+      || !/2 次/.test(r.linked) || r.stage !== '准备中' || r.next !== '定 P3HT 光电对照' || r.log !== 1 || r.staleAfter !== 0) throw new Error(JSON.stringify(r));
+    await evaluate(clean);
+    return `aims ${r.aims.join(' / ')} (1 stale → 0 after 推进一步); candidate added to ${r.list}; series link "${r.linked}"`;
+  });
   await check('toc-by-topic', async () => {
     await go('#/v/oect', "document.querySelector('.toc-table .series-row') && document.querySelector('.toc-mode .chip')");
     const r = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));

@@ -77,6 +77,15 @@ tags: [oect, transfer]
         { id: 'td8', text: '跑步 5 km', week: day(0), date: day(0), cat: '生活', done: false, created: `${day(-1)}T09:00:00+08:00` },
       ],
       memos: [{ id: 'md1', text: '补一组不加 GOPS 的对照', pinned: true, created: `${day(-1)}T10:00:00+08:00`, topic: 'v:oect' }, { id: 'md2', text: '买 0.22 μm 滤头', pinned: false, created: `${day(-2)}T10:00:00+08:00` }],
+      cands: [
+        { id: 'cd1', list: '可打印的沟道材料', name: 'PEDOT:PSS + GOPS', kind: 'p 型', topic: 'v:oect', stage: 'ok', series: 'PEDOT:PSS 配方优化', created: `${day(-9)}T10:00:00+08:00` },
+        { id: 'cd2', list: '可打印的沟道材料', name: 'BBL', kind: 'n 型', topic: 'v:oect', stage: 'get', note: '溶于甲磺酸，要找替代溶剂', created: `${day(-3)}T10:00:00+08:00` },
+        { id: 'cd3', list: '可打印的沟道材料', name: 'p(g2T-TT)', kind: 'p 型', topic: 'v:oect', stage: 'todo', created: `${day(-3)}T10:00:00+08:00` },
+      ],
+      aims: [
+        { id: 'ga1', title: '互补反相器', topic: 'v:oect', stage: '进行中', next: '做出 n 型 BBL 器件，和 PEDOT:PSS 配对', created: `${day(-30)}T10:00:00+08:00`, moved: `${day(-2)}T10:00:00+08:00` },
+        { id: 'ga2', title: '光电传感器', topic: 'v:oect', stage: '未开始', created: `${day(-20)}T10:00:00+08:00` },
+      ],
       finds: [
         { id: 'fd1', text: '银在盖玻片上可以打印，但碰到溶剂会溶解。可能是多孔、附着不好。', at: `${day(0)}T09:41:00+08:00`, topic: 'v:oect' },
         { id: 'fd2', text: 'PEDOT:PSS 墨水放置 2 h 后粘度明显上升，出丝变细。', at: `${day(0)}T14:20:00+08:00` },

@@ -10,6 +10,7 @@ import { lib, menu, modal, toast, view } from './core.js';
 import { editProject, freshId, PIN_SVG, projectTopic, TASKS_PATH, WEEKDAYS, changePlanner, editable, loadPlanner, planDoc, queuePlanner, weekStart } from './planner.js';
 import { redrawHome } from './home.js';
 import { route } from './app.js';
+import { candidatesBlock } from './roadmap.js';
 
 export const DAILY_CODE = 'DAY';
 export const DAILY_TITLE = '每日发现';
@@ -256,6 +257,7 @@ export function findsCard(doc, draw) {
       loose || cur === NO_TOPIC ? tab(NO_TOPIC, '未分类', count(NO_TOPIC)) : null,
       h('button', { type: 'button', class: 'nt-tab nt-manage', title: '增加、改名或删除课题', onclick: () => editTopics(doc, draw) }, icon('plus', 14), '课题')),
     h('div', { class: 'nt-cols three' }, findCol, todoCol, ideaCol),
+    candidatesBlock(doc, cur, draw),
     h('div', { class: 'rail-actions find-foot' },
       vol ? h('a', { class: 'btn small', href: `#/v/${vol.id}` }, `${DAILY_TITLE} ›`) : null,
       unfiled ? h('button', { class: 'btn small ghost', type: 'button', title: '不等周六，现在就把还没成页的发现按天整理成页（今天的也算）', onclick: async (e) => {
