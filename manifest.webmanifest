@@ -1,6 +1,6 @@
 {
-  "name": "Lab notebook",
-  "short_name": "Lab notebook",
+  "name": "实验记录本",
+  "short_name": "实验记录本",
   "description": "A private laboratory notebook backed by GitHub.",
   "start_url": "./",
   "scope": "./",
