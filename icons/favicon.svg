@@ -1,61 +1,41 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="100 100 824 824">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2a4a7c"/><stop offset="1" stop-color="#0f1c35"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#161a33"/><stop offset="1" stop-color="#06070d"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0.5" cy="0.18" r="0.75">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="cover" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2f7a5f"/><stop offset="1" stop-color="#174536"/>
+    <radialGradient id="g1" cx="0.22" cy="0.18" r="0.7"><stop offset="0" stop-color="#6c5cff" stop-opacity="0.55"/><stop offset="1" stop-color="#6c5cff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="g2" cx="0.88" cy="0.92" r="0.65"><stop offset="0" stop-color="#00d1b2" stop-opacity="0.40"/><stop offset="1" stop-color="#00d1b2" stop-opacity="0"/></radialGradient>
+    <linearGradient id="curve" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#3ff0d0"/><stop offset="0.55" stop-color="#7d6bff"/><stop offset="1" stop-color="#ff7ac0"/>
     </linearGradient>
-    <linearGradient id="spine" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#0f2e24"/><stop offset="1" stop-color="#1c4a3a"/>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/><stop offset="1" stop-color="#ffffff" stop-opacity="0.04"/>
     </linearGradient>
-    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#f3dc8a"/><stop offset="0.5" stop-color="#d4ae4c"/><stop offset="1" stop-color="#a9822a"/>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/><stop offset="0.5" stop-color="#ffffff" stop-opacity="0.08"/><stop offset="1" stop-color="#ffffff" stop-opacity="0.25"/>
     </linearGradient>
-    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#e9e2cf"/><stop offset="1" stop-color="#fbf8ef"/>
-    </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000" flood-opacity="0.45"/>
-    </filter>
-    <clipPath id="sq"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+    <filter id="blur" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="22"/></filter>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="28" stdDeviation="30" flood-color="#000" flood-opacity="0.55"/></filter>
+    <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
   </defs>
-  <!-- tile -->
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#glow)"/>
-  <g clip-path="url(#sq)" opacity="0.10" stroke="#ffffff" stroke-width="2">
-    <path d="M100 260H924M100 420H924M100 580H924M100 740H924M260 100V924M420 100V924M580 100V924M740 100V924"/>
-  </g>
-  <!-- notebook -->
-  <g filter="url(#shadow)">
-    <!-- page block on the right -->
-    <rect x="312" y="232" width="436" height="584" rx="22" fill="url(#paper)"/>
-    <path d="M736 252V796M742 262V786" stroke="#d6ccb3" stroke-width="3"/>
-    <!-- cover -->
-    <rect x="276" y="216" width="452" height="600" rx="26" fill="url(#cover)"/>
-    <rect x="276" y="216" width="70" height="600" rx="22" fill="url(#spine)"/>
-    <path d="M346 216V816" stroke="#0b241c" stroke-width="4" opacity="0.6"/>
-    <!-- gold corners -->
-    <path d="M728 274V242a26 26 0 0 0-26-26H670Z" fill="url(#gold)"/>
-    <path d="M728 758v32a26 26 0 0 1-26 26H670Z" fill="url(#gold)"/>
-    <!-- label -->
-    <rect x="400" y="300" width="264" height="190" rx="12" fill="#fbf7ea" stroke="url(#gold)" stroke-width="8"/>
-    <rect x="414" y="314" width="236" height="162" rx="6" fill="none" stroke="#c9a94f" stroke-width="2"/>
-    <!-- flask emblem -->
-    <g transform="translate(532 395)">
-      <path d="M-18 -60h36M-12 -60v34L-46 34a12 12 0 0 0 10 18h72a12 12 0 0 0 10-18L12 -26v-34" fill="none" stroke="#1d3461" stroke-width="9" stroke-linejoin="round" stroke-linecap="round"/>
-      <path d="M-33 14h66L44 34a6 6 0 0 1-5 9h-78a6 6 0 0 1-5-9Z" fill="#2f7a5f"/>
-      <circle cx="-6" cy="26" r="5" fill="#fbf7ea"/><circle cx="10" cy="20" r="3.5" fill="#fbf7ea"/>
+  <g clip-path="url(#tile)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#bg)"/>
+    <rect x="100" y="100" width="824" height="824" fill="url(#g1)"/>
+    <rect x="100" y="100" width="824" height="824" fill="url(#g2)"/>
+    <!-- back card -->
+    <g transform="rotate(9 512 520)" opacity="0.55">
+      <rect x="300" y="250" width="440" height="540" rx="58" fill="url(#glass)" stroke="url(#edge)" stroke-width="2.5"/>
     </g>
-    <!-- gold rules under the label -->
-    <path d="M410 560H654M410 600H600" stroke="url(#gold)" stroke-width="7" stroke-linecap="round" opacity="0.9"/>
-    <!-- elastic band -->
-    <rect x="684" y="216" width="18" height="600" fill="#10261e" opacity="0.85"/>
-    <!-- ribbon -->
-    <path d="M592 800v104l26-22 26 22V800Z" fill="#c8453b"/>
-    <path d="M592 800h52v10h-52z" fill="#000" opacity="0.18"/>
+    <!-- front glass card -->
+    <g transform="rotate(-6 512 520)" filter="url(#soft)">
+      <rect x="282" y="236" width="460" height="568" rx="62" fill="url(#glass)" stroke="url(#edge)" stroke-width="3"/>
+      <path d="M352 330H560M352 380H500" stroke="#ffffff" stroke-opacity="0.38" stroke-width="16" stroke-linecap="round"/>
+      <!-- curve glow -->
+      <path d="M352 700 C 450 700, 470 690, 512 600 S 600 470, 672 462" fill="none" stroke="url(#curve)" stroke-width="40" stroke-linecap="round" filter="url(#blur)" opacity="0.85"/>
+      <path d="M352 700 C 450 700, 470 690, 512 600 S 600 470, 672 462" fill="none" stroke="url(#curve)" stroke-width="22" stroke-linecap="round"/>
+      <circle cx="672" cy="462" r="26" fill="#ff7ac0" filter="url(#blur)" opacity="0.9"/>
+      <circle cx="672" cy="462" r="15" fill="#fff"/>
+    </g>
   </g>
+  <rect x="101" y="101" width="822" height="822" rx="184" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="2"/>
 </svg>
