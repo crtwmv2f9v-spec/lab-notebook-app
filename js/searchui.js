@@ -7,7 +7,7 @@ import { loadPlanner, editPaper } from './planner.js';
 import { lib, modal } from './core.js';
 import { tableSearchItems } from './tables.js';
 import { opSearchItems } from './ops.js';
-import { loadClips, openClip } from './clips.js';
+import { loadClips, openClip, sortClips } from './clips.js';
 
 export function openPagePicker(curVol, onPick) {
   const input = h('input', { type: 'search', placeholder: '按标题、编号或文字搜索', autofocus: true, 'aria-label': '找页面' });
@@ -62,7 +62,18 @@ export function openSearch(initial = '', vol = '') {
     const shown = groups.map((g) => [g, g.items.filter((x) => hit(x.text))]).filter(([, xs]) => xs.length);
     others.replaceChildren(...shown.map(([g, xs]) => h('section', { class: 'search-group' },
       h('h3', null, g.label, h('span', null, `${xs.length}`)),
-      h('ol', { class: 'results' }, xs.slice(0, 8).map((x) => h('li', null, h('a', { href: x.href || '#/', onclick: (e) => { root.close(); if (x.open) { e.preventDefault(); location.hash = x.href || '#/'; setTimeout(x.open, 350); } } },
+      h('ol', { class: 'results' }, xs.slice(0, 8).map((x) => h('li', null, h('a', { href: x.href || '#/', onclick: (e) => {
+        root.close();
+        if (!x.open) return;
+        e.preventDefault();
+        const target = x.href || '#/';
+        const same = location.hash === target || (!location.hash && target === '#/');
+        if (same) { setTimeout(x.open, 0); return; }
+        window.addEventListener('hashchange', () => {
+          if (location.hash === target) setTimeout(x.open, 0);
+        }, { once: true });
+        location.hash = target;
+      } },
         h('span', { class: 'r-title' }, x.tag ? h('span', { class: 'xid-tag' }, x.tag) : null, x.title),
         h('span', { class: 'r-snip', html: snip(x.text, words) })))),
         xs.length > 8 ? h('li', { class: 'muted' }, `还有 ${xs.length - 8} 条，多写几个词可以缩小范围。`) : null))));
@@ -90,7 +101,7 @@ async function loadPool() {
   const [methods, hyps, reagents, solutions, protocols, plan, tables, ops, clips] = await Promise.all([safe(loadMethods(lib)), safe(loadHypotheses(lib)), safe(loadReagents(lib)), safe(loadSolutions(lib)), safe(loadProtocols(lib)), loadPlanner().catch(() => ({})), safe(tableSearchItems()), safe(opSearchItems()), safe(loadClips())]);
   const vals = (o) => Object.values(o).filter((v) => typeof v === 'string').join(' ');
   return [
-    { label: '素材库', items: clips.map((c) => ({ tag: c.pinned ? `置顶 · ${c.id}` : c.id, title: c.title || (c.kind === 'img' ? '未命名图' : '未命名'), href: '#/clips', open: () => openClip(c.id), text: `${c.id} ${c.title || ''} ${c.note || ''} ${(c.cats || []).join(' ')} ${c.src?.ref?.title || ''} ${c.src?.cite || ''} ${c.src?.fig || ''}` })) },
+    { label: '素材库', items: sortClips(clips).map((c) => ({ tag: c.pinned ? `置顶 · ${c.id}` : c.id, title: c.title || (c.kind === 'img' ? '未命名图' : '未命名'), href: '#/clips', open: () => openClip(c.id), text: `${c.id} ${c.title || ''} ${c.note || ''} ${(c.cats || []).join(' ')} ${c.src?.ref?.title || ''} ${c.src?.cite || ''} ${c.src?.fig || ''}` })) },
     { label: '资料表', items: tables },
     { label: '小实验', items: ops },
     { label: '方法卡片', items: methods.map((m) => ({ tag: m.id, title: m.title, href: `#/m/${m.id}`, text: `${m.id} ${m.title} ${m.cat} ${(m.tags || []).join(' ')} ${(m.params || []).map((p) => `${p.k} ${p.v}`).join(' ')} ${m.body || ''}` })) },

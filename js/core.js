@@ -354,8 +354,12 @@ export function modal({ title, body, buttons = [{ label: '关闭' }], wide = fal
     onclick: async (ev) => {
       if (!b.run) return close();
       const btn = ev.currentTarget;
+      const wasFocused = document.activeElement === btn;
       btn.disabled = true;
-      try { const keep = await b.run(); if (keep !== false) close(); } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+      try { const keep = await b.run(); if (keep !== false) close(); } catch (e) { toast(e.message); } finally {
+        btn.disabled = false;
+        if (wasFocused && btn.isConnected && (!document.activeElement || document.activeElement === document.body)) btn.focus({ preventScroll: true });
+      }
     },
   }, b.label)));
   panel.append(h('div', { class: 'modal-head' }, h('h2', null, title), h('button', { class: 'btn icon ghost', 'aria-label': '关闭', onclick: close }, icon('close'))), h('div', { class: 'modal-body' }, body), ...(buttons.length ? [foot] : []));

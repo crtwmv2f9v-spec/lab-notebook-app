@@ -14,10 +14,22 @@ import { lookupPaper, paperKey, paperKeywords } from './home.js';
 //          src: { zotero, page, fig, cite, doi, ref: { title, authors, journal, year, doi }, task }, created, updated }
 export const clipPath = (id) => `clips/${id}.json`;
 export const clipIds = () => [...lib.tree.keys()].map((p) => (p.match(/^clips\/(F-\d{4})\.json$/) || [])[1]).filter(Boolean).sort();
+const clipTime = (c) => {
+  const t = Date.parse(c?.created || '');
+  return Number.isFinite(t) ? t : null;
+};
 export function sortClips(list) {
-  return [...list].sort((a, b) => Number(!!b?.pinned) - Number(!!a?.pinned)
-    || String(b?.created || '').localeCompare(String(a?.created || ''))
-    || String(b?.id || '').localeCompare(String(a?.id || '')));
+  return [...list].sort((a, b) => {
+    const pin = Number(!!b?.pinned) - Number(!!a?.pinned);
+    if (pin) return pin;
+    const ta = clipTime(a); const tb = clipTime(b);
+    if (ta !== tb) {
+      if (ta != null && tb != null) return tb - ta;
+      return tb != null ? 1 : -1;
+    }
+    return String(b?.created || '').localeCompare(String(a?.created || ''))
+      || String(b?.id || '').localeCompare(String(a?.id || ''));
+  });
 }
 const memo = new Map();
 export async function loadClips() {
@@ -679,23 +691,34 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
       h('div', { class: 'clip-layout' }, side, h('div', null, h('div', { class: 'search-row' }, q), grid)), fileIn));
 }
 
-async function copyText(text) {
+export async function copyText(text) {
+  const str = String(text ?? '');
   try {
     if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(str);
       return true;
     }
   } catch { /* fallback below */ }
+  const prev = document.activeElement;
+  let ta = null;
   try {
-    const ta = h('textarea', { value: text, 'aria-hidden': 'true', style: { position: 'fixed', top: '-9999px', left: '-9999px', opacity: '0' } });
+    ta = h('textarea', {
+      value: str,
+      readonly: true,
+      'aria-hidden': 'true',
+      tabindex: '-1',
+      style: { position: 'fixed', top: '0', left: '0', width: '1px', height: '1px', padding: '0', border: '0', opacity: '0', fontSize: '16px', pointerEvents: 'none' },
+    });
     document.body.append(ta);
-    ta.focus();
+    ta.focus({ preventScroll: true });
     ta.select();
-    const ok = document.execCommand('copy');
-    ta.remove();
-    return ok;
+    ta.setSelectionRange(0, str.length);
+    return document.execCommand('copy');
   } catch {
     return false;
+  } finally {
+    ta?.remove();
+    if (prev && prev !== document.body && prev.isConnected) prev.focus?.({ preventScroll: true });
   }
 }
 
@@ -707,7 +730,8 @@ function clipTile(c, fs) {
   const box = h('div', { class: 'clip-thumb' }, img ? h('span', { class: 'muted small' }, fallbackMsg) : null);
   if (img) imageUrl(c).then((u) => { if (u) box.replaceChildren(h('img', { src: u, alt: c.title || '', loading: 'lazy' })); });
   const rawPreview = img ? '' : unitHints(c.note);
-  const previewText = rawPreview.length > 220 ? `${rawPreview.slice(0, 220).trimEnd()}…` : rawPreview;
+  const chars = Array.from(rawPreview);
+  const previewText = chars.length > 220 ? `${chars.slice(0, 220).join('').trimEnd()}…` : rawPreview;
   return h('button', { type: 'button', class: `tile clip-tile${img ? '' : ' clip-note'}${c.pinned ? ' is-pinned' : ''}`, onclick: () => openClip(c.id) },
     img ? box : h('p', { class: 'clip-note-text' }, previewText),
     h('div', { class: 'clip-cap' },
