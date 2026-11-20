@@ -7,6 +7,7 @@ import { loadPlanner, editPaper } from './planner.js';
 import { lib, modal } from './core.js';
 import { tableSearchItems } from './tables.js';
 import { opSearchItems } from './ops.js';
+import { loadClips, openClip } from './clips.js';
 
 export function openPagePicker(curVol, onPick) {
   const input = h('input', { type: 'search', placeholder: '按标题、编号或文字搜索', autofocus: true, 'aria-label': '找页面' });
@@ -86,9 +87,10 @@ function snip(text, words) {
 }
 async function loadPool() {
   const safe = (p) => p.catch(() => []);
-  const [methods, hyps, reagents, solutions, protocols, plan, tables, ops] = await Promise.all([safe(loadMethods(lib)), safe(loadHypotheses(lib)), safe(loadReagents(lib)), safe(loadSolutions(lib)), safe(loadProtocols(lib)), loadPlanner().catch(() => ({})), safe(tableSearchItems()), safe(opSearchItems())]);
+  const [methods, hyps, reagents, solutions, protocols, plan, tables, ops, clips] = await Promise.all([safe(loadMethods(lib)), safe(loadHypotheses(lib)), safe(loadReagents(lib)), safe(loadSolutions(lib)), safe(loadProtocols(lib)), loadPlanner().catch(() => ({})), safe(tableSearchItems()), safe(opSearchItems()), safe(loadClips())]);
   const vals = (o) => Object.values(o).filter((v) => typeof v === 'string').join(' ');
   return [
+    { label: '素材库', items: clips.map((c) => ({ tag: c.pinned ? `置顶 · ${c.id}` : c.id, title: c.title || (c.kind === 'img' ? '未命名图' : '未命名'), href: '#/clips', open: () => openClip(c.id), text: `${c.id} ${c.title || ''} ${c.note || ''} ${(c.cats || []).join(' ')} ${c.src?.ref?.title || ''} ${c.src?.cite || ''} ${c.src?.fig || ''}` })) },
     { label: '资料表', items: tables },
     { label: '小实验', items: ops },
     { label: '方法卡片', items: methods.map((m) => ({ tag: m.id, title: m.title, href: `#/m/${m.id}`, text: `${m.id} ${m.title} ${m.cat} ${(m.tags || []).join(' ')} ${(m.params || []).map((p) => `${p.k} ${p.v}`).join(' ')} ${m.body || ''}` })) },

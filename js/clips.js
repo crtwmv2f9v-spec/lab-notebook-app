@@ -7,13 +7,18 @@ import { kv } from './store.js';
 import { h, icon, isImeEvent } from './util.js';
 import { DEMO, choose, demoBanner, lib, modal, requestQuietRoute, saveError, toast, topbar, view } from './core.js';
 import { route } from './app.js';
-import { WEEKDAYS, loadPlanner, toggleTask, weekStart } from './planner.js';
+import { PIN_SVG, WEEKDAYS, loadPlanner, toggleTask, weekStart } from './planner.js';
 import { lookupPaper, paperKey, paperKeywords } from './home.js';
 
-// clip = { id, kind: 'img' | 'note', title, cats: [], note, file, driveId, w, h,
+// clip = { id, kind: 'img' | 'note', title, cats: [], note, pinned, file, driveId, w, h,
 //          src: { zotero, page, fig, cite, doi, ref: { title, authors, journal, year, doi }, task }, created, updated }
 export const clipPath = (id) => `clips/${id}.json`;
 export const clipIds = () => [...lib.tree.keys()].map((p) => (p.match(/^clips\/(F-\d{4})\.json$/) || [])[1]).filter(Boolean).sort();
+export function sortClips(list) {
+  return [...list].sort((a, b) => Number(!!b?.pinned) - Number(!!a?.pinned)
+    || String(b?.created || '').localeCompare(String(a?.created || ''))
+    || String(b?.id || '').localeCompare(String(a?.id || '')));
+}
 const memo = new Map();
 export async function loadClips() {
   return (await Promise.all(clipIds().map(async (id) => {
@@ -617,9 +622,8 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
   const inCat = (c) => (cat === ALL ? true : cat === UNSORTED ? !(c.cats || []).length : (c.cats || []).includes(cat));
   const draw = () => {
     const t = q.value.trim().toLowerCase();
-    const hit = clips.filter((c) => inCat(c) && (!paper || c.src?.task === paper)
-      && (!t || `${c.id} ${c.title} ${c.note} ${(c.cats || []).join(' ')} ${srcLine(c.src)} ${c.src?.ref?.title || ''} ${c.src?.caption || ''}`.toLowerCase().includes(t)))
-      .sort((a, b) => String(b.created).localeCompare(String(a.created)));
+    const hit = sortClips(clips.filter((c) => inCat(c) && (!paper || c.src?.task === paper)
+      && (!t || `${c.id} ${c.title} ${c.note} ${(c.cats || []).join(' ')} ${srcLine(c.src)} ${c.src?.ref?.title || ''} ${c.src?.caption || ''}`.toLowerCase().includes(t))));
     grid.replaceChildren(...(hit.length ? hit.map((c) => clipTile(c, fs)) : [h('div', { class: 'tile clip-empty' },
       h('p', null, clips.length ? '这里没有符合条件的素材。' : '素材库还是空的。'),
       h('p', { class: 'muted' }, '在 Zotero 的 PDF 里按 ⌥5（选择区域）框住一张图 → ⌘C → 回到这里按 ⌘V，图片和出处一起进来。也可以点“记一条文字”记下 template 框线、作图参数这类杂项。'))]));
@@ -659,10 +663,11 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
   window.__clipPaste = onPaste;
   document.addEventListener('paste', onPaste);
   completeSources(clips);
+  const pinnedCount = clips.filter((c) => c.pinned).length;
   const title = pTask ? `素材库 · ${pTask.ref ? (pTask.keys || paperKeywords(pTask.ref.title)) : pTask.text}` : cat === ALL ? '素材库' : cat === UNSORTED ? '素材库 · 未分类' : `素材库 · ${cat}`;
   return h('div', { class: 'view clips' },
     topbar({ back: cat !== ALL || paper ? '#/clips' : '#/', backLabel: cat !== ALL || paper ? '素材库' : '首页', title,
-      sub: `${clips.filter((c) => c.kind === 'img').length} 张图 · ${clips.filter((c) => c.kind !== 'img').length} 条文字 · Zotero 里 ⌥5 框图 → ⌘C → 这里 ⌘V`,
+      sub: `${pinnedCount ? `置顶 ${pinnedCount} · ` : ''}${clips.filter((c) => c.kind === 'img').length} 张图 · ${clips.filter((c) => c.kind !== 'img').length} 条文字 · Zotero 里 ⌥5 框图 → ⌘C → 这里 ⌘V`,
       actions: [
         !DEMO ? h('button', { class: 'btn ghost', type: 'button', title: '设置或切换 Google Drive 图床文件夹', onclick: () => connectGoogleDrive(() => route({ quiet: true })) }, h('span', { class: 'wide-only' }, fs.state === 'ok' ? 'Google Drive ✓' : 'Google Drive')) : null,
         h('button', { class: 'btn ghost', type: 'button', title: '连接 Zotero 账号：自动补全题目、DOI 和跳回原页的链接', onclick: () => connectZoteroApi(() => route({ quiet: true })) }, h('span', { class: 'wide-only' }, zoteroApi() ? 'Zotero ✓' : '连接 Zotero')),
@@ -674,6 +679,26 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
       h('div', { class: 'clip-layout' }, side, h('div', null, h('div', { class: 'search-row' }, q), grid)), fileIn));
 }
 
+async function copyText(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* fallback below */ }
+  try {
+    const ta = h('textarea', { value: text, 'aria-hidden': 'true', style: { position: 'fixed', top: '-9999px', left: '-9999px', opacity: '0' } });
+    document.body.append(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 function clipTile(c, fs) {
   const img = c.kind === 'img';
   const fallbackMsg = fs.mode === 'gdrive'
@@ -681,10 +706,12 @@ function clipTile(c, fs) {
     : (fs.state === 'ok' ? '图片文件找不到' : '图片在本地文件夹里');
   const box = h('div', { class: 'clip-thumb' }, img ? h('span', { class: 'muted small' }, fallbackMsg) : null);
   if (img) imageUrl(c).then((u) => { if (u) box.replaceChildren(h('img', { src: u, alt: c.title || '', loading: 'lazy' })); });
-  return h('button', { type: 'button', class: `tile clip-tile${img ? '' : ' clip-note'}`, onclick: () => openClip(c.id) },
-    img ? box : h('p', { class: 'clip-note-text' }, unitHints(c.note).slice(0, 220)),
+  const rawPreview = img ? '' : unitHints(c.note);
+  const previewText = rawPreview.length > 220 ? `${rawPreview.slice(0, 220).trimEnd()}…` : rawPreview;
+  return h('button', { type: 'button', class: `tile clip-tile${img ? '' : ' clip-note'}${c.pinned ? ' is-pinned' : ''}`, onclick: () => openClip(c.id) },
+    img ? box : h('p', { class: 'clip-note-text' }, previewText),
     h('div', { class: 'clip-cap' },
-      h('b', null, c.title || (img ? '未命名图' : '未命名')),
+      h('b', null, c.pinned ? h('span', { class: 'clip-pin-tag', 'aria-label': '已置顶', html: `${PIN_SVG}<span>置顶</span>` }) : null, c.title || (img ? '未命名图' : '未命名')),
       srcLine(c.src) ? h('span', { class: 'clip-src' }, srcLine(c.src)) : null,
       (c.cats || []).length ? h('span', { class: 'clip-tags' }, c.cats.join(' · ')) : null));
 }
@@ -716,9 +743,25 @@ export async function openClip(id) {
         driveHref ? h('a', { class: 'btn small ghost', href: driveHref, target: '_blank', rel: 'noopener' }, 'Google Drive 原图') : null,
         s.task ? h('a', { class: 'btn small ghost', href: `#/clips?paper=${s.task}`, onclick: () => document.querySelectorAll('.modal-root').forEach((m) => m.close?.()) }, '这篇的所有素材') : null))
       : h('p', { class: 'muted small' }, '没有记出处。'),
-    h('p', { class: 'muted small' }, `${c.id}${c.file ? ` · ${c.file}` : ''}`));
+    h('p', { class: 'muted small' }, `${c.id}${c.pinned ? ' · 已置顶' : ''}${c.file ? ` · ${c.file}` : ''}`));
+  const hasNote = !!(c.note && String(c.note).trim());
   const dlg = modal({ title: c.title || c.id, wide: true, body, buttons: [
     { label: '删除', danger: true, run: async () => { if (await deleteClip(c)) { dlg.close(); route({ quiet: true }); } return false; } },
+    { label: c.pinned ? '取消置顶' : '置顶', run: async () => {
+      const next = structuredClone(c);
+      if (next.pinned) delete next.pinned; else next.pinned = true;
+      try {
+        await saveClip(next, `${next.pinned ? 'Pin' : 'Unpin'} clip ${next.id}`);
+        toast(next.pinned ? `${next.id} 已置顶。` : `${next.id} 已取消置顶。`);
+        dlg.close();
+        route({ quiet: true });
+      } catch (e) { toast(saveError(e)); }
+      return false;
+    } },
+    hasNote ? { label: c.kind === 'img' ? '复制备注' : '复制全文', run: async () => {
+      toast(await copyText(c.note) ? '已复制到剪贴板。' : '浏览器不允许自动复制，请手动选中复制。');
+      return false;
+    } } : null,
     c.kind === 'img' ? { label: '复制图片', run: async () => {
       const b = await imageBlob(c); if (!b) { toast('读不到图片文件。'); return false; }
       try { const png = b.type === 'image/png' ? b : await toPng(b); await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': png })]); toast('图片已复制，可以粘贴到 PPT / Word。'); } catch { toast('浏览器不允许复制图片。'); }
@@ -804,7 +847,11 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
   newCat.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEvent(e)) { e.preventDefault(); addCats(); } });
   newCat.addEventListener('blur', addCats);
   drawChips();
-  const note = h('textarea', { id: 'cl-note', rows: x.kind === 'img' ? 3 : 6, placeholder: x.kind === 'img' ? '可选：为什么存这张，打算怎么用' : '例如：Nature 模板：框线 0.5 pt，坐标字号 7 pt，图宽单栏 89 mm / 双栏 183 mm' }, x.note || noteText || '');
+  const initNote = x.note || noteText || '';
+  const noteRows = x.kind === 'img' ? 3 : Math.min(14, Math.max(6, initNote.split('\n').length + 1));
+  const note = h('textarea', { id: 'cl-note', rows: noteRows, placeholder: x.kind === 'img' ? '可选：为什么存这张，打算怎么用' : '例如：Nature 模板：框线 0.5 pt，坐标字号 7 pt，图宽单栏 89 mm / 双栏 183 mm' }, initNote);
+  const pin = h('input', { id: 'cl-pin', type: 'checkbox' });
+  pin.checked = !!x.pinned;
   const hint = h('p', { class: 'muted small clip-hint' });
   const drawHint = () => { const t = unitHints(note.value); hint.textContent = t !== note.value ? `换算：${(t.match(/\d+(?:\.\d+)?\s*(?:pt|mm)（≈[^）]+）/g) || []).join('；')}` : ''; };
   note.addEventListener('input', drawHint); drawHint();
@@ -873,6 +920,7 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
   const form = h('div', { class: 'form clip-form' },
     x.kind === 'img' ? preview : null,
     lbl('cl-title', '标题'), title,
+    h('label', { class: 'check', for: 'cl-pin' }, pin, '置顶显示（固定排在素材库最前面）'),
     h('span', { class: 'label' }, '分类（可多选；点一下选中/取消）'), chips, newCat,
     lbl('cl-note', x.kind === 'img' ? '备注' : '内容'), note, hint,
     h('details', { class: 'clip-src-box', open: x.kind === 'img' },
@@ -909,6 +957,7 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
       for (const k of Object.keys(src)) if (src[k] === '' || src[k] == null) delete src[k];
       if (isNew) { x.id = nextId(); x.created = nowISO(); }
       Object.assign(x, { title: title.value.trim(), cats: [...picked], note: note.value.trim(), src });
+      if (pin.checked) x.pinned = true; else delete x.pinned;
       if (pic) {
         const ext = (pic.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
         const who = src.ref ? `${String(src.ref.authors || '').split(/[ ,]/)[0]}${src.ref.year || ''}` : (src.cite || '').replace(/ et al\./, '');

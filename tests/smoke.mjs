@@ -205,6 +205,90 @@ try {
     await evaluate(clean); await shot('clips');
     return `${r.tiles} clips, ${r.cats} categories`;
   });
+  await check('clips-pin-and-copy', async () => {
+    await go('#/clips', "document.querySelectorAll('.clip-tile').length >= 2");
+    const r = await evaluate(`
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const m = await import('./js/clips.js');
+      const core = await import('./js/core.js');
+      const s = await import('./js/searchui.js');
+      // 1. sortClips edge cases: pinned first, missing created, non-mutating
+      const raw = [
+        { id: 'F-0001', created: '2026-11-01T00:00:00+08:00' },
+        { id: 'F-0002', created: '2026-11-10T00:00:00+08:00' },
+        { id: 'F-0003', pinned: true },
+        { id: 'F-0004', pinned: true, created: '2026-11-05T00:00:00+08:00' },
+      ];
+      const sorted = m.sortClips(raw);
+      const sortOk = raw[0].id === 'F-0001'
+        && sorted.map((x) => x.id).join(',') === 'F-0004,F-0003,F-0002,F-0001';
+
+      // 2. Initial order: F-0002 (newer) before F-0001
+      const initTitles = [...document.querySelectorAll('.clip-tile .clip-cap b')].map((el) => el.textContent);
+      const initOrderOk = initTitles[0].includes('垂直 OECT') && initTitles[1].includes('Nature 作图');
+
+      // 3. Open F-0001, test copy raw note (without unitHints injection) and keep modal open
+      let copied = '';
+      const origClip = navigator.clipboard;
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (txt) => { copied = txt; } } });
+      [...document.querySelectorAll('.clip-tile')].find((el) => el.textContent.includes('Nature 作图')).click();
+      await wait(120);
+      const copyBtn = [...document.querySelectorAll('.modal-foot button')].find((b) => b.textContent === '复制全文');
+      copyBtn?.click();
+      await wait(80);
+      const copyRawOk = copied.includes('框线 0.5 pt') && !copied.includes('≈0.18 mm') && !!document.querySelector('.modal-root');
+      if (origClip !== undefined) Object.defineProperty(navigator, 'clipboard', { configurable: true, value: origClip });
+
+      // 4. Pin F-0001 from detail modal -> becomes first card with .is-pinned & badge & topbar count
+      const pinBtn = [...document.querySelectorAll('.modal-foot button')].find((b) => b.textContent === '置顶');
+      pinBtn?.click();
+      await wait(250);
+      const firstAfterPin = document.querySelector('.clip-tile');
+      const pinnedUiOk = !!firstAfterPin?.classList.contains('is-pinned')
+        && !!firstAfterPin?.querySelector('.clip-pin-tag')
+        && firstAfterPin.textContent.includes('Nature 作图')
+        && (document.querySelector('.tb-sub')?.textContent || '').includes('置顶 1');
+
+      // 5. Re-open -> edit -> verify #cl-pin checked -> unpin & save -> order restored
+      firstAfterPin.click();
+      await wait(120);
+      const hasUnpinBtn = [...document.querySelectorAll('.modal-foot button')].some((b) => b.textContent === '取消置顶');
+      [...document.querySelectorAll('.modal-foot button')].find((b) => b.textContent === '修改')?.click();
+      await wait(150);
+      const pinChk = document.getElementById('cl-pin');
+      const chkWasOn = !!pinChk?.checked;
+      pinChk.checked = false;
+      [...document.querySelectorAll('.modal-foot button')].find((b) => b.textContent === '保存')?.click();
+      await wait(250);
+      const unpinnedUiOk = !document.querySelector('.clip-tile.is-pinned')
+        && document.querySelector('.clip-tile')?.textContent.includes('垂直 OECT');
+
+      // 6. Create long pinned note (>220 chars) -> ellipsis preview + global search hit -> cleanup
+      await m.editClip(null, { kind: 'note' });
+      await wait(120);
+      document.getElementById('cl-title').value = 'SVG 置顶提示词测试';
+      document.getElementById('cl-pin').checked = true;
+      document.getElementById('cl-note').value = '矢量令牌测试词：' + '低饱和扁平配色与几何拓扑约束。'.repeat(20);
+      [...document.querySelectorAll('.modal-foot button')].find((b) => b.textContent === '保存')?.click();
+      await wait(250);
+      const longTile = document.querySelector('.clip-tile.is-pinned');
+      const longTruncOk = !!longTile && longTile.querySelector('.clip-note-text')?.textContent.endsWith('…');
+      s.openSearch('矢量令牌测试词');
+      await wait(220);
+      const searchHitOk = [...document.querySelectorAll('.search-group h3')].some((el) => el.textContent.startsWith('素材库'))
+        && [...document.querySelectorAll('.search-others .xid-tag')].some((el) => el.textContent.includes('置顶'));
+      document.querySelector('.modal-root')?.close?.();
+
+      // Cleanup temporary clip
+      const added = (await m.loadClips()).find((x) => x.title === 'SVG 置顶提示词测试');
+      if (added) await core.lib.commit('Cleanup test clip', async () => ({ changes: [{ path: m.clipPath(added.id), delete: true }] }));
+      await wait(120);
+      return { sortOk, initOrderOk, copyRawOk, pinnedUiOk, hasUnpinBtn, chkWasOn, unpinnedUiOk, longTruncOk, searchHitOk };
+    `);
+    const bad = Object.entries(r).filter(([, v]) => !v).map(([k]) => k);
+    if (bad.length) throw new Error(`failed checks: ${bad.join(', ')} (${JSON.stringify(r)})`);
+    return 'sort, pin/unpin modal & editor, raw copy without unitHints, truncation, global search';
+  });
   await check('weekboard', async () => {
     await go('#/', "document.querySelectorAll('.wb .wb-col').length === 8 && document.querySelector('.wb-col.is-today .wb-card')");
     const r = await evaluate(`const p = await import('./js/planner.js');
