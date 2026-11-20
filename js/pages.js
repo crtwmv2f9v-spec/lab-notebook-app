@@ -9,10 +9,10 @@ import {
   writeMaterials, putSection, sectionOf,
 } from './lab.js';
 import { search } from './search.js';
-import { h, icon } from './util.js';
+import { h, icon, isImeEvent } from './util.js';
 import {
   S, confirmTyped, copyText, demoBanner, field, lib, menu, modal,
-  prepareFile, saveError, show, sigText, signerName, thead, toast, topbar,
+  prepareFile, requestQuietRoute, saveError, show, sigText, signerName, thead, toast, topbar,
   view, viewMissing, choose } from './core.js';
 import { CLOTHS, clothPicker, cover, openNewVolume } from './home.js';
 import { changeTasks, dayLabel, exportIcs, loadTasks, newTask, weekStart } from './planner.js';
@@ -425,7 +425,7 @@ export async function updatePage(vol, num, mutate, message, reason = '') {
   const next = await mutate({ fm: structuredClone(fm), body });
   if (fm.signed) next.fm.amended = [...(next.fm.amended || []), amendEntry(reason || message)];
   // Redraw once the dialog that started this has closed.
-  setTimeout(function again() { if (document.querySelector('.modal-root')) setTimeout(again, 100); else route({ quiet: true }); }, 300);
+  setTimeout(function again() { if (document.querySelector('.modal-root')) setTimeout(again, 100); else requestQuietRoute(); }, 300);
   return lib.savePage({
     id: pending?.id, vol, num, isNew: !!pending?.isNew, message,
     baseSha: pending ? (pending.baseSha ?? null) : (lib.tree.get(pagePath(vol, num)) || null),
@@ -615,7 +615,7 @@ export function openNaming(fm, num) {
           h('tbody', null, rows.map(([a, b, c]) => h('tr', null, h('td', null, a), h('td', null, copyBtn(b)), h('td', { class: 'muted' }, c))))))),
     buttons: [{ label: '关闭' }],
   });
-  setTimeout(() => sample.focus(), 40);
+  setTimeout(() => { if (sample.isConnected && !sample.closest('.modal')?.contains(document.activeElement)) sample.focus(); }, 40);
 }
 
 // ----- paper record card: printed before the experiment, filled at the bench -----
@@ -820,12 +820,12 @@ export async function setSeries(vol, num, fm) {
       toast(v ? `已归入“${v}”。` : '已移出实验主题。');
     } catch (e) { toast(saveError(e)); return false; }
   };
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); document.querySelector('.modal-root .btn.primary')?.click(); } });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEvent(e)) { e.preventDefault(); document.querySelector('.modal-root .btn.primary')?.click(); } });
   modal({ title: `这一页属于哪个实验主题`, body: h('div', { class: 'form' },
     h('label', { for: 'ss-name' }, '实验主题（同一个实验分几天做，填同一个名字；留空 = 不属于任何主题）'), input,
     names.length ? h('span', { class: 'label' }, '本卷已有的主题') : null, names.length ? chips : null),
   buttons: [{ label: '取消' }, { label: '保存', primary: true, run: save }] });
-  setTimeout(() => input.focus(), 40);
+  setTimeout(() => { if (input.isConnected && !input.closest('.modal')?.contains(document.activeElement)) input.focus(); }, 40);
 }
 
 export async function openDeleteVolume(v) {

@@ -5,7 +5,7 @@ import {
   addDays, daysFrom, icsFor, loadReagents, loadSolutions, parseFollowup, reagentAlerts, solutionAlerts,
   PROJECT_STAGE, PROJECT_PRIORITY, REVIEW_EVERY, projectReviewAlerts,
 } from './lab.js';
-import { h, icon } from './util.js';
+import { h, icon, isImeEvent, replaceAround } from './util.js';
 import { choose, demoBanner, downloadText, field, lib, modal, saveError, show, toast, topbar, view } from './core.js';
 import { hero, redrawHome, uid, cardHead, foldList } from './home.js';
 import { toggleFollowup } from './pages.js';
@@ -151,14 +151,16 @@ const taped = (tape, play, f) => { idTape = { ids: tape, play, i: 0 }; try { ret
 export function changePlanner(mutate, message, redraw) {
   const mine = planLocal; // the count of unsaved edits belongs to this copy, whatever replaces it later
   const tape = [];
-  taped(tape, false, () => mutate(mine.doc)); mine.dirty += 1;
-  redraw?.(); refreshDueBar();
+  if (mine) {
+    taped(tape, false, () => mutate(mine.doc)); mine.dirty += 1;
+    redraw?.(); refreshDueBar();
+  }
   planQueue = planQueue.then(() => lib.commit(message, async (l) => {
     const doc = planDoc(await l.readJSON(TASKS_PATH, {}));
-    taped(tape, true, () => mutate(doc));
-    return { changes: [{ path: TASKS_PATH, data: `${JSON.stringify(doc, null, 1)}\n` }], after: () => { mine.dirty -= 1; if (!mine.dirty) mine.doc = doc; } };
-  })).then(() => { if (planLocal === mine && !mine.dirty) mine.sha = lib.tree.get(TASKS_PATH); })
-    .catch((e) => { toast(e instanceof NetworkError ? '离线中：没有同步，联网后请再操作一次。' : `没有保存：${e.message}`); mine.dirty = 0; if (planLocal === mine) planLocal = null; redraw?.(); refreshDueBar(); });
+    taped(tape, Boolean(mine), () => mutate(doc));
+    return { changes: [{ path: TASKS_PATH, data: `${JSON.stringify(doc, null, 1)}\n` }], after: () => { if (mine) { mine.dirty -= 1; if (!mine.dirty) mine.doc = doc; } else { planLocal = { sha: l.tree.get(TASKS_PATH) || null, doc, dirty: 0 }; } } };
+  })).then(() => { if (mine && planLocal === mine && !mine.dirty) mine.sha = lib.tree.get(TASKS_PATH); if (!mine) { redraw?.(); refreshDueBar(); } })
+    .catch((e) => { toast(e instanceof NetworkError ? '离线中：没有同步，联网后请再操作一次。' : `没有保存：${e.message}`); if (mine) mine.dirty = 0; if (planLocal === mine) planLocal = null; redraw?.(); refreshDueBar(); });
   return planQueue;
 }
 export const changeTasks = (mutate, message, redraw) => changePlanner((d) => mutate(d.tasks), message, redraw);
@@ -176,7 +178,7 @@ export function editable(text, onSave, cls = 'task-text') {
     const input = h('input', { class: `${cls} edit-input`, value: text, 'aria-label': '修改' });
     let done = false;
     const finish = (save) => { if (done) return; done = true; const v = input.value.trim(); input.replaceWith(span); if (save && v && v !== text) { span.textContent = v; onSave(v); } };
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
+    input.addEventListener('keydown', (e) => { if (isImeEvent(e)) return; if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
     input.addEventListener('blur', () => finish(true));
     span.replaceWith(input); input.focus(); input.select();
   };
@@ -223,7 +225,7 @@ export function reminderRow(x, redraw) {
 export function addBox(placeholder, onAdd) {
   const input = h('input', { class: 'add-input', placeholder, enterkeyhint: 'done', 'aria-label': placeholder });
   const go = () => { const v = input.value.trim(); if (!v) return; input.value = ''; onAdd(v); input.focus(); };
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEvent(e)) { e.preventDefault(); go(); } });
   return h('div', { class: 'add-row' }, h('span', { class: 'add-plus' }, icon('plus', 16)), input, h('button', { class: 'btn small add-btn', type: 'button', onclick: go }, '添加'));
 }
 
@@ -338,9 +340,12 @@ export function openPaperNotes(paperId, kind) {
   const upd = (k, mutate, msg) => changePlanner((d) => { const y = d.papers.find((z) => z.id === paperId); if (!y) return; y[k] = arr(y[k]); mutate(y[k]); }, msg, () => { draw(); redrawHome(); });
   const one = (k, id, f, msg) => upd(k, (l) => { const y = l.find((z) => z.id === id); if (y) f(y); }, msg);
   const where = h('input', { id: 'pn-where', autocomplete: 'off' });
+  const whereLbl = h('label', { for: 'pn-where' }, '位置');
   const who = h('select', { id: 'pn-by', 'aria-label': '谁提的' }, NOTE_BY.map((o) => h('option', { selected: by === o }, o)));
   who.addEventListener('change', () => { try { localStorage.setItem('labnote-note-by', who.value); } catch { /* private window */ } });
   const text = h('textarea', { id: 'pn-text', rows: 3, placeholder: '意见原话。回车保存；一次贴多行 = 每行一条（Shift+回车换行）' });
+  const pnAdd = h('div', { class: 'pn-add' }, h('div', { class: 'pair' }, h('div', null, whereLbl, where), h('div', null, h('label', { for: 'pn-by' }, '谁提的'), who)), text);
+  root.append(pnAdd);
   const add = () => {
     const lines = text.value.split(/\n+/).map((l) => l.replace(/^\s*(?:[-•*]|\d+[.、)）])\s*/, '').trim()).filter(Boolean);
     if (!lines.length) return false;
@@ -348,7 +353,7 @@ export function openPaperNotes(paperId, kind) {
     upd(tab, (l) => { for (const t of lines) l.push({ id: uid('N'), text: t, ...(sc ? { sec: sc } : {}), ...(w ? { where: w } : {}), by: b, at: nowISO() }); }, `Paper notes: add ${PAPER_NOTES[tab][0]}`);
     show = 'open'; text.focus(); return false;
   };
-  text.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); add(); } });
+  text.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !isImeEvent(e)) { e.preventDefault(); add(); } });
   const item = (k, x) => {
     const st = noteState(x);
     const trace = [`${x.by || '我'} ${fmtDate(x.at)} 提出`, st === 'done' ? `${fmtDate(x.doneAt)} 完成` : st === 'drop' ? `${fmtDate(x.dropAt)} 不采纳` : null].filter(Boolean).join(' → ');
@@ -380,9 +385,11 @@ export function openPaperNotes(paperId, kind) {
     const gOf = (x) => (tab === 'ms' ? (MS_SECTIONS.includes(x.sec) ? x.sec : '') : figGroup(x));
     const shown = items.filter((x) => show === 'all' || noteState(x) === show);
     const byWho = NOTE_BY.map((o) => [o, [...arr(p.fig), ...arr(p.ms)].filter((x) => (x.by || '我') === o)]).filter(([, l]) => l.length);
+    whereLbl.textContent = tab === 'ms' ? `${sec} 里的位置（可不填）` : '位置';
     where.placeholder = PAPER_NOTES[tab][2];
     const focusId = document.activeElement?.id;
-    root.replaceChildren(
+    const keepInAdd = pnAdd.contains(document.activeElement);
+    replaceAround(root, pnAdd, [
       h('div', { class: 'pn-dash' },
         ring(all.done + all.drop, all.all, 76),
         h('div', { class: 'pn-nums' },
@@ -394,15 +401,16 @@ export function openPaperNotes(paperId, kind) {
       h('div', { class: 'pn-tabs', role: 'tablist' }, Object.entries(PAPER_NOTES).map(([k, [name]]) => { const s = paperNoteStats(p, [k]); return h('button', { type: 'button', role: 'tab', class: `pn-tab${tab === k ? ' on' : ''}`, 'aria-selected': String(tab === k), onclick: () => { tab = k; draw(); } }, name, h('b', null, String(s.all)), s.open ? h('i', null, `${s.open} 待完成`) : null); }),
         h('button', { class: 'btn small ghost pn-copy', type: 'button', title: '复制成一张表（Markdown），可贴给导师或存档', onclick: () => { navigator.clipboard?.writeText(markdown()).then(() => toast('已复制全部意见与处理情况。'), () => toast('复制失败。')); } }, '复制全部')),
       tab === 'ms' ? h('div', { class: 'clip-chips pn-secs', role: 'radiogroup', 'aria-label': '稿件的哪一部分' }, MS_SECTIONS.map((o) => { const n = items.filter((x) => x.sec === o && noteState(x) === 'open').length; return h('button', { type: 'button', class: `chip${sec === o ? ' on' : ''}`, 'aria-pressed': String(sec === o), onclick: () => { sec = o; draw(); document.getElementById('pn-text')?.focus(); } }, o, n ? h('b', null, String(n)) : null); })) : null,
-      h('div', { class: 'pn-add' }, h('div', { class: 'pair' }, h('div', null, h('label', { for: 'pn-where' }, tab === 'ms' ? `${sec} 里的位置（可不填）` : '位置'), where), h('div', null, h('label', { for: 'pn-by' }, '谁提的'), who)), text),
+    ], [
       h('div', { class: 'pn-filter' }, [['open', `待完成 ${st.open}`], ['done', `已完成 ${st.done}`], ['drop', `不采纳 ${st.drop}`], ['all', `全部 ${st.all}`]].map(([k, l]) => h('button', { type: 'button', class: `chip${show === k ? ' on' : ''}`, 'aria-pressed': String(show === k), onclick: () => { show = k; draw(); } }, l)), noteBar(st, 'wide')),
       shown.length ? h('div', { class: 'pn-groups' }, groups.map((g) => { const l = shown.filter((x) => gOf(x) === g); return l.length ? h('section', { class: 'pn-group' }, h('h4', null, g || '未分章节', h('span', null, String(l.length))), h('ul', { class: 'tasks pn-list' }, l.map((x) => item(tab, x)))) : null; }))
-        : h('p', { class: 'muted pn-none' }, items.length ? { open: '没有待完成的意见。', done: '还没有已完成的。', drop: '没有不采纳的。', all: '' }[show] : '还没有。把打印稿上的批注一条一条敲进来，改完一条勾一条。'));
-    if (focusId) document.getElementById(focusId)?.focus();
+        : h('p', { class: 'muted pn-none' }, items.length ? { open: '没有待完成的意见。', done: '还没有已完成的。', drop: '没有不采纳的。', all: '' }[show] : '还没有。把打印稿上的批注一条一条敲进来，改完一条勾一条。'),
+    ]);
+    if (focusId && !keepInAdd) document.getElementById(focusId)?.focus();
   };
   draw();
   modal({ title: `修改意见 · ${paper().title}`, wide: true, body: root, buttons: [{ label: '关闭' }, { label: '添加', primary: true, run: add }] });
-  setTimeout(() => text.focus(), 40);
+  setTimeout(() => { if (text.isConnected && !root.contains(document.activeElement)) text.focus(); }, 40);
 }
 export function editPaper(p) {
   const isNew = !p; const x = p ? { ...p } : { id: uid('A'), stage: '写作中' };

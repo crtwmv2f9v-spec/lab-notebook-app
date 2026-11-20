@@ -7,7 +7,7 @@ import {
   readSteps, replaceSection, sampleNo, samplesTemplate, writeMaterials, writeSamples, writeSteps,
 } from './lab.js';
 import { search } from './search.js';
-import { debounce, fmtBytes, h, icon } from './util.js';
+import { debounce, fmtBytes, h, icon, isComposing, isImeEvent } from './util.js';
 import { S, choose, demoBanner, field, lib, modal, prepareFile, saveError, signerName, thead, toast, topbar, view, viewMissing, menu } from './core.js';
 import { amendEntry, pageCtx, reasonField, refLink, updatePage, newXid } from './pages.js';
 import { pdfPreview } from './printing.js';
@@ -111,8 +111,12 @@ export async function viewEditor(vol, num, params) {
 
   const autosize = () => { ta.style.height = 'auto'; ta.style.height = `${Math.max(ta.scrollHeight + 4, 360)}px`; };
   const changed = () => { status.textContent = '编辑中'; saveDraft(); renderPreview(); };
-  for (const el of [titleIn, dateIn, tagsIn]) el.addEventListener('input', changed);
-  ta.addEventListener('input', () => { autosize(); changed(); });
+  for (const el of [titleIn, dateIn, tagsIn]) {
+    el.addEventListener('input', (e) => { if (!e.isComposing && !isComposing()) changed(); });
+    el.addEventListener('compositionend', changed);
+  }
+  ta.addEventListener('input', (e) => { if (e.isComposing || isComposing()) return; autosize(); changed(); });
+  ta.addEventListener('compositionend', () => { autosize(); changed(); });
 
   // ----- text helpers -----
   const fire = () => ta.dispatchEvent(new Event('input'));
@@ -257,6 +261,7 @@ export async function viewEditor(vol, num, params) {
     tb('attach', '附件', () => fileIn.click()));
 
   ta.addEventListener('keydown', (e) => {
+    if (isImeEvent(e)) return;
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); wrap('**'); }
     if (mod && e.key.toLowerCase() === 'i') { e.preventDefault(); wrap('*'); }
@@ -401,7 +406,7 @@ export async function openSamplesEditor(vol, num) {
         r.map((v, j) => h('td', { class: isResultCol(t.cols[j]) ? 'res' : null }, h('input', {
           value: v, 'aria-label': `${r[0]} ${colLabel(t.cols[j])}`,
           oninput: (e) => { r[j] = e.target.value; },
-          onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); grid.querySelectorAll('tbody tr')[i + 1]?.children[j]?.querySelector('input')?.focus(); } },
+          onkeydown: (e) => { if (e.key === 'Enter' && !isImeEvent(e)) { e.preventDefault(); grid.querySelectorAll('tbody tr')[i + 1]?.children[j]?.querySelector('input')?.focus(); } },
         }))),
         h('td', null, h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '删除这一行', onclick: () => { t.rows.splice(i, 1); draw(); } }, icon('close', 16))))))));
   };
@@ -534,7 +539,7 @@ export async function openMaterials(vol, num, { text = null, onInsert = null, re
       },
     }],
   });
-  setTimeout(() => q.focus(), 50);
+  setTimeout(() => { if (q.isConnected && !q.closest('.modal')?.contains(document.activeElement)) q.focus(); }, 50);
 }
 
 export async function openStepsEditor(vol, num) {
@@ -560,7 +565,7 @@ export async function openStepsEditor(vol, num) {
           value: st[k] || '', placeholder: i === 0 ? PH[k] : '', 'aria-label': `第 ${i + 1} 步 ${l}`,
           list: { op: 'st-ops', what: 'st-what', into: 'st-into' }[k] || null,
           oninput: (e) => { st[k] = e.target.value; },
-          onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); if (i === steps.length - 1) addRow(); grid.querySelectorAll('tbody tr')[i + 1]?.querySelector(`td.c-${k} input`)?.focus(); } },
+          onkeydown: (e) => { if (e.key === 'Enter' && !isImeEvent(e)) { e.preventDefault(); if (i === steps.length - 1) addRow(); grid.querySelectorAll('tbody tr')[i + 1]?.querySelector(`td.c-${k} input`)?.focus(); } },
         }))),
         h('td', { class: 'row-tools' },
           h('button', { class: 'btn icon small ghost', type: 'button', 'aria-label': '上移', title: '上移', disabled: i === 0, onclick: () => { [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]]; draw(); } }, '↑'),

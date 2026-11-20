@@ -203,7 +203,7 @@ export async function editMethod(m, vol, presetPapers = []) {
       },
     }],
   });
-  setTimeout(() => title.focus(), 50);
+  setTimeout(() => { if (title.isConnected && !title.closest('.modal')?.contains(document.activeElement)) title.focus(); }, 50);
 }
 
 // Picker used by the page editor: cards of this volume first.
@@ -216,7 +216,7 @@ export async function pickMethod(vol, onPick) {
   const draw = () => { const t = q.value.trim().toLowerCase(); box.replaceChildren(...all.filter((m) => !t || `${m.id} ${m.title} ${m.cat}`.toLowerCase().includes(t)).slice(0, 40).map((m) => h('button', { type: 'button', class: 'mt-hit', onclick: () => { onPick(m); dlg?.close(); } }, h('span', { class: 'xid-tag' }, m.id), ' ', h('b', null, m.title), h('span', { class: 'muted' }, ` · ${m.cat}${m.vol !== vol ? ` · ${lib.volume(m.vol)?.title || ''}` : ''}`)))); };
   q.addEventListener('input', draw); draw();
   dlg = modal({ title: '引用方法卡片', body: h('div', { class: 'form' }, q, box), buttons: [{ label: '取消' }] });
-  setTimeout(() => q.focus(), 50);
+  setTimeout(() => { if (q.isConnected && !dlg.contains(document.activeElement)) q.focus(); }, 50);
 }
 
 // Methods draft: cards grouped by category into Markdown or Word, ready to edit into the paper.

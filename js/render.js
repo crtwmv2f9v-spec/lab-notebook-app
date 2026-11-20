@@ -1,5 +1,5 @@
 // Markdown, math, page links, charts, data tables and Jupyter notebooks.
-import { esc, h, loadScript, icon } from './util.js';
+import { esc, h, loadScript, icon, isImeEvent } from './util.js';
 import { parseRef, parseFrontMatter } from './model.js';
 import { parseCSV, isResultCol, colLabel, sampleNo, parseSteps, reactionHTML, loadReagents, parseQuote, sectionOf, EXP_RE, loadSolutions, loadHypothesis, evidenceCounts, hypObservations, rationaleItems, predictionState, CODE_SRC, hypItem, parseMaterials, loadMethod } from './lab.js';
 
@@ -272,7 +272,7 @@ export function lightbox(src, alt) {
     h('img', { src, alt: alt || '' }),
     h('button', { class: 'btn icon lightbox-close', 'aria-label': 'Close' }, icon('close')));
   const close = () => { box.remove(); document.removeEventListener('keydown', onKey); };
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  const onKey = (e) => { if (e.key === 'Escape' && !isImeEvent(e)) close(); };
   box.addEventListener('click', (e) => { if (e.target !== box.querySelector('img')) close(); });
   document.addEventListener('keydown', onKey);
   document.body.append(box);

@@ -4,8 +4,8 @@
 import { ZONE, nowISO, todayISO, zoned } from './model.js';
 import { addDays } from './lab.js';
 import { kv } from './store.js';
-import { h, icon } from './util.js';
-import { DEMO, choose, demoBanner, lib, modal, saveError, toast, topbar, view } from './core.js';
+import { h, icon, isImeEvent } from './util.js';
+import { DEMO, choose, demoBanner, lib, modal, requestQuietRoute, saveError, toast, topbar, view } from './core.js';
 import { route } from './app.js';
 import { WEEKDAYS, loadPlanner, toggleTask, weekStart } from './planner.js';
 import { lookupPaper, paperKey, paperKeywords } from './home.js';
@@ -801,7 +801,7 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
   const newCat = h('input', { id: 'cl-cat', placeholder: known.length ? '新分类，回车添加（可多个，逗号分隔）' : '分类，例如 v-OECTs结构、大鼠皮肤修复图、画图/template（逗号分隔）' });
   const drawChips = () => chips.replaceChildren(...[...new Set([...known, ...picked])].map((k) => h('button', { type: 'button', class: `chip${picked.has(k) ? ' on' : ''}`, 'aria-pressed': String(picked.has(k)), onclick: () => { if (picked.has(k)) picked.delete(k); else picked.add(k); drawChips(); } }, k)));
   const addCats = () => { for (const k of newCat.value.split(/[,，、;；]/).map((s) => s.trim()).filter(Boolean)) { picked.add(k); if (!known.includes(k)) known.push(k); } newCat.value = ''; drawChips(); };
-  newCat.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addCats(); } });
+  newCat.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEvent(e)) { e.preventDefault(); addCats(); } });
   newCat.addEventListener('blur', addCats);
   drawChips();
   const note = h('textarea', { id: 'cl-note', rows: x.kind === 'img' ? 3 : 6, placeholder: x.kind === 'img' ? '可选：为什么存这张，打算怎么用' : '例如：Nature 模板：框线 0.5 pt，坐标字号 7 pt，图宽单栏 89 mm / 双栏 183 mm' }, x.note || noteText || '');
@@ -945,7 +945,7 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
       } catch (e) { toast(saveError(e)); return false; }
     },
   }] });
-  setTimeout(() => title.focus(), 60);
+  setTimeout(() => { if (title.isConnected && !title.closest('.modal')?.contains(document.activeElement)) title.focus(); }, 60);
 }
 
 // Clips saved before Zotero synced the box get their article and link filled in later, in one commit.
@@ -966,7 +966,7 @@ async function completeSources(clips) {
     if (done.length) {
       await lib.commit(`Clips: sources from Zotero (${done.length})`, async () => ({ changes: done.map((c) => ({ path: clipPath(c.id), data: `${JSON.stringify(c, null, 1)}\n` })) }));
       toast(`已从 Zotero 补全 ${done.length} 张图的出处。`);
-      if (view.kind === 'clips') route({ quiet: true });
+      if (view.kind === 'clips') requestQuietRoute({ immediate: true, views: ['clips'] });
     }
   } finally { completing = false; }
 }

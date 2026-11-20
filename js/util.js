@@ -110,3 +110,127 @@ export function fmtBytes(n) {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
+
+// ---------- IME composition & typing-focus guards ----------
+const ua = typeof navigator !== 'undefined' ? (navigator.userAgent || '') : '';
+const isWebKit = /AppleWebKit/i.test(ua)
+  && (/iP(ad|hone|od)/i.test(ua) || !/Chrome|Chromium|Edg|OPR|Android/i.test(ua));
+
+let imeComposing = false;
+let imeTarget = null;
+let imeEndedAt = 0;
+let imeEndedTarget = null;
+let imeEndedEvent = null;
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('compositionstart', (e) => {
+    imeComposing = true;
+    imeTarget = e.target;
+    imeEndedAt = 0;
+    imeEndedTarget = null;
+    imeEndedEvent = null;
+  }, true);
+  document.addEventListener('compositionend', (e) => {
+    imeComposing = false;
+    imeTarget = null;
+    imeEndedAt = performance.now();
+    imeEndedTarget = e.target;
+    imeEndedEvent = null;
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (!imeEndedAt) {
+      if (imeEndedEvent && imeEndedEvent !== e) imeEndedEvent = null;
+      return;
+    }
+    const same = !imeEndedTarget || e.target === imeEndedTarget;
+    if (isWebKit && same && performance.now() - imeEndedAt < 80 && (e.key === 'Enter' || e.key === 'Escape')) {
+      imeEndedEvent = e;
+    } else {
+      imeEndedEvent = null;
+    }
+    imeEndedAt = 0;
+    imeEndedTarget = null;
+  }, true);
+  document.addEventListener('focusout', (e) => {
+    if (e.target === imeTarget) { imeComposing = false; imeTarget = null; }
+  }, true);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      imeComposing = false;
+      imeTarget = null;
+      imeEndedAt = 0;
+      imeEndedTarget = null;
+      imeEndedEvent = null;
+    }
+  });
+}
+
+export function isComposing() {
+  if (imeComposing && (!imeTarget || !imeTarget.isConnected)) {
+    imeComposing = false;
+    imeTarget = null;
+  }
+  return imeComposing;
+}
+
+export function isImeEvent(e) {
+  if (!e) return false;
+  if (e.isComposing || e.keyCode === 229 || e.which === 229 || e.key === 'Process') return true;
+  if (isComposing()) return true;
+  if (e === imeEndedEvent) return true;
+  if (isWebKit && imeEndedAt && (e.key === 'Enter' || e.key === 'Escape')
+    && (!imeEndedTarget || e.target === imeEndedTarget)
+    && performance.now() - imeEndedAt < 80) {
+    return true;
+  }
+  return false;
+}
+
+// Replace sibling children around a mounted anchor node without detaching the anchor (keeps focus & IME intact).
+export function replaceAround(parent, anchor, before = [], after = []) {
+  if (!parent) return;
+  if (!anchor || anchor.parentNode !== parent) {
+    parent.replaceChildren(
+      ...before.flat(Infinity).filter((c) => c != null && c !== false),
+      ...(anchor ? [anchor] : []),
+      ...after.flat(Infinity).filter((c) => c != null && c !== false),
+    );
+    return;
+  }
+  for (const ch of [...parent.childNodes]) {
+    if (ch !== anchor) ch.remove();
+  }
+  for (const c of before.flat(Infinity)) {
+    if (c == null || c === false) continue;
+    parent.insertBefore(c.nodeType ? c : document.createTextNode(String(c)), anchor);
+  }
+  for (const c of after.flat(Infinity)) {
+    if (c == null || c === false) continue;
+    parent.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+}
+
+export function isTypingElement(el = typeof document !== 'undefined' ? document.activeElement : null) {
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true;
+  if (el.tagName === 'INPUT') {
+    const t = (el.type || 'text').toLowerCase();
+    return !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color', 'hidden'].includes(t);
+  }
+  return false;
+}
+
+export function onCompositionEndOnce(el, fn) {
+  if (!el) return;
+  let fired = false;
+  const done = () => {
+    if (fired) return;
+    fired = true;
+    el.removeEventListener('compositionend', done);
+    el.removeEventListener('blur', done);
+    setTimeout(fn, 0);
+  };
+  el.addEventListener('compositionend', done, { once: true });
+  el.addEventListener('blur', done, { once: true });
+}

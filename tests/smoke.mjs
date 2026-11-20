@@ -636,6 +636,230 @@ try {
     await waitFor("document.querySelectorAll('.modal .results li').length > 0");
     return `${await evaluate("return document.querySelectorAll('.modal .results li').length;")} results`;
   });
+  await check('ime-and-focus-stability', async () => {
+    await evaluate("document.querySelector('.modal-root')?.close?.(); return 1;");
+    await go('#/', "document.querySelector('.wb-nag .add-input') && document.querySelector('.ops-card .oq-line') && document.querySelector('.notes-card textarea[data-k=\"find\"]')");
+    const r = await evaluate(`
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const core = await import('./js/core.js');
+      const home = await import('./js/home.js');
+      const finds = await import('./js/finds.js');
+      const planner = await import('./js/planner.js');
+      const imeKey = (key) => {
+        const ev = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+        Object.defineProperty(ev, 'keyCode', { value: 229 });
+        return ev;
+      };
+
+      // 1. Safari-style IME Enter (keyCode 229, isComposing false) must NOT prematurely submit in weekboard, finds, or ops
+      const nag = document.querySelector('.wb-nag .add-input');
+      nag.focus(); nag.value = '测试中文催办';
+      nag.dispatchEvent(imeKey('Enter'));
+      await wait(50);
+      const nagKept = document.activeElement === nag && nag.value === '测试中文催办';
+
+      // 2. Background lib.emit('data') while typing in weekboard must NOT destroy page or exit input
+      core.lib.emit('data');
+      await wait(280);
+      const nagSurvivedData = nag.isConnected && document.activeElement === nag && nag.value === '测试中文催办';
+      nag.value = ''; nag.blur();
+
+      // 3. Background lib.emit('data') while focused on empty opsCard input must NOT kick focus out
+      const opsIn = document.querySelector('.ops-card .oq-line');
+      opsIn.focus();
+      opsIn.dispatchEvent(imeKey('Enter'));
+      core.lib.emit('data');
+      await wait(280);
+      const opsSurvivedData = opsIn.isConnected && document.activeElement === opsIn;
+      opsIn.blur();
+
+      // 4. Cross-section redrawHome() while typing in 课题手记 must NOT wipe textarea or lose focus
+      const findTa = document.querySelector('.notes-card textarea[data-k="find"]');
+      findTa.focus(); findTa.value = '半截中文发现';
+      findTa.dispatchEvent(imeKey('Enter'));
+      home.redrawHome();
+      await wait(260);
+      const findSurvived = findTa.isConnected && document.activeElement === findTa && findTa.value === '半截中文发现';
+      findTa.value = ''; findTa.blur();
+
+      // 5. Active IME composition in mustInput survives redrawHome()
+      const mustIn = document.querySelector('.wb-must .add-input');
+      mustIn.focus();
+      mustIn.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+      mustIn.value = 'shiyan';
+      home.redrawHome();
+      await wait(260);
+      const mustImeSurvived = mustIn.isConnected && document.activeElement === mustIn && mustIn.value === 'shiyan';
+      mustIn.value = '';
+      mustIn.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '' }));
+      mustIn.blur();
+
+      // 6. Inline editable ignores IME Enter & IME Escape, and closes only on real Escape
+      const editSpan = document.querySelector('.wb-nagcard .task-text.editable');
+      editSpan.click();
+      await wait(30);
+      const editIn = document.querySelector('.wb-nagcard .edit-input');
+      editIn.dispatchEvent(imeKey('Enter'));
+      editIn.dispatchEvent(imeKey('Escape'));
+      const inlineKeptOnIme = Boolean(editIn && editIn.isConnected && document.activeElement === editIn);
+      editIn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      const inlineClosedOnEsc = !document.querySelector('.wb-nagcard .edit-input');
+
+      // 7. Weekboard day adder stays open when clicking <select> (Safari blur quirk) AND survives data emit
+      const todayCol = document.querySelector('.wb-col.is-today');
+      todayCol.querySelector('.wb-add-btn').click();
+      const dayIn = todayCol.querySelector('.wb-add .add-input');
+      const daySel = todayCol.querySelector('.wb-add .wb-kind');
+      daySel.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      dayIn.blur();
+      await wait(260);
+      const adderKeptOnSelect = Boolean(todayCol.querySelector('.wb-add .add-input'));
+      daySel.dispatchEvent(new Event('blur'));
+      dayIn.focus();
+      core.lib.emit('data');
+      await wait(260);
+      const adderSurvivedData = dayIn.isConnected && document.activeElement === dayIn;
+      dayIn.blur();
+
+      // 8. Modal ignores IME Escape & IME Enter, closes on normal Escape
+      await finds.openQuickFind();
+      await wait(120);
+      const fq = document.querySelector('#fq-text');
+      fq.focus(); fq.value = '中文批注';
+      fq.dispatchEvent(imeKey('Enter'));
+      fq.dispatchEvent(imeKey('Escape'));
+      const modalKeptOnIme = Boolean(document.querySelector('.modal-root') && fq.value === '中文批注');
+      fq.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      const modalClosedOnEsc = !document.querySelector('.modal-root');
+
+      // 9. Search dialog ignores IME Enter (does not navigate away)
+      document.querySelector('.topbar [aria-label="搜索"]').click();
+      await wait(120);
+      const sIn = document.querySelector('.modal input[type=search]');
+      sIn.focus(); sIn.value = 'GOPS';
+      sIn.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(120);
+      sIn.dispatchEvent(imeKey('Enter'));
+      const searchKeptOnIme = Boolean(document.querySelector('.modal-root')) && location.hash === '#/';
+      document.querySelector('.modal-root')?.close?.();
+
+      // 10. Candidate adder keeps exact DOM node & focus after adding an item
+      const candIn = document.querySelector('.cd-add-input');
+      const candKey = candIn?.dataset?.k;
+      candIn.focus(); candIn.value = '测试候选材料IME';
+      candIn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await wait(350);
+      const candSameNode = document.activeElement === candIn && candIn.isConnected && candIn.dataset?.k === candKey;
+      await planner.changePlanner((d) => { d.cands = (d.cands || []).filter((c) => c.name !== '测试候选材料IME'); }, 'Cleanup test cand', home.redrawHome);
+      document.activeElement?.blur?.();
+
+      // 11. Consecutive Enter submit in nagInput & findsCard keeps exact DOM node AND displays item 1 even while composing item 2
+      const nagNode = document.querySelector('.wb-nag .add-input');
+      nagNode.focus(); nagNode.value = '连录催办甲';
+      nagNode.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      nagNode.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+      nagNode.value = 'yi';
+      await wait(180);
+      const nagSameNode = document.querySelector('.wb-nag .add-input') === nagNode && document.activeElement === nagNode && nagNode.value === 'yi';
+      const nagShownMidIme = [...document.querySelectorAll('.wb-nagcard .task-text')].some((el) => el.textContent.includes('连录催办甲'));
+      nagNode.value = '';
+      nagNode.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '' }));
+      nagNode.blur();
+
+      const findNode = document.querySelector('.notes-card textarea[data-k="find"]');
+      findNode.focus(); findNode.value = '连录发现甲';
+      findNode.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      await wait(180);
+      const findSameNode = document.querySelector('.notes-card textarea[data-k="find"]') === findNode && document.activeElement === findNode;
+      findNode.blur();
+      await planner.changePlanner((d) => {
+        d.tasks = (d.tasks || []).filter((t) => t.text !== '连录催办甲');
+        d.finds = (d.finds || []).filter((f) => f.text !== '连录发现甲');
+      }, 'Cleanup consecutive test items', home.redrawHome);
+
+      // 12. Empty cat-截止 & cat-文献 inputs keep exact DOM node across external redrawHome()
+      const dlIn = document.querySelector('.dl-head input[data-k="cat-截止"]');
+      dlIn.focus();
+      home.redrawHome();
+      await wait(220);
+      const dlSameNode = document.querySelector('.dl-head input[data-k="cat-截止"]') === dlIn && document.activeElement === dlIn;
+      dlIn.blur();
+
+      // 13. Detaching composing node auto-heals util.isComposing()
+      const util = await import('./js/util.js');
+      await finds.openQuickFind();
+      await wait(80);
+      const fq2 = document.getElementById('fq-text');
+      fq2.focus();
+      fq2.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+      document.querySelector('.modal-root')?.close?.();
+      const detachedImeHealed = util.isComposing() === false;
+
+      // 14. Stacked modals: Escape closes ONLY the topmost modal
+      const m1 = core.modal({ title: 'Outer', body: document.createTextNode('outer') });
+      const m2 = core.modal({ title: 'Inner', body: document.createTextNode('inner') });
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      const stackedEscOk = m1.isConnected && !m2.isConnected;
+      m1.close();
+
+      // 15. openPaperNotes keeps exact #pn-text DOM node mounted & focused on Enter submit
+      const firstPaperId = planner.planLocal?.doc?.papers?.[0]?.id;
+      let paperNoteSameNode = true;
+      if (firstPaperId) {
+        planner.openPaperNotes(firstPaperId, 'ms');
+        await wait(80);
+        const pnTa = document.getElementById('pn-text');
+        pnTa.focus(); pnTa.value = '临时中文批注测试';
+        pnTa.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        await wait(120);
+        paperNoteSameNode = document.getElementById('pn-text') === pnTa && document.activeElement === pnTa;
+        document.querySelector('.modal-root')?.close?.();
+        await planner.changePlanner((d) => {
+          const p = (d.papers || []).find((x) => x.id === firstPaperId);
+          if (p?.ms) p.ms = p.ms.filter((n) => n.text !== '临时中文批注测试');
+        }, 'Cleanup paper note test', home.redrawHome);
+      }
+
+      // 16. route({ quiet: true }) on #/plan forwards opts (keeps modal) & aborts async show() race while typing
+      const appMod = await import('./js/app.js');
+      location.hash = '#/plan';
+      await wait(350);
+      await finds.openQuickFind();
+      await wait(80);
+      await appMod.route({ quiet: true, background: true });
+      const planQuietKeptModal = Boolean(document.querySelector('.modal-root'));
+      document.querySelector('.modal-root')?.close?.();
+      const raceP = appMod.route({ quiet: true, background: true });
+      const planNag = document.querySelector('.wb-nag .add-input');
+      if (planNag) { planNag.focus(); planNag.value = '竞态保护'; }
+      await raceP;
+      const planAsyncRaceSafe = Boolean(planNag && planNag.isConnected && document.activeElement === planNag && planNag.value === '竞态保护');
+      if (planNag) { planNag.value = ''; planNag.blur(); }
+
+      // 17. Editor textarea Tab mid-IME does not indent/corrupt list line
+      location.hash = '#/v/oect/new';
+      await wait(350);
+      const edTa = document.querySelector('.editor-text');
+      edTa.focus();
+      edTa.value = '- 中文列表';
+      edTa.setSelectionRange(edTa.value.length, edTa.value.length);
+      edTa.dispatchEvent(imeKey('Tab'));
+      const editorTabImeSafe = edTa.value === '- 中文列表';
+      edTa.blur();
+
+      return {
+        nagKept, nagSurvivedData, opsSurvivedData, findSurvived, mustImeSurvived,
+        inlineKeptOnIme, inlineClosedOnEsc, adderKeptOnSelect, adderSurvivedData,
+        modalKeptOnIme, modalClosedOnEsc, searchKeptOnIme, candSameNode,
+        nagSameNode, nagShownMidIme, findSameNode, dlSameNode,
+        detachedImeHealed, stackedEscOk, paperNoteSameNode,
+        planQuietKeptModal, planAsyncRaceSafe, editorTabImeSafe,
+      };
+    `);
+    const bad = Object.entries(r).filter(([, v]) => !v).map(([k]) => k);
+    if (bad.length) throw new Error(`failed checks: ${bad.join(', ')} (${JSON.stringify(r)})`);
+    return 'IME Enter/Esc/Tab, detached-IME heal, persistent inputs, stacked modals, and async quiet-route race all verified';
+  });
   await check('word-export', async () => {
     await evaluate("document.querySelector('.modal-root')?.close?.(); return 1;");
     await go('#/v/oect/methods', "document.querySelectorAll('.m-card').length >= 2");

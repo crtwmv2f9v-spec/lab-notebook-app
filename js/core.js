@@ -2,7 +2,7 @@
 import { daysFrom } from './lab.js';
 import { ConflictError, GitHubBackend, Library, MemoryBackend, NetworkError, kv } from './store.js';
 import { fmtTime } from './model.js';
-import { h, icon } from './util.js';
+import { h, icon, isComposing, isImeEvent, isTypingElement } from './util.js';
 import { refreshDueBar } from './planner.js';
 import { boot, route } from './app.js';
 
@@ -106,14 +106,47 @@ export function loadFonts() {
 }
 
 export let rerenderTimer = null;
+let pendingQuietRoute = false;
+let pendingRouteTimer = null;
+const QUIET_VIEWS = ['home', 'volume', 'page', 'plan', 'think'];
+const INLINE_DRAFT_SEL = 'input.add-input, textarea.add-input, input.oq-line, input.cd-add-input, input.edit-input, input.wb-time-input, input.wb-time-add, input.paper-why-input';
+const hasDirtyInlineInput = () => [...document.querySelectorAll(INLINE_DRAFT_SEL)].some((el) => el.value && el.value.trim());
+const isUserEditing = () => !!document.querySelector('.modal-root') || isComposing() || isTypingElement() || hasDirtyInlineInput();
+
+export function requestQuietRoute({ immediate = false, views = QUIET_VIEWS } = {}) {
+  if (!views.includes(view.kind)) return;
+  if (isUserEditing()) { pendingQuietRoute = true; return; }
+  clearTimeout(rerenderTimer);
+  if (immediate) {
+    pendingQuietRoute = false;
+    route({ quiet: true, background: true });
+    return;
+  }
+  rerenderTimer = setTimeout(() => {
+    if (!views.includes(view.kind)) return;
+    if (isUserEditing()) { pendingQuietRoute = true; return; }
+    pendingQuietRoute = false;
+    route({ quiet: true, background: true });
+  }, 120);
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('focusout', () => {
+    if (!pendingQuietRoute) return;
+    clearTimeout(pendingRouteTimer);
+    pendingRouteTimer = setTimeout(() => {
+      if (!pendingQuietRoute || isUserEditing()) return;
+      pendingQuietRoute = false;
+      if ([...QUIET_VIEWS, 'clips'].includes(view.kind)) route({ quiet: true, background: true });
+    }, 450);
+  });
+}
+
 export function onLibraryEvent(kind) {
   if (kind === 'status') { updateSync(); return; }
-  if (kind === 'data') applySignature();
-  // Don't redraw under someone typing a task.
-  if (kind === 'data' && document.activeElement?.closest?.('.dash') && document.activeElement.value) { updateSync(); return; }
-  if (kind === 'data' && ['home', 'volume', 'page', 'plan', 'think'].includes(view.kind) && !document.querySelector('.modal-root')) {
-    clearTimeout(rerenderTimer);
-    rerenderTimer = setTimeout(() => route({ quiet: true }), 120);
+  if (kind === 'data') {
+    applySignature();
+    requestQuietRoute();
   }
   updateSync();
 }
@@ -135,7 +168,11 @@ function restoreScroll(y, token) {
   };
   step();
 }
-export async function show(kind, render, { quiet = false } = {}) {
+export async function show(kind, render, { quiet = false, background = false } = {}) {
+  const isPageTyping = () => isComposing() || (isTypingElement() && !document.activeElement?.closest?.('.modal-root'));
+  if (background && isUserEditing()) { pendingQuietRoute = true; return; }
+  pendingQuietRoute = false;
+  clearTimeout(pendingRouteTimer);
   const token = ++view.token;
   const scroll = window.scrollY;
   const hash = location.hash || '#/';
@@ -154,6 +191,13 @@ export async function show(kind, render, { quiet = false } = {}) {
   let el;
   try { el = await render(); } catch (e) { console.error(e); el = viewMissing(`显示出错：${e.message}`); }
   if (token !== view.token) return;
+  if ((background && isUserEditing()) || (quiet && isPageTyping())) {
+    const abortedUrls = view.urls;
+    view.urls = oldUrls;
+    setTimeout(() => abortedUrls.forEach((u) => URL.revokeObjectURL(u)), 1000);
+    pendingQuietRoute = true;
+    return;
+  }
   if (el) {
     const tb = el.querySelector?.(':scope > .topbar');
     if (tb && lib && !['setup'].includes(kind)) tb.after(h('div', { id: 'due-bar', class: 'due-bar', hidden: true, role: 'status' }));
@@ -293,11 +337,18 @@ export function modal({ title, body, buttons = [{ label: '关闭' }], wide = fal
     document.removeEventListener('keydown', onKey, true);
     onClose?.();
     prevFocus?.focus?.();
+    if (pendingQuietRoute) requestQuietRoute({ views: [...QUIET_VIEWS, 'clips'] });
   };
   root.close = close;
-  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  const onKey = (e) => {
+    if (e.key !== 'Escape' || isImeEvent(e)) return;
+    const modals = document.querySelectorAll('.modal-root');
+    if (modals[modals.length - 1] !== root) return;
+    e.stopPropagation();
+    close();
+  };
   document.addEventListener('keydown', onKey, true);
-  root.addEventListener('mousedown', (e) => { if (e.target === root) close(); });
+  root.addEventListener('mousedown', (e) => { if (e.target === root && !isComposing()) close(); });
   const foot = h('div', { class: 'modal-foot' }, buttons.filter(Boolean).map((b) => h('button', {
     class: `btn${b.primary ? ' primary' : ''}${b.danger ? ' danger' : ''}`, type: 'button',
     onclick: async (ev) => {
@@ -310,7 +361,7 @@ export function modal({ title, body, buttons = [{ label: '关闭' }], wide = fal
   panel.append(h('div', { class: 'modal-head' }, h('h2', null, title), h('button', { class: 'btn icon ghost', 'aria-label': '关闭', onclick: close }, icon('close'))), h('div', { class: 'modal-body' }, body), ...(buttons.length ? [foot] : []));
   root.append(panel);
   document.body.append(root);
-  setTimeout(() => (panel.querySelector('[autofocus]') || panel.querySelector('input,textarea,select') || panel.querySelector('.modal-foot .btn.primary') || panel).focus?.(), 30);
+  setTimeout(() => { if (root.isConnected && !panel.contains(document.activeElement)) (panel.querySelector('[autofocus]') || panel.querySelector('input,textarea,select') || panel.querySelector('.modal-foot .btn.primary') || panel).focus?.(); }, 30);
   return root;
 }
 
@@ -327,7 +378,7 @@ export function menu(anchor, items) {
   const off = (e) => { if (!m.contains(e.target)) { m.remove(); document.removeEventListener('mousedown', off, true); } };
   setTimeout(() => document.addEventListener('mousedown', off, true), 0);
   m.querySelector('button')?.focus();
-  m.addEventListener('keydown', (e) => { if (e.key === 'Escape') { m.remove(); anchor.focus(); } });
+  m.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !isImeEvent(e)) { m.remove(); anchor.focus(); } });
 }
 
 export function field(label, value, cls = '') {

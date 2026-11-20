@@ -152,7 +152,14 @@ export function editSolution(list, s, preset = {}) {
   const r = s ? { ...s } : { id: nextSolutionId([...list, ...refIds('S')]), prepared: preset.prepared || todayISO(), by: signerName(), page: preset.page || '', status: '在用' };
   const reagents = [];
   const lists = h('datalist', { id: 'sol-ids' });
-  loadReagents(lib).then((rs) => { reagents.push(...rs); lists.replaceChildren(...rs.map((x) => h('option', { value: x.id }, `${x.name}${x.lot ? ` · 批号 ${x.lot}` : ''}`)), ...list.filter((x) => x.id !== r.id).map((x) => h('option', { value: x.id }, `${x.name}（自配，${x.prepared || ''}）`))); drawRows(); }).catch(() => {});
+  loadReagents(lib).then((rs) => {
+    reagents.push(...rs);
+    lists.replaceChildren(...rs.map((x) => h('option', { value: x.id }, `${x.name}${x.lot ? ` · 批号 ${x.lot}` : ''}`)), ...list.filter((x) => x.id !== r.id).map((x) => h('option', { value: x.id }, `${x.name}（自配，${x.prepared || ''}）`)));
+    rowsBox.querySelectorAll('.recipe-row').forEach((row, i) => {
+      const span = row.querySelector('.recipe-name');
+      if (span && rows[i]) span.textContent = nameFor(rows[i].id);
+    });
+  }).catch(() => {});
   // Components: from the record, or from the page's steps (substances with an R-/S- number and their amounts).
   let rows = parseRecipe(r.recipe);
   if (!rows.length && preset.steps?.length) rows = preset.steps.map((st) => ({ id: (st.what.match(new RegExp(CODE_SRC)) || [''])[0], amount: st.amount })).filter((x) => x.id);

@@ -3,10 +3,10 @@ import { NetworkError, kv } from './store.js';
 import { fmtDate, todayISO, parseFrontMatter, zoned } from './model.js';
 import { addDays, cleanTopic, daysFrom, loadHypotheses, sectionOf, readSamples, isResultCol, evidenceCounts, loadMethods } from './lab.js';
 import { search } from './search.js';
-import { h, icon } from './util.js';
+import { h, icon, isComposing, isImeEvent, onCompositionEndOnce, replaceAround } from './util.js';
 import { S, demoBanner, lib, modal, toast, topbar, view, menu } from './core.js';
 import { clipCounts, loadClips } from './clips.js';
-import { autoFileFinds, findsCard, topicsOf } from './finds.js';
+import { autoFileFinds, createFindsCard, topicsOf } from './finds.js';
 import { weekBoard } from './weekboard.js';
 import {
   PAPER_STAGE, WEEKDAYS, addBox, allFollowups, changeTasks, editPaper, editProject, exportIcs,
@@ -308,8 +308,8 @@ function readingAdd(placeholder, wk) {
     changeTasks((l) => l.push({ ...newTask(v, wk, null, '文献'), ...wechat(v), ...(w ? { why: w } : {}) }), 'Planner: add 文献', redrawHome).then(() => fillPaperRefs());
     input.focus();
   };
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (why.value.trim()) go(); else why.focus(); } });
-  why.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } if (e.key === 'Escape') why.blur(); });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEvent(e)) { e.preventDefault(); if (why.value.trim()) go(); else why.focus(); } });
+  why.addEventListener('keydown', (e) => { if (isImeEvent(e)) return; if (e.key === 'Enter') { e.preventDefault(); go(); } if (e.key === 'Escape') why.blur(); });
   return h('div', { class: 'add-row reading-add' }, h('span', { class: 'add-plus' }, icon('plus', 16)),
     h('div', { class: 'reading-add-in' }, input, why), h('button', { class: 'btn small add-btn', type: 'button', onclick: go }, '添加'));
 }
@@ -322,7 +322,7 @@ function whyLine(x) {
     const input = h('input', { class: 'paper-why-input', value: x.why || '', placeholder: '为什么要读这篇？', 'aria-label': '为什么要读这篇' });
     let done = false;
     const finish = (ok) => { if (done) return; done = true; const v = input.value.trim(); input.replaceWith(shown); if (ok && v !== (x.why || '')) save(v); };
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
+    input.addEventListener('keydown', (e) => { if (isImeEvent(e)) return; if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
     input.addEventListener('blur', () => finish(true));
     shown.replaceWith(input); input.focus();
   };
@@ -478,16 +478,31 @@ export function homeRails() {
   const right = h('aside', { class: 'rail rail-right', 'aria-label': '时间与日常' });
   const top = h('section', { class: 'dl-hero', 'aria-label': '截止日倒计时' });
   const papersEl = h('section', { class: 'pp-main', 'aria-label': '论文与投稿' });
+  // Persistent add bars so typing inputs in 文献待读 and 截止日倒计时 never unmount or lose focus / IME.
+  const rdAdd = readingAdd('粘贴 DOI、链接、题目或公众号文章链接', weekStart(todayISO()));
+  rdAdd.querySelector('input').dataset.k = 'cat-文献';
+  const rdCard = h('section', { class: 'tile rail-card', style: { '--acc': (CARD_LOOK['文献待读'] || [])[1] || '#8e8e93' } }, rdAdd);
+  left.append(rdCard);
+  const dlSub = h('span', { class: 'dl-sub' });
+  const dlAdd = addDated('截止事项，如 双周报告', (text, date) => changeTasks((l) => l.push(newTask(text, weekStart(date), date, '截止')), 'Planner: add deadline', redrawHome), { dateRequired: true });
+  dlAdd.querySelector('input').dataset.k = 'cat-截止';
+  const dlHead = h('div', { class: 'dl-head' }, h('h2', null, '截止日倒计时'), dlSub, dlAdd);
+  top.append(dlHead);
+
+  let deferredRailDraw = false;
+  const deferRailOn = (active) => {
+    deferredRailDraw = true;
+    if (isComposing()) onCompositionEndOnce(active, () => { if (deferredRailDraw) { deferredRailDraw = false; draw(); } });
+    else active.addEventListener('blur', () => setTimeout(() => { if (deferredRailDraw) { deferredRailDraw = false; draw(); } }, 30), { once: true });
+  };
   const draw = async () => {
     let doc; try { doc = await loadPlanner(); } catch { return; }
-    const focused = document.activeElement?.closest?.('.rail') ? document.activeElement.dataset.k : null;
     const { tasks, projects, papers } = doc;
     const paperMethods = await loadMethods(lib).catch(() => []);
     clipN = await clipCounts();
     // 课题与基金
     const topics = topicsOf(doc); const tOf = (x) => projectTopic(x, topics);
     const active = projects.filter((x) => !['想法', '调研', '已结束'].includes(x.stage || '想法'));
-    const early = (st) => projects.filter((x) => (x.stage || '想法') === st).length;
     // 构想 / 调研 live only here (and on the 课题看板): one compact line each, under the projects being pursued
     const seeds = projects.filter((x) => ['想法', '调研'].includes(x.stage || '想法'));
     const seedBox = h('div', { class: 'pj-seeds' },
@@ -545,11 +560,23 @@ export function homeRails() {
       h('ul', { class: 'pp-cards' }, [...papers].sort((a, b) => Number(a.stage === '已发表') - Number(b.stage === '已发表') || String(a.due || '9').localeCompare(String(b.due || '9')) || PAPER_STAGE.indexOf(b.stage) - PAPER_STAGE.indexOf(a.stage)).map(paperCard),
         papers.length ? null : h('li', { class: 'pp-card pp-empty', onclick: () => editPaper(null) }, icon('plus', 22), h('span', null, '新建第一篇论文'))));
     { const ul = pj.querySelector('ul.board-list'); if (ul) foldList(ul, 'pj'); }
-    const rd = catList(tasks, '文献', { placeholder: '粘贴 DOI、链接、题目或公众号文章链接' });
+    const rdAll = tasks.filter((x) => x.cat === '文献');
+    const rdOpen = rdAll.filter((x) => !x.done).sort((a, b) => String(a.date || '9').localeCompare(String(b.date || '9')));
+    const rdDone = rdAll.filter((x) => x.done).sort((a, b) => String(b.doneAt || '').localeCompare(String(a.doneAt || ''))).slice(0, 3);
+    const rdRows = [...rdOpen.map(paperRow), ...rdDone.map(paperRow)];
     setTimeout(fillPaperRefs, 300);
-    left.replaceChildren(
-      h('p', { class: 'rail-title' }, '科研主线'), pj,
-      railCard('文献待读', rd.open.length ? `${rd.open.length} 篇待读` : '读完打勾', ...rd.el));
+    const activeLeft = left.contains(document.activeElement) ? document.activeElement : null;
+    if (activeLeft && (activeLeft.classList.contains('paper-why-input') || activeLeft.classList.contains('edit-input'))) {
+      deferRailOn(activeLeft);
+    } else {
+      deferredRailDraw = false;
+      replaceAround(rdCard, rdAdd, [
+        cardHead('文献待读', rdOpen.length ? `${rdOpen.length} 篇待读` : '读完打勾', { add: rdAdd, level: 'h3' }),
+      ], [
+        foldList(h('ul', { class: 'tasks rail-tasks' }, rdRows), 'cat-文献'),
+      ]);
+      replaceAround(left, rdCard, [h('p', { class: 'rail-title' }, '科研主线'), pj], []);
+    }
     // 截止日倒计时：自己的截止项 + 课题、论文的日期
     const t = todayISO();
     const dl = [
@@ -557,8 +584,6 @@ export function homeRails() {
       ...projects.filter((x) => x.due && x.stage !== '已结束').map((x) => ({ text: `${x.title}${x.next ? ` · ${x.next}` : ''}`, date: x.due, open: () => editProject(x), tag: x.kind })),
       ...papers.filter((x) => x.due && !['接收', '已发表'].includes(x.stage)).map((x) => ({ text: `${x.title} · ${x.stage}`, date: x.due, open: () => editPaper(x), tag: '论文' })),
     ].sort((a, b) => a.date.localeCompare(b.date));
-    const dlAdd = addDated('截止事项，如 双周报告', (text, date) => changeTasks((l) => l.push(newTask(text, weekStart(date), date, '截止')), 'Planner: add deadline', redrawHome), { dateRequired: true });
-    dlAdd.querySelector('input').dataset.k = 'cat-截止';
     // The countdown opens the page: one big card per deadline, nearest first.
     const DL_SHOW = 6;
     const dlCard = (x) => {
@@ -569,10 +594,11 @@ export function homeRails() {
         x.task ? h('button', { class: 'tick small', type: 'button', role: 'checkbox', 'aria-checked': 'false', 'aria-label': '完成', title: '完成', onclick: () => toggleTask(x.task.id, redrawHome) }) : null);
     };
     const near = dl.filter((x) => dlDays(x.date) <= 7).length;
-    top.replaceChildren(
-      h('div', { class: 'dl-head' }, h('h2', null, '截止日倒计时'), h('span', { class: 'dl-sub' }, `${dl.length ? `${dl.length} 项${near ? ` · ${near} 项在 7 天内` : ''}` : '没有临近的截止日'} · ${dlBasis()}`), dlAdd),
+    dlSub.textContent = `${dl.length ? `${dl.length} 项${near ? ` · ${near} 项在 7 天内` : ''}` : '没有临近的截止日'} · ${dlBasis()}`;
+    replaceAround(top, dlHead, [], [
       dl.length ? h('ul', { class: 'dl-cards' }, (dlAll ? dl : dl.slice(0, DL_SHOW)).map(dlCard),
-        dl.length > DL_SHOW ? h('li', { class: 'dl-more' }, h('button', { class: 'btn small ghost', type: 'button', onclick: () => { dlAll = !dlAll; draw(); } }, dlAll ? '收起' : `还有 ${dl.length - DL_SHOW} 项`)) : null) : null);
+        dl.length > DL_SHOW ? h('li', { class: 'dl-more' }, h('button', { class: 'btn small ghost', type: 'button', onclick: () => { dlAll = !dlAll; draw(); } }, dlAll ? '收起' : `还有 ${dl.length - DL_SHOW} 项`)) : null) : null,
+    ]);
     top.classList.toggle('empty', !dl.length);
     const st = await weekStats();
     const stat = (n, label) => h('div', { class: 'ws' }, h('b', null, String(n)), h('span', null, label));
@@ -582,7 +608,6 @@ export function homeRails() {
       railCard('本周科研数据', `${weekStart(t).slice(5)} 至 ${addDays(weekStart(t), 6).slice(5)} · 东八区`,
         h('div', { class: 'week-stats' }, stat(st.pages, '页记录'), stat(st.exps, '个实验'), stat(st.pages ? `${Math.round((st.signed / st.pages) * 100)}%` : '—', '已签名'), stat(st.ev, '条新证据'), stat(st.done, '项待办完成'), stat(clipsWk, '张文献图')),
         h('a', { class: 'btn small ws-open', href: '#/reading', title: '打开后才向 Zotero 查询' }, icon('book', 16), '本周读过的文献 ›')));
-    if (focused) document.querySelector(`.rail input[data-k="${focused}"]`)?.focus();
   };
   homeHooks.add(draw);
   draw().then(() => autoFileFinds());
@@ -593,12 +618,22 @@ export function homeRails() {
 // 随手记: the two free-form lists side by side. (Today's to-dos and the week's goals live in the week board.)
 export function dashboard() {
   const box = h('section', { class: 'dash' }, h('div', { class: 'tile' }, h('p', { class: 'muted' }, '读取中…')));
+  const card = createFindsCard(redrawHome);
+  let mounted = false;
+  let deferredDraw = false;
   const draw = async () => {
     let doc;
-    try { doc = await loadPlanner(); } catch (e) { box.replaceChildren(h('div', { class: 'tile' }, h('p', { class: 'warn' }, e.message))); return; }
-    const focused = box.querySelector('input:focus, textarea:focus')?.dataset.k;
-    box.replaceChildren(findsCard(doc, redrawHome));
-    if (focused) box.querySelector(`[data-k="${focused}"]`)?.focus();
+    try { doc = await loadPlanner(); } catch (e) { if (!mounted) box.replaceChildren(h('div', { class: 'tile' }, h('p', { class: 'warn' }, e.message))); return; }
+    const active = box.contains(document.activeElement) ? document.activeElement : null;
+    if (active && active.classList.contains('edit-input')) {
+      deferredDraw = true;
+      if (isComposing()) onCompositionEndOnce(active, () => { if (deferredDraw) { deferredDraw = false; draw(); } });
+      else active.addEventListener('blur', () => setTimeout(() => { if (deferredDraw) { deferredDraw = false; draw(); } }, 30), { once: true });
+      return;
+    }
+    deferredDraw = false;
+    card.update(doc);
+    if (!mounted) { box.replaceChildren(card.el); mounted = true; }
   };
   homeHooks.add(draw);
   draw().then(() => autoFileFinds());

@@ -5,7 +5,7 @@
 // with blanks for the actual values, and is ticked off back in the notebook afterwards.
 import { nowISO, todayISO, fmtDate } from './model.js';
 import { addDays } from './lab.js';
-import { h, icon } from './util.js';
+import { h, icon, isComposing, isImeEvent } from './util.js';
 import { lib, modal, toast, topbar, demoBanner, saveError, choose } from './core.js';
 
 export const OPS_RE = /^ops\/(\d{4}-\d{2})\.json$/;
@@ -207,7 +207,7 @@ export async function openQuickOp({ date = todayISO(), text = '' } = {}) {
     return false;
   };
   line.addEventListener('input', drawPrev);
-  line.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); save(); } });
+  line.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEvent(e)) { e.preventDefault(); save(); } });
   day.addEventListener('change', () => { drawPrev(); drawList(); });
   drawSeg(); drawPrev(); drawList();
   return modal({
@@ -316,12 +316,11 @@ export async function viewOps(params = new URLSearchParams()) {
   const more = h('button', { class: 'btn small', type: 'button', onclick: () => { span += 90; draw(); } }, '再往前看 90 天');
   let all = [];
   const load = async () => { all = await loadOps({ from: addDays(t, -span) }); };
-  const draw = async () => {
-    await load();
+  const paint = () => {
     const words = q.value.toLowerCase().split(/\s+/).filter(Boolean);
     const hit = all.filter((o) => (!kind || o.kind === kind) && words.every((w) => `${o.id} ${o.title} ${o.kind} ${o.note || ''} ${o.link || ''} ${(o.params || []).map((p) => `${p.k} ${p.v} ${p.a || ''}`).join(' ')}`.toLowerCase().includes(w)));
     const counts = new Map(); for (const o of all) counts.set(o.kind, (counts.get(o.kind) || 0) + 1);
-    chips.replaceChildren(...[['', '全部', all.length], ...KINDS.filter((k) => counts.get(k.k)).map((k) => [k.k, k.k, counts.get(k.k)])].map(([k, l, n]) => h('button', { type: 'button', class: `chip${kind === k ? ' on' : ''}`, onclick: () => { kind = k; draw(); } }, l, h('b', null, String(n)))));
+    chips.replaceChildren(...[['', '全部', all.length], ...KINDS.filter((k) => counts.get(k.k)).map((k) => [k.k, k.k, counts.get(k.k)])].map(([k, l, n]) => h('button', { type: 'button', class: `chip${kind === k ? ' on' : ''}`, onclick: () => { kind = k; paint(); } }, l, h('b', null, String(n)))));
     const late = hit.filter((o) => opState(o).k === 'late');
     const byDay = new Map();
     for (const o of hit) { if (opState(o).k === 'late') continue; if (!byDay.has(o.date)) byDay.set(o.date, []); byDay.get(o.date).push(o); }
@@ -344,7 +343,9 @@ export async function viewOps(params = new URLSearchParams()) {
       hit.length || !all.length ? null : h('p', { class: 'muted' }, '没有符合的小实验。'),
       more].filter(Boolean));
   };
-  q.addEventListener('input', () => draw());
+  const draw = async () => { await load(); paint(); };
+  q.addEventListener('input', (e) => { if (!e.isComposing && !isComposing()) paint(); });
+  q.addEventListener('compositionend', paint);
   const root = h('div', { class: 'view library ops' },
     topbar({ back: '#/', backLabel: '首页', title: '小实验', sub: '配溶液、做电极、烘烤……一步一条，一句话记下；当天的打成一页 A4 带去实验室', actions: [
       h('button', { class: 'btn', type: 'button', onclick: () => openOpsPrint(t) }, icon('print', 18), h('span', { class: 'wide-only' }, '打印操作单')),
@@ -369,7 +370,7 @@ export function opsCard() {
     list.replaceChildren(...shown.map((o) => opRow(o, { compact: true, after: draw, showDate: o.date !== t })));
   };
   line.addEventListener('keydown', async (e) => {
-    if (e.key !== 'Enter' || e.isComposing || !line.value.trim()) return;
+    if (e.key !== 'Enter' || isImeEvent(e) || !line.value.trim()) return;
     e.preventDefault();
     const o = parseQuick(line.value); o.status = pref.get();
     const kf = kindOf(o.kind).fields; o.params = [...o.params, ...kf.filter((k) => !o.params.some((p) => p.k === k)).map((k) => ({ k, v: '' }))];

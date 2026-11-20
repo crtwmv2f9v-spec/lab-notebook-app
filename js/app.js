@@ -1,6 +1,7 @@
 // Lab notebook: routing and start-up.
 import { fitChartsForPrint, loadLib } from './render.js';
 import { search } from './search.js';
+import { isImeEvent } from './util.js';
 import { markReturn, DEMO, S, applyTheme, offerUpdate, lib, loadFonts, show, startLibrary, toast, view, viewMissing } from './core.js';
 import { viewSettings, viewSetup } from './settings.js';
 import { viewHome } from './home.js';
@@ -53,29 +54,29 @@ export function globalKeys(e) {
   // Cmd/Ctrl+S never saves the web page: it presses the open dialog's 保存, or the editor's 保存.
   if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 's') {
     e.preventDefault();
-    if (e.isComposing || e.repeat) return;
+    if (isImeEvent(e) || e.repeat) return;
     const dlg = [...document.querySelectorAll('.modal-root')].pop();
     const btn = dlg ? dlg.querySelector('.modal-foot .btn.primary:not([disabled])') : document.querySelector('.ed-save:not([disabled])');
     btn?.click();
     return;
   }
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
-  if ((e.key === '/' && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) {
+  if ((e.key === '/' && !typing && !isImeEvent(e)) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) {
     if (!lib || document.querySelector('.modal-root')) return;
     e.preventDefault(); openSearch();
   }
   // N (or ⌘J / Ctrl+J from anywhere, even while typing): jot down a small finding.
-  if (lib && !e.isComposing && !e.altKey && !e.shiftKey && (((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') || (!typing && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === 'n' && !document.querySelector('.modal-root')))) {
+  if (lib && !isImeEvent(e) && !e.altKey && !e.shiftKey && (((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') || (!typing && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === 'n' && !document.querySelector('.modal-root')))) {
     e.preventDefault(); openQuickFind(); return;
   }
   // O: note down a small step (配溶液、烘烤……).
-  if (lib && !typing && !e.isComposing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'o' && !document.querySelector('.modal-root')) {
+  if (lib && !typing && !isImeEvent(e) && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'o' && !document.querySelector('.modal-root')) {
     e.preventDefault(); openQuickOp(); return;
   }
-  if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'h' && !document.querySelector('.modal-root') && location.hash.replace(/^#\/?/, '')) {
+  if (!typing && !isImeEvent(e) && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'h' && !document.querySelector('.modal-root') && location.hash.replace(/^#\/?/, '')) {
     e.preventDefault(); markReturn(); location.hash = '#/'; return;
   }
-  if (view.kind === 'page' && !typing && !document.querySelector('.modal-root')) {
+  if (view.kind === 'page' && !typing && !isImeEvent(e) && !document.querySelector('.modal-root')) {
     if (e.key === 'ArrowLeft') document.querySelector('[data-nav="prev"]')?.click();
     if (e.key === 'ArrowRight') document.querySelector('[data-nav="next"]')?.click();
   }
@@ -95,24 +96,24 @@ export async function route(opts = {}) {
   const [a, b, c, d] = parts;
   mountFindButton();
   if (!a) return show('home', viewHome, opts);
-  if (a === 'settings') return show('settings', viewSettings);
-  if (a === 'lib' && b === 'reagents') return show('library', () => viewReagents(params.get('q') || ''));
-  if (a === 'lib' && b === 'solutions') return show('library', () => viewSolutions(params.get('q') || ''));
-  if (a === 'lib' && b === 'protocols' && !c) return show('library', viewProtocols);
-  if (a === 'lib' && b === 'protocols' && c) return show('library', () => viewProtocol(c));
-  if (a === 'series' && b) return show('library', () => viewSeries(b));
-  if (a === 'reading') return show('reading', () => viewReading(b));
-  if (a === 'clips') return show('clips', () => viewClips(b || '', params));
-  if (a === 'ops') return show('ops', () => viewOps(params));
-  if (a === 'tables' && !b) return show('tables', () => viewTables(params));
-  if (a === 'tables' && b) return show('tables', () => viewTable(b));
-  if (a === 'plan') return show('plan', () => viewPlan(b));
-  if (a === 'methods') return show('methods', () => viewMethods('', b === 'a' && c ? c : ''));
-  if (a === 'm' && b) return show('methods', () => viewMethod(b));
-  if (a === 'v' && b && c === 'methods') return show('methods', () => viewMethods(b));
-  if (a === 'think' && !b) return show('think', viewThinking);
-  if (a === 'projects' || (a === 'think' && b === 'topics')) return show('projects', viewProjects);
-  if (a === 'think' && b) return show('think', () => viewHypothesis(b));
+  if (a === 'settings') return show('settings', viewSettings, opts);
+  if (a === 'lib' && b === 'reagents') return show('library', () => viewReagents(params.get('q') || ''), opts);
+  if (a === 'lib' && b === 'solutions') return show('library', () => viewSolutions(params.get('q') || ''), opts);
+  if (a === 'lib' && b === 'protocols' && !c) return show('library', viewProtocols, opts);
+  if (a === 'lib' && b === 'protocols' && c) return show('library', () => viewProtocol(c), opts);
+  if (a === 'series' && b) return show('library', () => viewSeries(b), opts);
+  if (a === 'reading') return show('reading', () => viewReading(b), opts);
+  if (a === 'clips') return show('clips', () => viewClips(b || '', params), opts);
+  if (a === 'ops') return show('ops', () => viewOps(params), opts);
+  if (a === 'tables' && !b) return show('tables', () => viewTables(params), opts);
+  if (a === 'tables' && b) return show('tables', () => viewTable(b), opts);
+  if (a === 'plan') return show('plan', () => viewPlan(b), opts);
+  if (a === 'methods') return show('methods', () => viewMethods('', b === 'a' && c ? c : ''), opts);
+  if (a === 'm' && b) return show('methods', () => viewMethod(b), opts);
+  if (a === 'v' && b && c === 'methods') return show('methods', () => viewMethods(b), opts);
+  if (a === 'think' && !b) return show('think', viewThinking, opts);
+  if (a === 'projects' || (a === 'think' && b === 'topics')) return show('projects', viewProjects, opts);
+  if (a === 'think' && b) return show('think', () => viewHypothesis(b), opts);
   if (a === 'new-exp') { await show('home', viewHome, opts); openNewExperiment(params.get('vol') || ''); return; }
   if (a === 'search') { await show('home', viewHome, opts); openSearch(params.get('q') || ''); return; }
   if (a === 'v' && b && !c) return show('volume', () => viewVolume(b), opts);

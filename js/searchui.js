@@ -1,7 +1,7 @@
 // Search dialog and page picker.
 import { fmtDate } from './model.js';
 import { search } from './search.js';
-import { h, esc } from './util.js';
+import { h, esc, isImeEvent } from './util.js';
 import { loadMethods, loadHypotheses, loadReagents, loadSolutions, loadProtocols } from './lab.js';
 import { loadPlanner, editPaper } from './planner.js';
 import { lib, modal } from './core.js';
@@ -69,7 +69,7 @@ export function openSearch(initial = '', vol = '') {
   input.addEventListener('input', draw);
   volSel.addEventListener('change', draw);
   from.addEventListener('change', draw); to.addEventListener('change', draw);
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const a = out.querySelector('a'); if (a) { a.click(); location.hash = a.getAttribute('href'); } } });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEvent(e)) { const a = out.querySelector('a'); if (a) { a.click(); location.hash = a.getAttribute('href'); } } });
   draw();
   root = modal({ title: '搜索', wide: true, body: h('div', { class: 'search' }, h('div', { class: 'search-row' }, input, volSel), h('div', { class: 'search-row dates' }, h('span', { class: 'muted' }, '日期'), from, '至', to), tags,
     h('h3', { class: 'search-h' }, '记录页'), out, others), buttons: [] });

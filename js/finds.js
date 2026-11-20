@@ -5,12 +5,12 @@ import { nowISO, zoned, pagePath, parseFrontMatter, serializePage, makeEntry, to
 import { gitSha, te } from './store.js';
 import { addDays, putSection, sectionOf } from './lab.js';
 import { updatePage } from './pages.js';
-import { h, icon } from './util.js';
-import { lib, menu, modal, toast, view } from './core.js';
+import { h, icon, isImeEvent, replaceAround } from './util.js';
+import { lib, menu, modal, requestQuietRoute, toast, view } from './core.js';
 import { freshId, PIN_SVG, TASKS_PATH, WEEKDAYS, changePlanner, editable, loadPlanner, newTask, planDoc, queuePlanner, weekStart } from './planner.js';
 import { redrawHome } from './home.js';
 import { route } from './app.js';
-import { aimsBlock, candidatesBlock } from './roadmap.js';
+import { aimsBlock, createCandidatesBlock } from './roadmap.js';
 
 export const DAILY_CODE = 'DAY';
 export const DAILY_TITLE = '每日发现';
@@ -223,129 +223,159 @@ export async function autoFileFinds() {
     const doc = await loadPlanner();
     if (!(doc.finds || []).some((f) => !f.filed && dueForFiling(dayOf(f)))) return;
     const r = await fileFinds((d) => dueForFiling(d));
-    if (r) { toast(`已把 ${r.n} 条碎片发现整理成 ${r.days.length} 天的页（${DAILY_TITLE}）。`, { label: '查看', run: () => { location.hash = `#/v/${r.vol}`; } }); if (view.kind === 'home') route({ quiet: true }); }
+    if (r) { toast(`已把 ${r.n} 条碎片发现整理成 ${r.days.length} 天的页（${DAILY_TITLE}）。`, { label: '查看', run: () => { location.hash = `#/v/${r.vol}`; } }); if (view.kind === 'home') requestQuietRoute({ immediate: true }); }
   } catch (e) { console.warn('finds', e); /* offline or busy: tried again next time the home page opens */ }
 }
 
 // ----- 课题手记: findings and experiments to do, under one topic at a time -----
 let shownTopic = null; // the tab open on the home page ('*' = all)
 const ALL = '*';
-export function findsCard(doc, draw) {
-  const topics = topicsOf(doc);
-  const tname = new Map(topics.map((x) => [x.id, x.name]));
-  const tcolor = new Map(topics.map((x) => [x.id, x.color]));
-  const known = (id) => (id && tname.has(id) ? id : NO_TOPIC);
-  if (shownTopic === null) shownTopic = tname.has(lastTopic()) ? lastTopic() : ALL;
-  if (shownTopic !== ALL && shownTopic !== NO_TOPIC && !tname.has(shownTopic)) shownTopic = ALL;
-  const cur = shownTopic;
-  const finds = doc.finds || []; const memos = doc.memos || [];
-  const inTab = (x) => cur === ALL || known(x.topic) === cur;
-  const t = todayISO();
-  const count = (id) => finds.filter((f) => known(f.topic) === id && !f.filed).length + memos.filter((m) => known(m.topic) === id && !m.done && m.kind !== 'idea').length;
-  const loose = finds.some((f) => !known(f.topic)) || memos.some((m) => !known(m.topic));
-  const tab = (id, label, n) => h('button', { type: 'button', class: `nt-tab${cur === id ? ' on' : ''}${tcolor.has(id) ? ' tinted' : ''}`, style: tcolor.has(id) ? { '--k': tcolor.get(id) } : null, role: 'tab', 'aria-selected': String(cur === id), onclick: () => { shownTopic = id; if (id !== ALL) setLastTopic(id); draw(); } }, h('span', null, label), n ? h('b', null, String(n)) : null);
-  const addTo = cur === ALL ? NO_TOPIC : cur;
-  // move an item to another topic
-  const topicChip = (x, where) => {
-    const id = known(x.topic);
-    const b = h('button', { type: 'button', class: `nt-topic${id ? '' : ' none'}`, style: id ? { '--k': tcolor.get(id) } : null, title: '改到别的课题' }, id ? tname.get(id) : '未分类');
-    b.addEventListener('click', () => menu(b, [...topics, { id: NO_TOPIC, name: '未分类' }].filter((o) => o.id !== id).map((o) => ({ icon: 'go', label: o.name, run: () => changePlanner((d) => { if (o.id) pinTopics(d); const y = (d[where] || []).find((z) => z.id === x.id); if (y) { if (o.id) y.topic = o.id; else delete y.topic; } }, 'Notes: move to topic', draw) }))));
-    return b;
-  };
-  const showChip = cur === ALL;
-  const box = (ph, key, onAdd) => {
+export function createFindsCard(draw) {
+  let addTo = NO_TOPIC;
+  const makeBox = (ph, key, onAdd) => {
     const input = h('textarea', { class: 'add-input find-input', rows: 1, placeholder: ph, enterkeyhint: 'done', 'aria-label': ph, 'data-k': key });
     const go = () => { const v = input.value.trim(); if (!v) return; input.value = ''; onAdd(v); };
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); go(); } });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !isImeEvent(e)) { e.preventDefault(); go(); } });
     return h('div', { class: 'add-row find-add' }, h('span', { class: 'add-plus' }, icon('plus', 16)), input, h('button', { class: 'btn small add-btn', type: 'button', onclick: go }, '记下'));
   };
-  // findings: newest day first; filed ones stay, linked to their page; only the latest 30 are listed
-  // filed ones (made into a 每日发现 page, or written into an experiment page) leave the list
-  const myFinds = finds.filter((f) => inTab(f) && !f.filed).sort((a, b) => String(b.at).localeCompare(String(a.at)));
-  const filedN = finds.filter((f) => inTab(f) && f.filed).length;
-  const shown = myFinds.slice(0, 30);
-  const days = [...groupByDay(shown)].reverse();
-  const updF = (id, f, msg) => changePlanner((d) => { const x = (d.finds || []).find((y) => y.id === id); if (x) f(x); }, msg, draw);
-  // an unfiled finding can be sent into an experiment page
-  const toPage = (f) => {
-    const b = h('button', { type: 'button', class: 'find-attach', title: '这条发现属于某次实验：写进那一页的「过程记录」' }, '→ 实验页');
-    b.addEventListener('click', () => {
-      const ts = findTargets();
-      if (!ts.length) { toast('还没有可写入的实验页（已签名的页不能挂）。'); return; }
-      menu(b, ts.map((o) => ({ icon: 'go', label: o.label, run: async () => { if (await attachFind(f.id, o.page, draw)) toast(`已写进 ${o.page.xid || o.page.title} 的过程记录。`, { label: '查看', run: () => { location.hash = `#/v/${o.page.vol}/${o.page.num}`; } }); } })));
-    });
-    return b;
-  };
-  const findCol = h('div', { class: 'nt-col' },
-    h('h3', { class: 'nt-h', style: { '--k': '#ff9f0a' } }, '碎片发现', h('span', null, `${myFinds.length} 条`)),
-    box('刚发现了什么？写一句，回车保存', 'find', (v) => addFind(v, draw, addTo)),
-    days.length ? days.map(([day, list]) => h('div', { class: 'find-day' },
-      h('h4', null, day === t ? `今天 · ${day.slice(5)} ${weekday(day)}` : `${day.slice(5)} ${weekday(day)}`),
-      h('ul', { class: 'finds' }, [...list].reverse().map((f) => h('li', { class: `find${f.filed ? ' filed' : ''}` },
-        h('span', { class: 'find-time' }, timeOf(f)),
-        h('span', { class: 'find-body' }, editable(f.text, (v) => updF(f.id, (x) => { x.text = v; }, 'Notes: edit finding'), 'find-text'),
-          showChip ? topicChip(f, 'finds') : null,
-          f.filed ? h('a', { class: `find-page${f.inPage ? ' in-page' : ''}`, href: `#/v/${f.filed}`, title: f.inPage ? '已写进这次实验的「过程记录」' : '已整理进「每日发现」的这一页' }, f.inPage ? '已进实验页' : '已成页') : toPage(f)),
-        h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: f.filed ? '从这里删除（每日发现页里的那一行不受影响）' : '删除', onclick: () => changePlanner((d) => { d.finds = (d.finds || []).filter((x) => x.id !== f.id); }, 'Notes: remove finding', draw) }, icon('close', 14)))))))
-      : h('p', { class: 'nt-empty' }, '还没有。实验时注意到的小现象、小规律，随手记一句。'),
-    myFinds.length > shown.length ? h('p', { class: 'muted small' }, `还有更早的 ${myFinds.length - shown.length} 条。`) : null,
-    filedN ? h('p', { class: 'muted small nt-filed' }, `${filedN} 条已成页，在`, dailyVolume() ? h('a', { href: `#/v/${dailyVolume().id}` }, `「${DAILY_TITLE}」`) : `「${DAILY_TITLE}」`, '或对应的实验页里。') : null);
-  // experiments to do
-  const isIdea = (m) => m.kind === 'idea';
-  const move = (m) => h('button', { class: 'nt-move', type: 'button', title: isIdea(m) ? '这是要做的实验：移到「待做实验」' : '这不是实验：移到「零散想法」', onclick: () => updM(m.id, (x) => { if (isIdea(x)) delete x.kind; else { x.kind = 'idea'; delete x.done; delete x.doneAt; } }, 'Notes: move between lists') }, isIdea(m) ? '→ 实验' : '→ 想法');
-  const myIdeas = memos.filter((m) => inTab(m) && isIdea(m)).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || String(b.updated || b.created).localeCompare(String(a.updated || a.created)));
-  const myMemos = memos.filter((m) => inTab(m) && !isIdea(m)).sort((a, b) => Number(!!a.done) - Number(!!b.done) || Number(!!b.pinned) - Number(!!a.pinned) || String(b.updated || b.created).localeCompare(String(a.updated || a.created)));
-  // ↑ 必做: this one has to be done — it leaves 待做实验 for the 必做实验 strip at the top of the week (last in its order)
-  const promote = (m) => h('button', { class: 'nt-move nt-promote', type: 'button', title: '一定要做：升为「必做实验」，放到本周日程上方', onclick: () => changePlanner((d) => {
-    const mem = d.memos.find((x) => x.id === m.id); if (!mem) return;
-    d.memos = d.memos.filter((x) => x.id !== m.id);
-    const rank = Math.max(0, ...d.tasks.filter((x) => x.cat === '必做' && !x.done && Number.isFinite(x.rank)).map((x) => x.rank)) + 1;
-    d.tasks.push({ ...newTask(mem.text, weekStart(todayISO()), null, '必做'), rank, from: mem.id, ...(mem.topic && mem.topic !== NO_TOPIC ? { topic: mem.topic } : {}) });
-  }, 'Notes: promote to must-do', () => { draw(); redrawHome(); toast('已升为必做实验，在本周日程上方。'); }) }, '↑ 必做');
-  const updM = (id, f, msg) => changePlanner((d) => { const m = d.memos.find((x) => x.id === id); if (m) f(m); }, msg, draw);
-  const openN = myMemos.filter((m) => !m.done).length;
-  const todoCol = h('div', { class: 'nt-col' },
-    h('h3', { class: 'nt-h', style: { '--k': '#5e5ce6' } }, '待做实验', h('span', null, openN ? `${openN} 项待做` : '')),
-    box('想做的实验、要补的对照、想试的条件', 'memo', (v) => addTodoNote(v, draw, addTo)),
-    myMemos.length ? h('ul', { class: 'tasks nt-todos' }, myMemos.map((m) => h('li', { class: `task${m.done ? ' done' : ''}${m.pinned ? ' pinned' : ''}` },
-      h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!m.done), 'aria-label': m.done ? '标为未做' : '标为已做', onclick: () => updM(m.id, (x) => { x.done = !x.done; if (x.done) x.doneAt = nowISO(); else delete x.doneAt; }, 'Notes: tick') }),
-      h('span', { class: 'task-main' }, editable(m.text, (v) => updM(m.id, (x) => { x.text = v; x.updated = nowISO(); }, 'Notes: edit'), 'task-text'),
-        h('span', { class: 'task-meta' }, showChip ? topicChip(m, 'memos') : null, zoned(m.updated || m.created).day.slice(5))),
-      m.done ? null : promote(m),
-      move(m),
-      h('button', { class: 'memo-pin', type: 'button', 'aria-pressed': String(!!m.pinned), 'aria-label': m.pinned ? '取消置顶' : '置顶', title: m.pinned ? '取消置顶' : '置顶', html: PIN_SVG, onclick: () => updM(m.id, (x) => { x.pinned = !x.pinned; }, 'Notes: pin') }),
-      h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Notes: remove', draw) }, icon('close', 14)))))
-      : h('p', { class: 'nt-empty' }, '还没有。想到要补的对照、下一步想试的条件，记在这里，做完打勾。'));
-  const ideaCol = h('div', { class: 'nt-col' },
-    h('h3', { class: 'nt-h', style: { '--k': '#30a46c' } }, '零散想法', h('span', null, myIdeas.length ? `${myIdeas.length} 条` : '')),
-    box('一个念头、一个问题、要买的东西、要问的人', 'idea', (v) => addIdea(v, draw, addTo)),
-    myIdeas.length ? h('ul', { class: 'tasks nt-todos nt-ideas' }, myIdeas.map((m) => h('li', { class: `task${m.pinned ? ' pinned' : ''}` },
-      h('span', { class: 'nt-dot', 'aria-hidden': 'true' }),
-      h('span', { class: 'task-main' }, editable(m.text, (v) => updM(m.id, (x) => { x.text = v; x.updated = nowISO(); }, 'Notes: edit'), 'task-text'),
-        h('span', { class: 'task-meta' }, showChip ? topicChip(m, 'memos') : null, zoned(m.updated || m.created).day.slice(5))),
-      move(m),
-      h('button', { class: 'memo-pin', type: 'button', 'aria-pressed': String(!!m.pinned), 'aria-label': m.pinned ? '取消置顶' : '置顶', title: m.pinned ? '取消置顶' : '置顶', html: PIN_SVG, onclick: () => updM(m.id, (x) => { x.pinned = !x.pinned; }, 'Notes: pin') }),
-      h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Notes: remove', draw) }, icon('close', 14)))))
-      : h('p', { class: 'nt-empty' }, '还没有。和实验无关或还不成形的念头，记在这里。'));
-  const unfiled = finds.filter((f) => !f.filed).length;
-  const vol = dailyVolume();
-  const sat = addDays(weekStart(t), 5);
-  return h('div', { class: 'tile finds-card notes-card' },
-    h('div', { class: 'nt-tabs', role: 'tablist', 'aria-label': '课题' },
-      tab(ALL, '全部', finds.filter((f) => !f.filed).length + memos.filter((m) => !m.done && m.kind !== 'idea').length),
-      topics.map((x) => tab(x.id, x.name, count(x.id))),
-      loose || cur === NO_TOPIC ? tab(NO_TOPIC, '未分类', count(NO_TOPIC)) : null,
-      h('button', { type: 'button', class: 'nt-tab nt-manage', title: '增加、改名或删除课题', onclick: () => editTopics(doc, draw) }, icon('plus', 14), '课题')),
+  const tabsEl = h('div', { class: 'nt-tabs', role: 'tablist', 'aria-label': '课题' });
+  const findAddRow = makeBox('刚发现了什么？写一句，回车保存', 'find', (v) => addFind(v, draw, addTo));
+  const todoAddRow = makeBox('想做的实验、要补的对照、想试的条件', 'memo', (v) => addTodoNote(v, draw, addTo));
+  const ideaAddRow = makeBox('一个念头、一个问题、要买的东西、要问的人', 'idea', (v) => addIdea(v, draw, addTo));
+  const findCol = h('div', { class: 'nt-col' }, findAddRow);
+  const todoCol = h('div', { class: 'nt-col' }, todoAddRow);
+  const ideaCol = h('div', { class: 'nt-col' }, ideaAddRow);
+  const cands = createCandidatesBlock(draw);
+  let aimsEl = h('div', { class: 'aims-block' });
+  const footEl = h('div', { class: 'rail-actions find-foot' });
+  const el = h('div', { class: 'tile finds-card notes-card' },
+    tabsEl,
     h('div', { class: 'nt-cols three' }, findCol, todoCol, ideaCol),
-    candidatesBlock(doc, cur, draw),
-    aimsBlock(doc, cur, draw),
-    h('div', { class: 'rail-actions find-foot' },
+    cands.el,
+    aimsEl,
+    footEl);
+
+  const update = (doc) => {
+    const topics = topicsOf(doc);
+    const tname = new Map(topics.map((x) => [x.id, x.name]));
+    const tcolor = new Map(topics.map((x) => [x.id, x.color]));
+    const known = (id) => (id && tname.has(id) ? id : NO_TOPIC);
+    if (shownTopic === null) shownTopic = tname.has(lastTopic()) ? lastTopic() : ALL;
+    if (shownTopic !== ALL && shownTopic !== NO_TOPIC && !tname.has(shownTopic)) shownTopic = ALL;
+    const cur = shownTopic;
+    const finds = doc.finds || []; const memos = doc.memos || [];
+    const inTab = (x) => cur === ALL || known(x.topic) === cur;
+    const t = todayISO();
+    const count = (id) => finds.filter((f) => known(f.topic) === id && !f.filed).length + memos.filter((m) => known(m.topic) === id && !m.done && m.kind !== 'idea').length;
+    const loose = finds.some((f) => !known(f.topic)) || memos.some((m) => !known(m.topic));
+    const tab = (id, label, n) => h('button', { type: 'button', class: `nt-tab${cur === id ? ' on' : ''}${tcolor.has(id) ? ' tinted' : ''}`, style: tcolor.has(id) ? { '--k': tcolor.get(id) } : null, role: 'tab', 'aria-selected': String(cur === id), onclick: () => { shownTopic = id; if (id !== ALL) setLastTopic(id); draw(); } }, h('span', null, label), n ? h('b', null, String(n)) : null);
+    addTo = cur === ALL ? NO_TOPIC : cur;
+    // move an item to another topic
+    const topicChip = (x, where) => {
+      const id = known(x.topic);
+      const b = h('button', { type: 'button', class: `nt-topic${id ? '' : ' none'}`, style: id ? { '--k': tcolor.get(id) } : null, title: '改到别的课题' }, id ? tname.get(id) : '未分类');
+      b.addEventListener('click', () => menu(b, [...topics, { id: NO_TOPIC, name: '未分类' }].filter((o) => o.id !== id).map((o) => ({ icon: 'go', label: o.name, run: () => changePlanner((d) => { if (o.id) pinTopics(d); const y = (d[where] || []).find((z) => z.id === x.id); if (y) { if (o.id) y.topic = o.id; else delete y.topic; } }, 'Notes: move to topic', draw) }))));
+      return b;
+    };
+    const showChip = cur === ALL;
+    // filed ones (made into a 每日发现 page, or written into an experiment page) leave the list
+    const myFinds = finds.filter((f) => inTab(f) && !f.filed).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    const filedN = finds.filter((f) => inTab(f) && f.filed).length;
+    const shown = myFinds.slice(0, 30);
+    const days = [...groupByDay(shown)].reverse();
+    const updF = (id, f, msg) => changePlanner((d) => { const x = (d.finds || []).find((y) => y.id === id); if (x) f(x); }, msg, draw);
+    // an unfiled finding can be sent into an experiment page
+    const toPage = (f) => {
+      const b = h('button', { type: 'button', class: 'find-attach', title: '这条发现属于某次实验：写进那一页的「过程记录」' }, '→ 实验页');
+      b.addEventListener('click', () => {
+        const ts = findTargets();
+        if (!ts.length) { toast('还没有可写入的实验页（已签名的页不能挂）。'); return; }
+        menu(b, ts.map((o) => ({ icon: 'go', label: o.label, run: async () => { if (await attachFind(f.id, o.page, draw)) toast(`已写进 ${o.page.xid || o.page.title} 的过程记录。`, { label: '查看', run: () => { location.hash = `#/v/${o.page.vol}/${o.page.num}`; } }); } })));
+      });
+      return b;
+    };
+    replaceAround(findCol, findAddRow, [
+      h('h3', { class: 'nt-h', style: { '--k': '#ff9f0a' } }, '碎片发现', h('span', null, `${myFinds.length} 条`)),
+    ], [
+      days.length ? days.map(([day, list]) => h('div', { class: 'find-day' },
+        h('h4', null, day === t ? `今天 · ${day.slice(5)} ${weekday(day)}` : `${day.slice(5)} ${weekday(day)}`),
+        h('ul', { class: 'finds' }, [...list].reverse().map((f) => h('li', { class: `find${f.filed ? ' filed' : ''}` },
+          h('span', { class: 'find-time' }, timeOf(f)),
+          h('span', { class: 'find-body' }, editable(f.text, (v) => updF(f.id, (x) => { x.text = v; }, 'Notes: edit finding'), 'find-text'),
+            showChip ? topicChip(f, 'finds') : null,
+            f.filed ? h('a', { class: `find-page${f.inPage ? ' in-page' : ''}`, href: `#/v/${f.filed}`, title: f.inPage ? '已写进这次实验的「过程记录」' : '已整理进「每日发现」的这一页' }, f.inPage ? '已进实验页' : '已成页') : toPage(f)),
+          h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: f.filed ? '从这里删除（每日发现页里的那一行不受影响）' : '删除', onclick: () => changePlanner((d) => { d.finds = (d.finds || []).filter((x) => x.id !== f.id); }, 'Notes: remove finding', draw) }, icon('close', 14)))))))
+        : h('p', { class: 'nt-empty' }, '还没有。实验时注意到的小现象、小规律，随手记一句。'),
+      myFinds.length > shown.length ? h('p', { class: 'muted small' }, `还有更早的 ${myFinds.length - shown.length} 条。`) : null,
+      filedN ? h('p', { class: 'muted small nt-filed' }, `${filedN} 条已成页，在`, dailyVolume() ? h('a', { href: `#/v/${dailyVolume().id}` }, `「${DAILY_TITLE}」`) : `「${DAILY_TITLE}」`, '或对应的实验页里。') : null,
+    ]);
+    // experiments to do
+    const isIdea = (m) => m.kind === 'idea';
+    const move = (m) => h('button', { class: 'nt-move', type: 'button', title: isIdea(m) ? '这是要做的实验：移到「待做实验」' : '这不是实验：移到「零散想法」', onclick: () => updM(m.id, (x) => { if (isIdea(x)) delete x.kind; else { x.kind = 'idea'; delete x.done; delete x.doneAt; } }, 'Notes: move between lists') }, isIdea(m) ? '→ 实验' : '→ 想法');
+    const myIdeas = memos.filter((m) => inTab(m) && isIdea(m)).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || String(b.updated || b.created).localeCompare(String(a.updated || a.created)));
+    const myMemos = memos.filter((m) => inTab(m) && !isIdea(m)).sort((a, b) => Number(!!a.done) - Number(!!b.done) || Number(!!b.pinned) - Number(!!a.pinned) || String(b.updated || b.created).localeCompare(String(a.updated || a.created)));
+    // ↑ 必做: this one has to be done — it leaves 待做实验 for the 必做实验 strip at the top of the week (last in its order)
+    const promote = (m) => h('button', { class: 'nt-move nt-promote', type: 'button', title: '一定要做：升为「必做实验」，放到本周日程上方', onclick: () => changePlanner((d) => {
+      const mem = d.memos.find((x) => x.id === m.id); if (!mem) return;
+      d.memos = d.memos.filter((x) => x.id !== m.id);
+      const rank = Math.max(0, ...d.tasks.filter((x) => x.cat === '必做' && !x.done && Number.isFinite(x.rank)).map((x) => x.rank)) + 1;
+      d.tasks.push({ ...newTask(mem.text, weekStart(todayISO()), null, '必做'), rank, from: mem.id, ...(mem.topic && mem.topic !== NO_TOPIC ? { topic: mem.topic } : {}) });
+    }, 'Notes: promote to must-do', () => { draw(); redrawHome(); toast('已升为必做实验，在本周日程上方。'); }) }, '↑ 必做');
+    const updM = (id, f, msg) => changePlanner((d) => { const m = d.memos.find((x) => x.id === id); if (m) f(m); }, msg, draw);
+    const openN = myMemos.filter((m) => !m.done).length;
+    replaceAround(todoCol, todoAddRow, [
+      h('h3', { class: 'nt-h', style: { '--k': '#5e5ce6' } }, '待做实验', h('span', null, openN ? `${openN} 项待做` : '')),
+    ], [
+      myMemos.length ? h('ul', { class: 'tasks nt-todos' }, myMemos.map((m) => h('li', { class: `task${m.done ? ' done' : ''}${m.pinned ? ' pinned' : ''}` },
+        h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!m.done), 'aria-label': m.done ? '标为未做' : '标为已做', onclick: () => updM(m.id, (x) => { x.done = !x.done; if (x.done) x.doneAt = nowISO(); else delete x.doneAt; }, 'Notes: tick') }),
+        h('span', { class: 'task-main' }, editable(m.text, (v) => updM(m.id, (x) => { x.text = v; x.updated = nowISO(); }, 'Notes: edit'), 'task-text'),
+          h('span', { class: 'task-meta' }, showChip ? topicChip(m, 'memos') : null, zoned(m.updated || m.created).day.slice(5))),
+        m.done ? null : promote(m),
+        move(m),
+        h('button', { class: 'memo-pin', type: 'button', 'aria-pressed': String(!!m.pinned), 'aria-label': m.pinned ? '取消置顶' : '置顶', title: m.pinned ? '取消置顶' : '置顶', html: PIN_SVG, onclick: () => updM(m.id, (x) => { x.pinned = !x.pinned; }, 'Notes: pin') }),
+        h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Notes: remove', draw) }, icon('close', 14)))))
+        : h('p', { class: 'nt-empty' }, '还没有。想到要补的对照、下一步想试的条件，记在这里，做完打勾。'),
+    ]);
+    replaceAround(ideaCol, ideaAddRow, [
+      h('h3', { class: 'nt-h', style: { '--k': '#30a46c' } }, '零散想法', h('span', null, myIdeas.length ? `${myIdeas.length} 条` : '')),
+    ], [
+      myIdeas.length ? h('ul', { class: 'tasks nt-todos nt-ideas' }, myIdeas.map((m) => h('li', { class: `task${m.pinned ? ' pinned' : ''}` },
+        h('span', { class: 'nt-dot', 'aria-hidden': 'true' }),
+        h('span', { class: 'task-main' }, editable(m.text, (v) => updM(m.id, (x) => { x.text = v; x.updated = nowISO(); }, 'Notes: edit'), 'task-text'),
+          h('span', { class: 'task-meta' }, showChip ? topicChip(m, 'memos') : null, zoned(m.updated || m.created).day.slice(5))),
+        move(m),
+        h('button', { class: 'memo-pin', type: 'button', 'aria-pressed': String(!!m.pinned), 'aria-label': m.pinned ? '取消置顶' : '置顶', title: m.pinned ? '取消置顶' : '置顶', html: PIN_SVG, onclick: () => updM(m.id, (x) => { x.pinned = !x.pinned; }, 'Notes: pin') }),
+        h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Notes: remove', draw) }, icon('close', 14)))))
+        : h('p', { class: 'nt-empty' }, '还没有。和实验无关或还不成形的念头，记在这里。'),
+    ]);
+    const unfiled = finds.filter((f) => !f.filed).length;
+    const vol = dailyVolume();
+    const sat = addDays(weekStart(t), 5);
+    tabsEl.replaceChildren(
+      tab(ALL, '全部', finds.filter((f) => !f.filed).length + memos.filter((m) => !m.done && m.kind !== 'idea').length),
+      ...topics.map((x) => tab(x.id, x.name, count(x.id))),
+      ...(loose || cur === NO_TOPIC ? [tab(NO_TOPIC, '未分类', count(NO_TOPIC))] : []),
+      h('button', { type: 'button', class: 'nt-tab nt-manage', title: '增加、改名或删除课题', onclick: () => editTopics(doc, draw) }, icon('plus', 14), '课题'));
+    cands.update(doc, cur);
+    const nextAims = aimsBlock(doc, cur, draw);
+    aimsEl.replaceWith(nextAims);
+    aimsEl = nextAims;
+    footEl.replaceChildren(...[
       vol ? h('a', { class: 'btn small', href: `#/v/${vol.id}` }, `${DAILY_TITLE} ›`) : null,
       unfiled ? h('button', { class: 'btn small ghost', type: 'button', title: '不等周六，现在就把还没成页的发现按天整理成页（今天的也算）', onclick: async (e) => {
         e.currentTarget.disabled = true;
         try { const r = await fileFinds(() => true); if (r) { toast(`已整理成 ${r.days.length} 天的页。`, { label: '查看', run: () => { location.hash = `#/v/${r.vol}`; } }); route({ quiet: true }); } } catch (err) { toast(`没有整理：${err.message}`); draw(); }
       } }, '现在整理成页') : null,
-      h('span', { class: 'muted small find-tip' }, `${unfiled ? `${unfiled} 条发现待成页 · ` : ''}${t >= sat ? '过完的日子自动成页' : `${sat.slice(5)} 周六自动按天成页`} · 任何页面按 N 或 ⌘J 也能记`)));
+      h('span', { class: 'muted small find-tip' }, `${unfiled ? `${unfiled} 条发现待成页 · ` : ''}${t >= sat ? '过完的日子自动成页' : `${sat.slice(5)} 周六自动按天成页`} · 任何页面按 N 或 ⌘J 也能记`),
+    ].filter(Boolean));
+  };
+  return { el, update };
+}
+
+export function findsCard(doc, draw) {
+  const card = createFindsCard(draw);
+  card.update(doc);
+  return card.el;
 }
 
 // Add, rename or remove topics. Removing one leaves its notes under 未分类.
@@ -396,13 +426,13 @@ export async function openQuickFind() {
   };
   const after = () => { drawList(); redrawHome(); };
   const save = () => { const v = box.value.trim(); if (!v) return false; box.value = ''; if (kind === 'find') { const o = targets.find((x) => x.key === target.value); const vt = o && topics.some((x) => x.id === `v:${o.page.vol}`) ? `v:${o.page.vol}` : topic; addFind(v, after, o ? vt : topic).then((id) => { if (o && id) attachFind(id, o.page, after).then((ok) => { if (ok) toast(`已写进 ${o.page.xid || o.page.title} 的过程记录。`); }); }); } else if (kind === 'todo') { addTodoNote(v, after, topic); toast('已记到待做实验。'); } else { addIdea(v, after, topic); toast('已记到零散想法。'); } box.focus(); return false; };
-  box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); save(); } });
+  box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !isImeEvent(e)) { e.preventDefault(); save(); } });
   drawPick(); drawList();
   const dlg = modal({ title: `课题手记 · ${dayTitle(t)}`, body: h('div', { class: 'form find-quick' },
     h('span', { class: 'label' }, '记到哪个课题'), chips, kinds, targetRow, box,
     h('p', { class: 'muted small' }, '回车保存并继续记下一条；Shift+回车换行；Esc 关闭。'), count, list),
   buttons: [{ label: '关闭' }, { label: '记下', primary: true, run: save }] });
-  setTimeout(() => box.focus(), 40);
+  setTimeout(() => { if (box.isConnected && !dlg.contains(document.activeElement)) box.focus(); }, 40);
   return dlg;
 }
 // A round ＋ button at the bottom-right of every page.
