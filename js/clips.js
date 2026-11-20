@@ -1,6 +1,6 @@
 // 素材库 (clips/F-0001.json): figures cut from papers and small facts (template line widths, plotting settings).
-// The record (title, categories, source paper, Zotero link) lives in the notebook repository; the image itself is
-// written to a folder the user picks once (e.g. in iCloud Drive), so pictures never go into GitHub.
+// The record (title, categories, source paper, Zotero link, Google Drive file ID) lives in the notebook repository;
+// the image itself is stored in Google Drive via REST API so it loads reliably on every browser and device.
 import { ZONE, nowISO, todayISO, zoned } from './model.js';
 import { addDays } from './lab.js';
 import { kv } from './store.js';
@@ -10,7 +10,7 @@ import { route } from './app.js';
 import { WEEKDAYS, loadPlanner, toggleTask, weekStart } from './planner.js';
 import { lookupPaper, paperKey, paperKeywords } from './home.js';
 
-// clip = { id, kind: 'img' | 'note', title, cats: [], note, file, w, h,
+// clip = { id, kind: 'img' | 'note', title, cats: [], note, file, driveId, w, h,
 //          src: { zotero, page, fig, cite, doi, ref: { title, authors, journal, year, doi }, task }, created, updated }
 export const clipPath = (id) => `clips/${id}.json`;
 export const clipIds = () => [...lib.tree.keys()].map((p) => (p.match(/^clips\/(F-\d{4})\.json$/) || [])[1]).filter(Boolean).sort();
@@ -28,9 +28,225 @@ async function saveClip(c, msg) {
   await lib.commit(msg, async () => ({ changes: [{ path: clipPath(c.id), data: `${JSON.stringify(c, null, 1)}\n` }] }));
 }
 
-// ---------- the picture folder ----------
-// Chrome / Edge on a computer can keep a folder handle (stored in IndexedDB on this device). Safari and phones cannot,
-// so there the library shows records and sources only. The demo uses the browser's private storage instead.
+// ---------- Google Drive image storage (primary) + local/demo fallback ----------
+const GDRIVE_CFG = 'labnote-gdrive';
+const GDRIVE_TOK = 'labnote-gdrive-tok';
+const GDRIVE_CACHE = 'labnote-gdrive-img-v1';
+const GDRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
+export const DEFAULT_GDRIVE_FOLDER = '1N6YjBVlGW--cyomVcQjNJnizfYs4C0DF'; // Research_Figure_Library / 03_LabNotebook_Clips
+
+export function parseDriveFolderId(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  const m = s.match(/\/folders\/([A-Za-z0-9_-]{10,})/) || s.match(/[?&]id=([A-Za-z0-9_-]{10,})/);
+  if (m) return m[1];
+  return /^[A-Za-z0-9_-]{10,}$/.test(s) ? s : '';
+}
+export function gdriveConfig() {
+  try {
+    const d = JSON.parse(localStorage.getItem(GDRIVE_CFG) || 'null');
+    if (!d?.clientId) return null;
+    return { clientId: String(d.clientId).trim(), folderId: parseDriveFolderId(d.folderId) || DEFAULT_GDRIVE_FOLDER };
+  } catch { return null; }
+}
+function gdriveToken() {
+  try {
+    const t = JSON.parse(sessionStorage.getItem(GDRIVE_TOK) || 'null');
+    if (t?.token && Date.now() < Number(t.exp || 0) - 60e3) return t.token;
+  } catch { /* private window */ }
+  return null;
+}
+function setGdriveToken(token, expiresIn = 3500) {
+  try {
+    if (!token) sessionStorage.removeItem(GDRIVE_TOK);
+    else sessionStorage.setItem(GDRIVE_TOK, JSON.stringify({ token, exp: Date.now() + Number(expiresIn) * 1000 }));
+  } catch { /* private window */ }
+}
+let gisLoading = null;
+function loadGis() {
+  if (window.google?.accounts?.oauth2) return Promise.resolve();
+  if (!gisLoading) {
+    gisLoading = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://accounts.google.com/gsi/client';
+      s.async = true;
+      s.onload = () => (window.google?.accounts?.oauth2 ? resolve() : reject(new Error('Google 登录组件未就绪')));
+      s.onerror = () => { gisLoading = null; reject(new Error('无法加载 Google 登录组件（请检查网络）。')); };
+      document.head.appendChild(s);
+    });
+  }
+  return gisLoading;
+}
+export async function authorizeDrive({ interactive = true, clientId = '' } = {}) {
+  const cid = String(clientId || gdriveConfig()?.clientId || '').trim();
+  if (!cid) throw new Error('尚未填写 Google OAuth Client ID。');
+  await loadGis();
+  return new Promise((resolve, reject) => {
+    const tc = window.google.accounts.oauth2.initTokenClient({
+      client_id: cid,
+      scope: GDRIVE_SCOPE,
+      callback: (resp) => {
+        if (resp?.error) { reject(new Error(resp.error_description || resp.error)); return; }
+        if (!resp?.access_token) { reject(new Error('未获取到 Google Drive 授权令牌。')); return; }
+        setGdriveToken(resp.access_token, resp.expires_in || 3500);
+        resolve(resp.access_token);
+      },
+      error_callback: (err) => reject(new Error(err?.message || 'Google 授权弹窗被关闭或拦截。')),
+    });
+    tc.requestAccessToken({ prompt: interactive ? '' : 'none' });
+  });
+}
+async function driveReq(url, opts = {}) {
+  const tok = gdriveToken();
+  if (!tok) throw new Error('Google Drive 尚未授权。');
+  const headers = new Headers(opts.headers || {});
+  headers.set('Authorization', `Bearer ${tok}`);
+  const r = await fetch(url, { ...opts, headers });
+  if (r.status === 401) { setGdriveToken(null); throw new Error('Google Drive 授权已过期，请点击上方按钮重新授权。'); }
+  return r;
+}
+const driveCacheKey = (id) => `https://labnote.local/gdrive/${encodeURIComponent(id)}`;
+async function driveCacheGet(id) {
+  if (!id || !('caches' in window)) return null;
+  try {
+    const c = await caches.open(GDRIVE_CACHE);
+    const hit = await c.match(driveCacheKey(id));
+    return hit ? await hit.blob() : null;
+  } catch { return null; }
+}
+async function driveCachePut(id, blob) {
+  if (!id || !blob || !('caches' in window)) return;
+  try {
+    const c = await caches.open(GDRIVE_CACHE);
+    await c.put(driveCacheKey(id), new Response(blob, { headers: { 'Content-Type': blob.type || 'image/png' } }));
+  } catch { /* storage quota or private mode */ }
+}
+async function driveCacheDel(id) {
+  if (!id || !('caches' in window)) return;
+  try { const c = await caches.open(GDRIVE_CACHE); await c.delete(driveCacheKey(id)); } catch { /* ignore */ }
+}
+async function driveDownloadBlob(id) {
+  if (!id) return null;
+  const cached = await driveCacheGet(id);
+  if (cached) return cached;
+  if (!gdriveToken()) return null;
+  try {
+    const r = await driveReq(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media`);
+    if (!r.ok) return null;
+    const b = await r.blob();
+    await driveCachePut(id, b);
+    return b;
+  } catch { return null; }
+}
+async function driveFindByName(name) {
+  const cfg = gdriveConfig();
+  if (!cfg || !gdriveToken() || !name) return '';
+  const esc = String(name).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const q = `name='${esc}' and '${cfg.folderId}' in parents and trashed=false`;
+  try {
+    const r = await driveReq(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)&pageSize=1`);
+    if (!r.ok) return '';
+    return (await r.json()).files?.[0]?.id || '';
+  } catch { return ''; }
+}
+async function driveUpload(name, blob, oldDriveId = '') {
+  const cfg = gdriveConfig();
+  if (!cfg) throw new Error('请先连接 Google Drive。');
+  if (!gdriveToken()) await authorizeDrive({ interactive: true });
+  const mime = blob.type || 'image/png';
+  if (oldDriveId) {
+    const r = await driveReq(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(oldDriveId)}?uploadType=media`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': mime },
+      body: blob,
+    });
+    if (r.ok) {
+      await driveReq(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(oldDriveId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      }).catch(() => {});
+      await driveCachePut(oldDriveId, blob);
+      return oldDriveId;
+    }
+  }
+  const boundary = `labnote_${Date.now().toString(36)}`;
+  const meta = JSON.stringify({ name, parents: [cfg.folderId] });
+  const body = new Blob([
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n`,
+    `--${boundary}\r\nContent-Type: ${mime}\r\n\r\n`,
+    blob,
+    `\r\n--${boundary}--`,
+  ]);
+  const r = await driveReq('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name', {
+    method: 'POST',
+    headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body,
+  });
+  if (!r.ok) throw new Error(`Google Drive 上传失败 (${r.status})`);
+  const j = await r.json();
+  if (!j?.id) throw new Error('Google Drive 未返回文件 ID。');
+  await driveCachePut(j.id, blob);
+  return j.id;
+}
+async function driveTrash(id) {
+  if (!id) return;
+  await driveCacheDel(id);
+  if (!gdriveToken()) return;
+  await driveReq(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trashed: true }),
+  }).catch(() => {});
+}
+export function connectGoogleDrive(after) {
+  const cur = gdriveConfig();
+  const origin = location.origin || 'https://crtwmv2f9v-spec.github.io';
+  const cidIn = h('input', { id: 'gd-cid', value: cur?.clientId || '', autocomplete: 'off', spellcheck: 'false', placeholder: '粘贴 xxxxx.apps.googleusercontent.com' });
+  const fidIn = h('input', { id: 'gd-fid', value: cur?.folderId || DEFAULT_GDRIVE_FOLDER, autocomplete: 'off', spellcheck: 'false', placeholder: '粘贴 Google Drive 文件夹 ID 或链接' });
+  const dlg = modal({
+    title: '连接 Google Drive 图床',
+    body: h('div', { class: 'form' },
+      h('p', null, '图片直接存进你的 Google Drive（默认 ', h('code', null, 'Research_Figure_Library/03_LabNotebook_Clips'), '），在 Chrome、Safari、iPad 和手机上都能稳定加载，不再依赖本机文件夹权限。'),
+      h('ol', { class: 'za-steps' },
+        h('li', null, '打开 ', h('a', { href: 'https://console.cloud.google.com/apis/library/drive.googleapis.com', target: '_blank', rel: 'noopener' }, 'Google Cloud Console › Google Drive API'), '，选一个项目并点 ', h('b', null, 'Enable'), '。'),
+        h('li', null, '在 ', h('a', { href: 'https://console.cloud.google.com/apis/credentials/consent', target: '_blank', rel: 'noopener' }, 'OAuth consent screen'), ' 选 External，把你的 Gmail 加入 ', h('b', null, 'Test users'), '（无需提交审核）。'),
+        h('li', null, '在 ', h('a', { href: 'https://console.cloud.google.com/apis/credentials', target: '_blank', rel: 'noopener' }, 'Credentials › Create Credentials › OAuth client ID'), ' 选 ', h('b', null, 'Web application'), '，Authorized JavaScript origins 填 ', h('code', null, origin), '。'),
+        h('li', null, '复制生成的 Client ID 粘贴到下面，点「连接并授权」。')),
+      h('label', { for: 'gd-cid' }, 'Google OAuth Client ID'), cidIn,
+      h('label', { for: 'gd-fid' }, '图片存放文件夹 ID（可粘贴文件夹链接，已默认填好）'), fidIn,
+      h('p', { class: 'muted small' }, cur ? '配置仅保存在本机浏览器，不进 GitHub。' : '只需配置一次，之后一键授权即可读写。')),
+    buttons: [
+      cur ? { label: '断开', danger: true, run: () => {
+        try { localStorage.removeItem(GDRIVE_CFG); } catch { /* ignore */ }
+        setGdriveToken(null);
+        urlCache.clear();
+        toast('已断开 Google Drive。');
+        after?.();
+      } } : null,
+      { label: '取消' },
+      { label: '连接并授权', primary: true, run: async () => {
+        const cid = cidIn.value.trim();
+        const fid = parseDriveFolderId(fidIn.value) || DEFAULT_GDRIVE_FOLDER;
+        if (!cid) { toast('先填写 Google OAuth Client ID。'); return false; }
+        try {
+          localStorage.setItem(GDRIVE_CFG, JSON.stringify({ clientId: cid, folderId: fid }));
+          await authorizeDrive({ interactive: true, clientId: cid });
+          urlCache.clear();
+          toast('Google Drive 已连接。');
+          dlg.close();
+          after?.();
+          return false;
+        } catch (e) {
+          toast(e.message || 'Google Drive 授权失败。');
+          return false;
+        }
+      } },
+    ],
+  });
+}
+
+// ---------- demo OPFS / legacy local folder fallback ----------
 const DIR_KEY = 'clips-dir';
 export const folderSupported = () => DEMO ? !!navigator.storage?.getDirectory : 'showDirectoryPicker' in window;
 let dirCache = null;
@@ -38,50 +254,88 @@ async function storedDir() {
   if (DEMO) return (await navigator.storage.getDirectory()).getDirectoryHandle('labnote-clips', { create: true });
   return kv.get(DIR_KEY).catch(() => null);
 }
-// 'none' (never chosen) | 'ask' (chosen, needs one click this visit) | 'ok' | 'unsupported'
+// 'none' (not configured) | 'ask' (needs one click this visit) | 'ok' | 'unsupported'
 export async function folderState() {
-  if (!folderSupported()) return { state: 'unsupported' };
-  if (dirCache) return { state: 'ok', dir: dirCache };
-  const d = await storedDir();
-  if (!d) return { state: 'none' };
-  const p = DEMO ? 'granted' : await d.queryPermission({ mode: 'readwrite' }).catch(() => 'prompt');
-  if (p === 'granted') { dirCache = d; return { state: 'ok', dir: d }; }
-  return { state: 'ask', dir: d };
+  if (DEMO) {
+    if (!folderSupported()) return { state: 'unsupported', mode: 'local' };
+    if (dirCache) return { state: 'ok', dir: dirCache, mode: 'local' };
+    const d = await storedDir();
+    if (!d) return { state: 'none', mode: 'local' };
+    dirCache = d;
+    return { state: 'ok', dir: d, mode: 'local' };
+  }
+  const cfg = gdriveConfig();
+  if (!cfg) return { state: 'none', mode: 'gdrive' };
+  const tok = gdriveToken();
+  return tok ? { state: 'ok', mode: 'gdrive', token: tok, folderId: cfg.folderId } : { state: 'ask', mode: 'gdrive', folderId: cfg.folderId };
 }
-// Needs a click (browsers only show the permission prompt for a user action).
+async function legacyLocalDir() {
+  if (DEMO || !('showDirectoryPicker' in window)) return null;
+  if (dirCache) return dirCache;
+  const d = await storedDir();
+  if (!d) return null;
+  const p = await d.queryPermission({ mode: 'read' }).catch(() => 'prompt');
+  if (p === 'granted') { dirCache = d; return d; }
+  return null;
+}
 export async function connectFolder({ pickNew = false } = {}) {
-  let d = pickNew ? null : await storedDir();
-  if (d && !DEMO) {
-    const p = await d.requestPermission({ mode: 'readwrite' }).catch(() => 'denied');
-    if (p !== 'granted') { toast('没有得到文件夹权限。'); return null; }
+  if (DEMO) {
+    dirCache = await storedDir();
+    return dirCache;
   }
-  if (!d) {
-    try { d = await window.showDirectoryPicker({ id: 'labnote-clips', mode: 'readwrite', startIn: 'documents' }); } catch { return null; }
-    await kv.set(DIR_KEY, d);
+  const cfg = gdriveConfig();
+  if (!cfg || pickNew) { connectGoogleDrive(() => route({ quiet: true })); return null; }
+  try {
+    await authorizeDrive({ interactive: true });
+    urlCache.clear();
+    toast('Google Drive 已授权。');
+    return { mode: 'gdrive', folderId: cfg.folderId };
+  } catch (e) {
+    toast(e.message || 'Google Drive 授权失败。');
+    return null;
   }
-  dirCache = d;
-  return d;
 }
 async function writeImage(dir, name, blob) {
   const fh = await dir.getFileHandle(name, { create: true });
   const w = await fh.createWritable();
   await w.write(blob); await w.close();
 }
-const urlCache = new Map(); // file name -> object URL, kept for the session so the grid does not flicker
-async function imageUrl(name) {
-  if (!name) return null;
-  if (urlCache.has(name)) return urlCache.get(name);
-  const st = await folderState();
-  if (st.state !== 'ok') return null;
-  try {
-    const f = await (await st.dir.getFileHandle(name)).getFile();
-    const u = URL.createObjectURL(f); urlCache.set(name, u); return u;
-  } catch { return null; }
+const urlCache = new Map(); // cache key -> object URL, kept for the session so the grid does not flicker
+const clipKey = (c) => (typeof c === 'string' ? c : (c?.driveId || c?.file || ''));
+async function imageBlob(c) {
+  const name = typeof c === 'string' ? c : (c?.file || '');
+  const did = typeof c === 'string' ? '' : (c?.driveId || '');
+  if (DEMO) {
+    const st = await folderState();
+    if (st.state !== 'ok' || !name) return null;
+    try { return await (await st.dir.getFileHandle(name)).getFile(); } catch { return null; }
+  }
+  if (did) {
+    const b = await driveDownloadBlob(did);
+    if (b) return b;
+  }
+  if (name && gdriveToken()) {
+    const found = await driveFindByName(name);
+    if (found) {
+      const b = await driveDownloadBlob(found);
+      if (b) return b;
+    }
+  }
+  if (name) {
+    const ld = await legacyLocalDir();
+    if (ld) try { return await (await ld.getFileHandle(name)).getFile(); } catch { /* ignore */ }
+  }
+  return null;
 }
-async function imageBlob(name) {
-  const st = await folderState();
-  if (st.state !== 'ok') return null;
-  try { return await (await st.dir.getFileHandle(name)).getFile(); } catch { return null; }
+async function imageUrl(c) {
+  const key = clipKey(c);
+  if (!key) return null;
+  if (urlCache.has(key)) return urlCache.get(key);
+  const b = await imageBlob(c);
+  if (!b) return null;
+  const u = URL.createObjectURL(b);
+  urlCache.set(key, u);
+  return u;
 }
 const safe = (s) => String(s || '').replace(/[\\/:*?"<>|\s]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
 
@@ -376,10 +630,16 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
   const side = h('nav', { class: 'clip-cats', 'aria-label': '分类' },
     catBtn(ALL, '全部', clips.length), ...catList.map(([k, n]) => catBtn(k, k, n)), unsorted ? catBtn(UNSORTED, '未分类', unsorted) : null);
   const folderBar = fs.state === 'ok' ? null : h('div', { class: `clip-folder st-${fs.state}` },
-    fs.state === 'unsupported'
-      ? h('p', null, '这个浏览器不能读取电脑上的文件夹，所以只显示文字和出处。看图请在电脑上用 Chrome 打开。')
-      : [h('p', null, fs.state === 'none' ? '先选一个存图片的文件夹（建议在 iCloud 云盘里新建「LabNotebook 图库」）。图片只存在那里，不进 GitHub。' : '点一下，允许读取图片文件夹（Chrome 会问“每次访问都允许”，选它以后就不用再点）。'),
-        h('button', { class: 'btn primary small', type: 'button', onclick: async () => { if (await connectFolder()) route({ quiet: true }); } }, icon('attach', 16), fs.state === 'none' ? '选择文件夹' : '允许读取')]);
+    fs.mode === 'gdrive'
+      ? [h('p', null, fs.state === 'none' ? '连接 Google Drive 图床后，图片会存进云端（默认 Research_Figure_Library/03_LabNotebook_Clips），在 Chrome、Safari 和手机上都能稳定查看。' : '点一下授权 Google Drive，即可同步最新图片并上传新图（已加载过的图片会直接从本地缓存显示）。'),
+        h('button', { class: 'btn primary small', type: 'button', onclick: async () => {
+          if (fs.state === 'none') connectGoogleDrive(() => route({ quiet: true }));
+          else if (await connectFolder()) route({ quiet: true });
+        } }, icon('attach', 16), fs.state === 'none' ? '连接 Google Drive' : '授权 Google Drive')]
+      : fs.state === 'unsupported'
+        ? h('p', null, '这个浏览器不能读取电脑上的文件夹，所以只显示文字和出处。')
+        : [h('p', null, '先选一个存图片的文件夹。'),
+          h('button', { class: 'btn primary small', type: 'button', onclick: async () => { if (await connectFolder()) route({ quiet: true }); } }, icon('attach', 16), '选择文件夹')]);
   const fileIn = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: (e) => { const f = e.target.files?.[0]; if (f) editClip(null, { image: f, cat: realCat(cat), task: paper }); e.target.value = ''; } });
   const realCat = (k) => (k === ALL || k === UNSORTED ? '' : k);
   // ⌘V anywhere on this page (outside text fields) starts a new clip with the pasted picture or Zotero text.
@@ -404,10 +664,10 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
     topbar({ back: cat !== ALL || paper ? '#/clips' : '#/', backLabel: cat !== ALL || paper ? '素材库' : '首页', title,
       sub: `${clips.filter((c) => c.kind === 'img').length} 张图 · ${clips.filter((c) => c.kind !== 'img').length} 条文字 · Zotero 里 ⌥5 框图 → ⌘C → 这里 ⌘V`,
       actions: [
-        fs.state === 'ok' && !DEMO ? h('button', { class: 'btn ghost', type: 'button', title: '换一个存图片的文件夹', onclick: async () => { if (await connectFolder({ pickNew: true })) { urlCache.clear(); route({ quiet: true }); } } }, h('span', { class: 'wide-only' }, '图片文件夹')) : null,
+        !DEMO ? h('button', { class: 'btn ghost', type: 'button', title: '设置或切换 Google Drive 图床文件夹', onclick: () => connectGoogleDrive(() => route({ quiet: true })) }, h('span', { class: 'wide-only' }, fs.state === 'ok' ? 'Google Drive ✓' : 'Google Drive')) : null,
         h('button', { class: 'btn ghost', type: 'button', title: '连接 Zotero 账号：自动补全题目、DOI 和跳回原页的链接', onclick: () => connectZoteroApi(() => route({ quiet: true })) }, h('span', { class: 'wide-only' }, zoteroApi() ? 'Zotero ✓' : '连接 Zotero')),
         h('button', { class: 'btn', type: 'button', onclick: () => editClip(null, { kind: 'note', cat: realCat(cat) }) }, icon('note', 18), h('span', null, '记一条文字')),
-        fs.state !== 'unsupported' ? h('button', { class: 'btn primary', type: 'button', onclick: () => fileIn.click() }, icon('plus', 18), h('span', null, '加图片')) : null].filter(Boolean) }),
+        (!DEMO || fs.state !== 'unsupported') ? h('button', { class: 'btn primary', type: 'button', onclick: () => fileIn.click() }, icon('plus', 18), h('span', null, '加图片')) : null].filter(Boolean) }),
     demoBanner(),
     h('div', { class: 'clip-wrap' }, folderBar,
       pTask ? h('p', { class: 'clip-paper' }, h('span', { class: 'm-art-kicker' }, '文献'), pTask.ref ? `${pTask.ref.title}（${[pTask.ref.authors, pTask.ref.journal, pTask.ref.year].filter(Boolean).join(' · ')}）` : pTask.text, ' ', h('a', { href: '#/clips' }, '看全部'), pTask.why ? h('span', { class: 'clip-why' }, `　为什么读：${pTask.why}`) : null) : null,
@@ -416,8 +676,11 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
 
 function clipTile(c, fs) {
   const img = c.kind === 'img';
-  const box = h('div', { class: 'clip-thumb' }, img ? h('span', { class: 'muted small' }, fs.state === 'ok' ? '图片文件找不到' : '图片在 iCloud 文件夹里') : null);
-  if (img && fs.state === 'ok') imageUrl(c.file).then((u) => { if (u) box.replaceChildren(h('img', { src: u, alt: c.title || '', loading: 'lazy' })); });
+  const fallbackMsg = fs.mode === 'gdrive'
+    ? (fs.state === 'ok' ? '图片文件找不到' : '授权 Google Drive 后加载')
+    : (fs.state === 'ok' ? '图片文件找不到' : '图片在本地文件夹里');
+  const box = h('div', { class: 'clip-thumb' }, img ? h('span', { class: 'muted small' }, fallbackMsg) : null);
+  if (img) imageUrl(c).then((u) => { if (u) box.replaceChildren(h('img', { src: u, alt: c.title || '', loading: 'lazy' })); });
   return h('button', { type: 'button', class: `tile clip-tile${img ? '' : ' clip-note'}`, onclick: () => openClip(c.id) },
     img ? box : h('p', { class: 'clip-note-text' }, unitHints(c.note).slice(0, 220)),
     h('div', { class: 'clip-cap' },
@@ -431,16 +694,18 @@ export async function openClip(id) {
   if (!c) return toast(`没有素材 ${id}。`);
   const big = h('div', { class: 'clip-big' });
   if (c.kind === 'img') {
-    const u = await imageUrl(c.file);
-    big.append(u ? h('img', { src: u, alt: c.title || '' }) : h('p', { class: 'muted' }, (await folderState()).state === 'ok' ? `图片文件 ${c.file} 不在文件夹里（可能被移动或改名）。` : `图片存在电脑的图片文件夹里：${c.file}`));
+    const u = await imageUrl(c);
+    const st = await folderState();
+    big.append(u ? h('img', { src: u, alt: c.title || '' }) : h('p', { class: 'muted' }, st.state === 'ok' ? `找不到图片：${c.file || c.driveId || ''}` : '点上方「授权 Google Drive」后即可加载图片。'));
   }
   const s = c.src || {};
   const zh = zoteroHref(s);
   const doi = s.ref?.doi || s.doi;
+  const driveHref = c.driveId ? `https://drive.google.com/file/d/${encodeURIComponent(c.driveId)}/view` : '';
   const body = h('div', { class: 'clip-detail' }, big,
     (c.cats || []).length ? h('p', { class: 'clip-tags' }, c.cats.map((k) => h('a', { href: `#/clips/${encodeURIComponent(k)}`, onclick: () => document.querySelectorAll('.modal-root').forEach((m) => m.close?.()) }, k))) : null,
     c.note ? h('p', { class: 'clip-note-full' }, unitHints(c.note)) : null,
-    s.ref || s.cite || zh || doi ? h('div', { class: 'clip-source' },
+    s.ref || s.cite || zh || doi || driveHref ? h('div', { class: 'clip-source' },
       h('span', { class: 'm-art-kicker' }, '出处'),
       s.ref?.title ? h('p', null, h('b', null, s.ref.title)) : null,
       h('p', { class: 'muted' }, [s.ref?.authors || s.cite, s.ref?.journal, s.ref?.year, s.fig, s.page ? `第 ${s.page} 页` : ''].filter(Boolean).join(' · ')),
@@ -448,13 +713,14 @@ export async function openClip(id) {
       h('div', { class: 'clip-src-act' },
         zh ? h('a', { class: 'btn small primary', href: zh }, icon('book', 16), s.page && /open-pdf/.test(zh) ? `在 Zotero 打开第 ${s.page} 页` : '在 Zotero 打开') : null,
         doi ? h('a', { class: 'btn small', href: `https://doi.org/${doi}`, target: '_blank', rel: 'noopener' }, 'DOI') : null,
+        driveHref ? h('a', { class: 'btn small ghost', href: driveHref, target: '_blank', rel: 'noopener' }, 'Google Drive 原图') : null,
         s.task ? h('a', { class: 'btn small ghost', href: `#/clips?paper=${s.task}`, onclick: () => document.querySelectorAll('.modal-root').forEach((m) => m.close?.()) }, '这篇的所有素材') : null))
       : h('p', { class: 'muted small' }, '没有记出处。'),
     h('p', { class: 'muted small' }, `${c.id}${c.file ? ` · ${c.file}` : ''}`));
   const dlg = modal({ title: c.title || c.id, wide: true, body, buttons: [
     { label: '删除', danger: true, run: async () => { if (await deleteClip(c)) { dlg.close(); route({ quiet: true }); } return false; } },
     c.kind === 'img' ? { label: '复制图片', run: async () => {
-      const b = await imageBlob(c.file); if (!b) { toast('读不到图片文件。'); return false; }
+      const b = await imageBlob(c); if (!b) { toast('读不到图片文件。'); return false; }
       try { const png = b.type === 'image/png' ? b : await toPng(b); await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': png })]); toast('图片已复制，可以粘贴到 PPT / Word。'); } catch { toast('浏览器不允许复制图片。'); }
       return false;
     } } : null,
@@ -468,13 +734,17 @@ async function toPng(blob) {
 }
 async function deleteClip(c) {
   const st = await folderState();
-  const opts = [['rec', '只删记录（图片文件留在文件夹）'], ['no', '取消']];
-  if (c.kind === 'img' && st.state === 'ok') opts.splice(1, 0, ['both', '记录和图片文件都删']);
-  const a = await choose(`删除 ${c.id}？`, '记录删除后，GitHub 历史里还能找回；图片文件删掉后到“最近删除”里找（iCloud 云盘保留 30 天）。', opts);
+  const opts = [['rec', '只删记录（图片保留在云端）'], ['no', '取消']];
+  if (c.kind === 'img' && (c.driveId || (DEMO && st.state === 'ok'))) opts.splice(1, 0, ['both', DEMO ? '记录和图片文件都删' : '记录和 Google Drive 图片都删']);
+  const a = await choose(`删除 ${c.id}？`, '记录删除后，GitHub 历史里还能找回；Google Drive 图片删掉后会移入回收站（保留 30 天）。', opts);
   if (!a || a === 'no') return false;
   try {
     await lib.commit(`Delete clip ${c.id}`, async () => ({ changes: [{ path: clipPath(c.id), delete: true }] }));
-    if (a === 'both') { await st.dir.removeEntry(c.file).catch(() => {}); urlCache.delete(c.file); }
+    if (a === 'both') {
+      if (DEMO && st.dir && c.file) await st.dir.removeEntry(c.file).catch(() => {});
+      else if (c.driveId) await driveTrash(c.driveId);
+      urlCache.delete(clipKey(c));
+    }
     toast(`${c.id} 已删除。`); return true;
   } catch (e) { toast(saveError(e)); return false; }
 }
@@ -495,7 +765,7 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
   };
   if (x.kind === 'img') {
     if (pic) showPic(pic);
-    else if (x.file) imageUrl(x.file).then((u) => preview.replaceChildren(u ? h('img', { src: u, alt: '' }) : h('span', { class: 'muted' }, x.file)));
+    else if (x.driveId || x.file) imageUrl(x).then((u) => preview.replaceChildren(u ? h('img', { src: u, alt: '' }) : h('span', { class: 'muted' }, x.file || x.driveId)));
     else preview.append(dropHint());
   }
   function dropHint(msg) {
@@ -625,7 +895,7 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
   modal({ title: isNew ? (x.kind === 'img' ? '存一张图' : '记一条文字') : `修改 ${x.id}`, wide: true, body: form, onClose: () => document.removeEventListener('paste', onP), buttons: [{ label: '取消' }, {
     label: '保存', primary: true, run: async () => {
       addCats();
-      if (x.kind === 'img' && !pic && !x.file) { toast('先粘贴一张图（⌘V）。'); return false; }
+      if (x.kind === 'img' && !pic && !x.file && !x.driveId) { toast('先粘贴一张图（⌘V）。'); return false; }
       if (x.kind !== 'img' && !note.value.trim() && !title.value.trim()) { toast('写点内容。'); return false; }
       const zv = zbox.value.trim();
       const src = { ...s, zotero: /^zotero:\/\//.test(zv) ? zv : '', caption: s.caption || (zv && !/^zotero:/.test(zv) ? zv.slice(0, 200) : ''), fig: fig.value.trim(), page: page.value.trim().replace(/\D/g, ''), task: tsel.value };
@@ -640,20 +910,37 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
       if (isNew) { x.id = nextId(); x.created = nowISO(); }
       Object.assign(x, { title: title.value.trim(), cats: [...picked], note: note.value.trim(), src });
       if (pic) {
-        let st = await folderState();
-        if (st.state !== 'ok') { const dir = await connectFolder(); if (!dir) { toast('图片需要存进图片文件夹，先选一个文件夹。'); return false; } st = { dir }; }
         const ext = (pic.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
         const who = src.ref ? `${String(src.ref.authors || '').split(/[ ,]/)[0]}${src.ref.year || ''}` : (src.cite || '').replace(/ et al\./, '');
         const name = [x.id, safe(x.cats[0]), safe(who), safe(src.fig)].filter(Boolean).join('_') + `.${ext}`;
-        try { await writeImage(st.dir, name, pic); } catch (e) { toast(`图片没写进文件夹：${e.message}`); return false; }
-        if (x.file && x.file !== name) await st.dir.removeEntry(x.file).catch(() => {});
-        x.file = name; urlCache.delete(name);
+        if (DEMO) {
+          let st = await folderState();
+          if (st.state !== 'ok') { const dir = await connectFolder(); if (!dir) { toast('图片需要存进图片文件夹。'); return false; } st = { dir }; }
+          try { await writeImage(st.dir, name, pic); } catch (e) { toast(`图片没写进文件夹：${e.message}`); return false; }
+          if (x.file && x.file !== name) await st.dir.removeEntry(x.file).catch(() => {});
+          urlCache.delete(x.file);
+        } else {
+          if (!gdriveConfig()) {
+            toast('先连接 Google Drive，图片将自动同步到云端。');
+            connectGoogleDrive();
+            return false;
+          }
+          try {
+            const newId = await driveUpload(name, pic, x.driveId || '');
+            urlCache.delete(x.driveId || x.file);
+            x.driveId = newId;
+          } catch (e) {
+            toast(e.message || '图片上传 Google Drive 失败。');
+            return false;
+          }
+        }
+        x.file = name; urlCache.delete(clipKey(x));
         try { const bmp = await createImageBitmap(pic); x.w = bmp.width; x.h = bmp.height; } catch { /* size is optional */ }
       }
       try {
         await saveClip(x, `${isNew ? 'Add' : 'Update'} clip ${x.id}`);
         if (src.ref || src.zotero || src.cite) try { localStorage.setItem(LAST_SRC, JSON.stringify({ at: Date.now(), src })); } catch { /* private window */ }
-        toast(`${x.id} 已存好${x.kind === 'img' ? '（图片在图片文件夹里）' : ''}。`);
+        toast(`${x.id} 已存好${x.kind === 'img' ? (DEMO ? '（图片已存好）' : '（图片已同步到 Google Drive）') : ''}。`);
         route({ quiet: true });
       } catch (e) { toast(saveError(e)); return false; }
     },

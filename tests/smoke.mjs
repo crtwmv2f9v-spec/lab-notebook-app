@@ -197,9 +197,10 @@ try {
       const ann = { attachmentURI: 'http://zotero.org/users/local/x/items/ATT11111', annotationKey: 'ANN22222', position: { pageIndex: 6 }, citationItem: { uris: ['http://zotero.org/users/local/x/items/PAR33333'], itemData: { title: 'Vertical OECTs', author: [{ family: 'Huang' }], 'container-title': 'Nature', issued: { 'date-parts': [[2023]] }, DOI: '10.1038/x1' } } };
       const zh = m.parseZotero('[image]', '<p><img data-attachment-key="none" data-annotation="' + encodeURIComponent(JSON.stringify(ann)) + '"></p>');
       const zo = m.parseZotero('<html><body><div class="zotero-notes"><div class="zotero-note"><p><img data-attachment-key="none" width="609" height="709"><br><span class="citation">(<span class="citation-item">Wang 等, 2025, p. 19002</span>)</span></p></div></div></body></html>');
-      return { tiles: document.querySelectorAll('.clip-tile').length, hint: m.unitHints('框线 0.5 pt'), z, zh, zo, cats: document.querySelectorAll('.clip-cat').length };`);
+      return { tiles: document.querySelectorAll('.clip-tile').length, hint: m.unitHints('框线 0.5 pt'), z, zh, zo, cats: document.querySelectorAll('.clip-cat').length, gdUrl: m.parseDriveFolderId('https://drive.google.com/drive/folders/1N6YjBVlGW--cyomVcQjNJnizfYs4C0DF?usp=sharing'), gdRaw: m.parseDriveFolderId(m.DEFAULT_GDRIVE_FOLDER) };`);
     if (!r.zo.zcopy || !r.zo.image || r.zo.plabel !== '19002' || r.zo.page || r.zo.cite !== 'Wang 等 2025' || Math.abs(r.zo.ratio - 609 / 709) > 1e-6) throw new Error('obsidian format ' + JSON.stringify(r.zo));
     if (zh_bad(r.zh)) throw new Error('html ' + JSON.stringify(r.zh));
+    if (r.gdUrl !== '1N6YjBVlGW--cyomVcQjNJnizfYs4C0DF' || r.gdRaw !== '1N6YjBVlGW--cyomVcQjNJnizfYs4C0DF') throw new Error('gdrive parse ' + JSON.stringify(r));
     if (r.z.page !== '5' || r.z.fig !== 'Fig. 2b' || !/open-pdf/.test(r.z.zotero) || r.z.cite !== 'Liu et al. 2024' || !r.hint.includes('0.18 mm')) throw new Error(JSON.stringify(r));
     await evaluate(clean); await shot('clips');
     return `${r.tiles} clips, ${r.cats} categories`;
