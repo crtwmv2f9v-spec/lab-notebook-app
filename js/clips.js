@@ -51,6 +51,8 @@ const GDRIVE_TOK = 'labnote-gdrive-tok';
 const GDRIVE_CACHE = 'labnote-gdrive-img-v1';
 const GDRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
 export const DEFAULT_GDRIVE_FOLDER = '1N6YjBVlGW--cyomVcQjNJnizfYs4C0DF'; // Research_Figure_Library / 03_LabNotebook_Clips
+export const DEFAULT_STYLE_INBOX_FOLDER = '1xjQ31u4WK3cFTfE-MQrCRLVmgNAEn6Fx'; // Research_Figure_Library / 00_Style_Inbox
+export const DEFAULT_STYLE_INBOX_CAT = '00_Style_Inbox';
 
 export function parseDriveFolderId(raw) {
   const s = String(raw || '').trim();
@@ -59,12 +61,66 @@ export function parseDriveFolderId(raw) {
   if (m) return m[1];
   return /^[A-Za-z0-9_-]{10,}$/.test(s) ? s : '';
 }
+export function parseStyleCats(raw) {
+  const parts = Array.isArray(raw) ? raw.map((x) => String(x || '')) : String(raw ?? '').split(/[,，、;；\n]+/);
+  const seen = new Set();
+  const out = [];
+  for (const p of parts) {
+    const t = p.trim();
+    const k = t.toLowerCase();
+    if (!t || seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+  }
+  return out;
+}
+function rawGdriveStored() {
+  try { return JSON.parse(localStorage.getItem(GDRIVE_CFG) || 'null'); } catch { return null; }
+}
+export function styleSyncConfig() {
+  const d = rawGdriveStored();
+  const hasCats = !!(d && Object.prototype.hasOwnProperty.call(d, 'styleCats'));
+  return {
+    styleFolderId: parseDriveFolderId(d?.styleFolderId) || DEFAULT_STYLE_INBOX_FOLDER,
+    styleCats: hasCats ? parseStyleCats(d.styleCats) : [DEFAULT_STYLE_INBOX_CAT],
+  };
+}
 export function gdriveConfig() {
-  try {
-    const d = JSON.parse(localStorage.getItem(GDRIVE_CFG) || 'null');
-    if (!d?.clientId) return null;
-    return { clientId: String(d.clientId).trim(), folderId: parseDriveFolderId(d.folderId) || DEFAULT_GDRIVE_FOLDER };
-  } catch { return null; }
+  const d = rawGdriveStored();
+  if (!d?.clientId || !String(d.clientId).trim()) return null;
+  const sc = styleSyncConfig();
+  return {
+    clientId: String(d.clientId).trim(),
+    folderId: parseDriveFolderId(d.folderId) || DEFAULT_GDRIVE_FOLDER,
+    styleFolderId: sc.styleFolderId,
+    styleCats: sc.styleCats,
+  };
+}
+export function saveGdriveConfig({ clientId = '', folderId = '', styleFolderId = '', styleCats = DEFAULT_STYLE_INBOX_CAT } = {}) {
+  const cid = String(clientId || '').trim();
+  const fid = parseDriveFolderId(folderId) || DEFAULT_GDRIVE_FOLDER;
+  const sfid = parseDriveFolderId(styleFolderId) || DEFAULT_STYLE_INBOX_FOLDER;
+  const cats = parseStyleCats(styleCats);
+  localStorage.setItem(GDRIVE_CFG, JSON.stringify({
+    clientId: cid,
+    folderId: fid,
+    styleFolderId: sfid,
+    styleCats: cats.join(', '),
+  }));
+  return cid ? { clientId: cid, folderId: fid, styleFolderId: sfid, styleCats: cats } : null;
+}
+export function clearGdriveConfig() {
+  try { localStorage.removeItem(GDRIVE_CFG); } catch { /* ignore */ }
+  setGdriveToken(null);
+  urlCache.clear();
+}
+export function matchesStyleSyncCat(cats, cfg = styleSyncConfig()) {
+  const targets = (cfg?.styleCats || []).map((x) => x.trim().toLowerCase()).filter(Boolean);
+  if (!targets.length || !Array.isArray(cats) || !cats.length) return false;
+  return cats.some((c) => targets.includes(String(c || '').trim().toLowerCase()));
+}
+export function isStyleInboxCategory(cat, cfg = styleSyncConfig()) {
+  return !!cat && matchesStyleSyncCat([cat], cfg);
 }
 function gdriveToken() {
   try {
@@ -72,6 +128,9 @@ function gdriveToken() {
     if (t?.token && Date.now() < Number(t.exp || 0) - 60e3) return t.token;
   } catch { /* private window */ }
   return null;
+}
+export function hasGdriveToken() {
+  return !!gdriveToken();
 }
 function setGdriveToken(token, expiresIn = 3500) {
   try {
@@ -216,38 +275,103 @@ async function driveTrash(id) {
     body: JSON.stringify({ trashed: true }),
   }).catch(() => {});
 }
+export async function driveCopyToFolder(sourceDriveId, destFolderId, name = '') {
+  if (!sourceDriveId || !destFolderId) throw new Error('缺少源文件 ID 或风格投递箱文件夹 ID。');
+  if (!gdriveToken()) await authorizeDrive({ interactive: true });
+  const payload = { parents: [destFolderId] };
+  if (name) payload.name = name;
+  const r = await driveReq(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(sourceDriveId)}/copy?fields=id,name`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`同步到风格投递箱失败 (${r.status})`);
+  const j = await r.json();
+  if (!j?.id) throw new Error('风格投递箱未返回文件 ID。');
+  return j.id;
+}
+export async function syncStyleInboxClips(clipsInput = null) {
+  const cfg = gdriveConfig();
+  if (!cfg) throw new Error('请先填写 Google OAuth Client ID。');
+  if (!cfg.styleCats.length || !cfg.styleFolderId) return { synced: 0, skipped: 0, failed: 0 };
+  if (cfg.styleFolderId === cfg.folderId) return { synced: 0, skipped: 0, failed: 0 };
+  const all = clipsInput || await loadClips();
+  const todo = all.filter((c) => c.kind === 'img' && matchesStyleSyncCat(c.cats, cfg) && !c.styleDriveId && (c.driveId || c.file));
+  if (!todo.length) return { synced: 0, skipped: 0, failed: 0 };
+  if (!gdriveToken()) await authorizeDrive({ interactive: true });
+  const done = [];
+  let skipped = 0;
+  let failed = 0;
+  for (const c of todo) {
+    try {
+      const srcId = c.driveId || (c.file ? await driveFindByName(c.file) : '');
+      if (!srcId) { skipped++; continue; }
+      const copyId = await driveCopyToFolder(srcId, cfg.styleFolderId, c.file || `${c.id}.png`);
+      const now = nowISO();
+      done.push({
+        ...c,
+        ...(c.driveId ? {} : { driveId: srcId }),
+        styleDriveId: copyId,
+        styleSyncedAt: now,
+        updated: now,
+      });
+    } catch { failed++; }
+  }
+  if (done.length) {
+    await lib.commit(`Clips: sync ${done.length} to 00_Style_Inbox`, async () => ({
+      changes: done.map((c) => ({ path: clipPath(c.id), data: `${JSON.stringify(c, null, 1)}\n` })),
+    }));
+  }
+  return { synced: done.length, skipped, failed };
+}
+export function gdriveSetupSteps(origin = location.origin || 'https://crtwmv2f9v-spec.github.io') {
+  return h('ol', { class: 'za-steps' },
+    h('li', null, '打开 ', h('a', { href: 'https://console.cloud.google.com/apis/library/drive.googleapis.com', target: '_blank', rel: 'noopener' }, 'Google Cloud Console › Google Drive API'), '，选一个项目并点 ', h('b', null, 'Enable'), '。'),
+    h('li', null, '在 ', h('a', { href: 'https://console.cloud.google.com/apis/credentials/consent', target: '_blank', rel: 'noopener' }, 'OAuth consent screen'), ' 选 External，把你的 Gmail 加入 ', h('b', null, 'Test users'), '（无需提交审核）。'),
+    h('li', null, '在 ', h('a', { href: 'https://console.cloud.google.com/apis/credentials', target: '_blank', rel: 'noopener' }, 'Credentials › Create Credentials › OAuth client ID'), ' 选 ', h('b', null, 'Web application'), '，Authorized JavaScript origins 填 ',
+      h('span', { class: 'gd-origin-row' },
+        h('code', null, origin),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: async () => { toast(await copyText(origin) ? '已复制来源地址。' : '请手动复制来源地址。'); } }, '复制网址')), '。'),
+    h('li', null, '复制生成的 Client ID（以 ', h('code', null, '.apps.googleusercontent.com'), ' 结尾）粘贴到下方，点「保存并授权」。'));
+}
 export function connectGoogleDrive(after) {
   const cur = gdriveConfig();
+  const sc = styleSyncConfig();
   const origin = location.origin || 'https://crtwmv2f9v-spec.github.io';
   const cidIn = h('input', { id: 'gd-cid', value: cur?.clientId || '', autocomplete: 'off', spellcheck: 'false', placeholder: '粘贴 xxxxx.apps.googleusercontent.com' });
   const fidIn = h('input', { id: 'gd-fid', value: cur?.folderId || DEFAULT_GDRIVE_FOLDER, autocomplete: 'off', spellcheck: 'false', placeholder: '粘贴 Google Drive 文件夹 ID 或链接' });
+  const scIn = h('input', { id: 'gd-style-cat', value: sc.styleCats.join(', '), autocomplete: 'off', spellcheck: 'false', placeholder: '例如：00_Style_Inbox, flat style image library（留空关闭）' });
+  const sfidIn = h('input', { id: 'gd-style-fid', value: sc.styleFolderId || DEFAULT_STYLE_INBOX_FOLDER, autocomplete: 'off', spellcheck: 'false', placeholder: '粘贴 00_Style_Inbox 文件夹 ID 或链接' });
   const dlg = modal({
-    title: '连接 Google Drive 图床',
+    title: '连接 Google Drive 图床与风格投递箱',
+    wide: true,
     body: h('div', { class: 'form' },
-      h('p', null, '图片直接存进你的 Google Drive（默认 ', h('code', null, 'Research_Figure_Library/03_LabNotebook_Clips'), '），在 Chrome、Safari、iPad 和手机上都能稳定加载，不再依赖本机文件夹权限。'),
-      h('ol', { class: 'za-steps' },
-        h('li', null, '打开 ', h('a', { href: 'https://console.cloud.google.com/apis/library/drive.googleapis.com', target: '_blank', rel: 'noopener' }, 'Google Cloud Console › Google Drive API'), '，选一个项目并点 ', h('b', null, 'Enable'), '。'),
-        h('li', null, '在 ', h('a', { href: 'https://console.cloud.google.com/apis/credentials/consent', target: '_blank', rel: 'noopener' }, 'OAuth consent screen'), ' 选 External，把你的 Gmail 加入 ', h('b', null, 'Test users'), '（无需提交审核）。'),
-        h('li', null, '在 ', h('a', { href: 'https://console.cloud.google.com/apis/credentials', target: '_blank', rel: 'noopener' }, 'Credentials › Create Credentials › OAuth client ID'), ' 选 ', h('b', null, 'Web application'), '，Authorized JavaScript origins 填 ', h('code', null, origin), '。'),
-        h('li', null, '复制生成的 Client ID 粘贴到下面，点「连接并授权」。')),
-      h('label', { for: 'gd-cid' }, 'Google OAuth Client ID'), cidIn,
-      h('label', { for: 'gd-fid' }, '图片存放文件夹 ID（可粘贴文件夹链接，已默认填好）'), fidIn,
-      h('p', { class: 'muted small' }, cur ? '配置仅保存在本机浏览器，不进 GitHub。' : '只需配置一次，之后一键授权即可读写。')),
+      h('p', null, '所有素材图片默认存进 ', h('code', null, 'Research_Figure_Library/03_LabNotebook_Clips'), '；凡是归入指定风格分类（默认 ', h('code', null, DEFAULT_STYLE_INBOX_CAT), '）的图片，保存时会自动复制一份到 ', h('code', null, '00_Style_Inbox'), '。'),
+      gdriveSetupSteps(origin),
+      h('label', { for: 'gd-cid' }, 'Google OAuth Client ID（只需填一次）'), cidIn,
+      h('label', { for: 'gd-fid' }, '素材库主文件夹 ID（默认 03_LabNotebook_Clips，可粘贴文件夹链接）'), fidIn,
+      h('label', { for: 'gd-style-cat' }, '自动同步到风格投递箱的分类名（逗号分隔，不区分大小写；留空则关闭）'), scIn,
+      h('label', { for: 'gd-style-fid' }, '风格投递箱文件夹 ID（默认 00_Style_Inbox，可粘贴文件夹链接）'), sfidIn,
+      h('p', { class: 'muted small' }, cur ? '配置仅保存在本机浏览器，不进 GitHub。也可以在「设置 › Google Drive」随时修改。' : '只需配置一次，配置保存在本机浏览器（不进 GitHub）；也可以随时在「设置 › Google Drive」里修改。')),
     buttons: [
       cur ? { label: '断开', danger: true, run: () => {
-        try { localStorage.removeItem(GDRIVE_CFG); } catch { /* ignore */ }
-        setGdriveToken(null);
-        urlCache.clear();
+        clearGdriveConfig();
         toast('已断开 Google Drive。');
         after?.();
       } } : null,
       { label: '取消' },
-      { label: '连接并授权', primary: true, run: async () => {
+      { label: '仅保存配置', run: () => {
+        const saved = saveGdriveConfig({ clientId: cidIn.value, folderId: fidIn.value, styleFolderId: sfidIn.value, styleCats: scIn.value });
+        toast(saved ? 'Google Drive 配置已保存，点击授权即可同步。' : '已保存文件夹与分类设置；填写 Client ID 后即可授权。');
+        dlg.close();
+        after?.();
+        return false;
+      } },
+      { label: '保存并授权', primary: true, run: async () => {
         const cid = cidIn.value.trim();
-        const fid = parseDriveFolderId(fidIn.value) || DEFAULT_GDRIVE_FOLDER;
         if (!cid) { toast('先填写 Google OAuth Client ID。'); return false; }
         try {
-          localStorage.setItem(GDRIVE_CFG, JSON.stringify({ clientId: cid, folderId: fid }));
+          saveGdriveConfig({ clientId: cid, folderId: fidIn.value, styleFolderId: sfidIn.value, styleCats: scIn.value });
           await authorizeDrive({ interactive: true, clientId: cid });
           urlCache.clear();
           toast('Google Drive 已连接。');
@@ -625,8 +749,13 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
   const [clips, reading, fs] = await Promise.all([loadClips(), readingList(), folderState()]);
   const paper = params.get('paper') || '';
   const pTask = paper ? reading.find((x) => x.id === paper) : null;
+  const sc = styleSyncConfig();
   const cats = new Map();
   for (const c of clips) for (const k of c.cats || []) cats.set(k, (cats.get(k) || 0) + 1);
+  if (!DEMO && sc.styleCats.length) {
+    const primaryStyleCat = sc.styleCats[0];
+    if (![...cats.keys()].some((k) => k.toLowerCase() === primaryStyleCat.toLowerCase())) cats.set(primaryStyleCat, 0);
+  }
   const catList = [...cats].sort((a, b) => a[0].localeCompare(b[0], 'zh'));
   const unsorted = clips.filter((c) => !(c.cats || []).length).length;
   const q = h('input', { type: 'search', placeholder: '搜索：标题、笔记、作者、Fig.', 'aria-label': '搜索素材' });
@@ -647,15 +776,38 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
     catBtn(ALL, '全部', clips.length), ...catList.map(([k, n]) => catBtn(k, k, n)), unsorted ? catBtn(UNSORTED, '未分类', unsorted) : null);
   const folderBar = fs.state === 'ok' ? null : h('div', { class: `clip-folder st-${fs.state}` },
     fs.mode === 'gdrive'
-      ? [h('p', null, fs.state === 'none' ? '连接 Google Drive 图床后，图片会存进云端（默认 Research_Figure_Library/03_LabNotebook_Clips），在 Chrome、Safari 和手机上都能稳定查看。' : '点一下授权 Google Drive，即可同步最新图片并上传新图（已加载过的图片会直接从本地缓存显示）。'),
+      ? [h('p', null, fs.state === 'none'
+        ? `尚未填写 Google OAuth Client ID：配置一次后，图片自动存进 03_LabNotebook_Clips${sc.styleCats.length ? `，归入「${sc.styleCats[0]}」分类的图会自动同步到风格投递箱` : ''}。`
+        : '点一下授权 Google Drive，即可同步最新图片并上传新图（已加载过的图片会直接从本地缓存显示）。'),
+      h('div', { class: 'clip-folder-act' },
+        fs.state === 'ask' ? h('button', { class: 'btn small ghost', type: 'button', onclick: () => connectGoogleDrive(() => route({ quiet: true })) }, '修改设置') : null,
         h('button', { class: 'btn primary small', type: 'button', onclick: async () => {
           if (fs.state === 'none') connectGoogleDrive(() => route({ quiet: true }));
           else if (await connectFolder()) route({ quiet: true });
-        } }, icon('attach', 16), fs.state === 'none' ? '连接 Google Drive' : '授权 Google Drive')]
+        } }, icon('attach', 16), fs.state === 'none' ? '填写 OAuth Client ID 并连接' : '授权 Google Drive'))]
       : fs.state === 'unsupported'
         ? h('p', null, '这个浏览器不能读取电脑上的文件夹，所以只显示文字和出处。')
         : [h('p', null, '先选一个存图片的文件夹。'),
           h('button', { class: 'btn primary small', type: 'button', onclick: async () => { if (await connectFolder()) route({ quiet: true }); } }, icon('attach', 16), '选择文件夹')]);
+  const pendingStyle = (!DEMO && sc.styleCats.length)
+    ? clips.filter((c) => c.kind === 'img' && matchesStyleSyncCat(c.cats, sc) && !c.styleDriveId && (c.driveId || c.file))
+    : [];
+  const styleBar = (!DEMO && isStyleInboxCategory(cat, sc)) ? h('div', { class: 'clip-folder clip-style-bar' },
+    h('p', null, pendingStyle.length
+      ? `本分类有 ${pendingStyle.length} 张图尚未同步到 Google Drive 风格投递箱（00_Style_Inbox）。`
+      : `本分类（${cat}）中的新图保存时会自动复制一份到 Google Drive 风格投递箱（00_Style_Inbox）。`),
+    h('div', { class: 'clip-folder-act' },
+      h('a', { class: 'btn small ghost', href: `https://drive.google.com/drive/folders/${encodeURIComponent(sc.styleFolderId)}`, target: '_blank', rel: 'noopener' }, '打开 00_Style_Inbox'),
+      pendingStyle.length ? h('button', { class: 'btn primary small', type: 'button', onclick: async (e) => {
+        if (!gdriveConfig()) { connectGoogleDrive(() => route({ quiet: true })); return; }
+        e.currentTarget.disabled = true;
+        try {
+          const res = await syncStyleInboxClips(clips);
+          toast(res.synced ? `已同步 ${res.synced} 张图到 00_Style_Inbox${res.failed ? `（${res.failed} 张失败）` : ''}。`
+            : res.failed ? '同步到 00_Style_Inbox 失败，请重试。' : '没有可同步的云端图片（请确认图片已上传到 Google Drive）。');
+          if (res.synced) route({ quiet: true });
+        } catch (err) { toast(err.message || '同步失败。'); } finally { e.currentTarget.disabled = false; }
+      } }, icon('sync', 16), `立即同步 (${pendingStyle.length})`) : null)) : null;
   const fileIn = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: (e) => { const f = e.target.files?.[0]; if (f) editClip(null, { image: f, cat: realCat(cat), task: paper }); e.target.value = ''; } });
   const realCat = (k) => (k === ALL || k === UNSORTED ? '' : k);
   // ⌘V anywhere on this page (outside text fields) starts a new clip with the pasted picture or Zotero text.
@@ -681,12 +833,12 @@ export async function viewClips(cat = ALL, params = new URLSearchParams()) {
     topbar({ back: cat !== ALL || paper ? '#/clips' : '#/', backLabel: cat !== ALL || paper ? '素材库' : '首页', title,
       sub: `${pinnedCount ? `置顶 ${pinnedCount} · ` : ''}${clips.filter((c) => c.kind === 'img').length} 张图 · ${clips.filter((c) => c.kind !== 'img').length} 条文字 · Zotero 里 ⌥5 框图 → ⌘C → 这里 ⌘V`,
       actions: [
-        !DEMO ? h('button', { class: 'btn ghost', type: 'button', title: '设置或切换 Google Drive 图床文件夹', onclick: () => connectGoogleDrive(() => route({ quiet: true })) }, h('span', { class: 'wide-only' }, fs.state === 'ok' ? 'Google Drive ✓' : 'Google Drive')) : null,
-        h('button', { class: 'btn ghost', type: 'button', title: '连接 Zotero 账号：自动补全题目、DOI 和跳回原页的链接', onclick: () => connectZoteroApi(() => route({ quiet: true })) }, h('span', { class: 'wide-only' }, zoteroApi() ? 'Zotero ✓' : '连接 Zotero')),
+        !DEMO ? h('button', { class: 'btn ghost', type: 'button', title: '填写 OAuth Client ID、授权或配置 00_Style_Inbox 自动同步', onclick: () => connectGoogleDrive(() => route({ quiet: true })) }, icon('sync', 16), h('span', null, fs.state === 'ok' ? 'Drive ✓' : 'Drive 设置')) : null,
+        h('button', { class: 'btn ghost', type: 'button', title: '连接 Zotero 账号：自动补全题目、DOI 和跳回原页的链接', onclick: () => connectZoteroApi(() => route({ quiet: true })) }, icon('book', 16), h('span', { class: 'wide-only' }, zoteroApi() ? 'Zotero ✓' : '连接 Zotero')),
         h('button', { class: 'btn', type: 'button', onclick: () => editClip(null, { kind: 'note', cat: realCat(cat) }) }, icon('note', 18), h('span', null, '记一条文字')),
         (!DEMO || fs.state !== 'unsupported') ? h('button', { class: 'btn primary', type: 'button', onclick: () => fileIn.click() }, icon('plus', 18), h('span', null, '加图片')) : null].filter(Boolean) }),
     demoBanner(),
-    h('div', { class: 'clip-wrap' }, folderBar,
+    h('div', { class: 'clip-wrap' }, folderBar, styleBar,
       pTask ? h('p', { class: 'clip-paper' }, h('span', { class: 'm-art-kicker' }, '文献'), pTask.ref ? `${pTask.ref.title}（${[pTask.ref.authors, pTask.ref.journal, pTask.ref.year].filter(Boolean).join(' · ')}）` : pTask.text, ' ', h('a', { href: '#/clips' }, '看全部'), pTask.why ? h('span', { class: 'clip-why' }, `　为什么读：${pTask.why}`) : null) : null,
       h('div', { class: 'clip-layout' }, side, h('div', null, h('div', { class: 'search-row' }, q), grid)), fileIn));
 }
@@ -753,10 +905,11 @@ export async function openClip(id) {
   const zh = zoteroHref(s);
   const doi = s.ref?.doi || s.doi;
   const driveHref = c.driveId ? `https://drive.google.com/file/d/${encodeURIComponent(c.driveId)}/view` : '';
+  const styleHref = c.styleDriveId ? `https://drive.google.com/file/d/${encodeURIComponent(c.styleDriveId)}/view` : '';
   const body = h('div', { class: 'clip-detail' }, big,
     (c.cats || []).length ? h('p', { class: 'clip-tags' }, c.cats.map((k) => h('a', { href: `#/clips/${encodeURIComponent(k)}`, onclick: () => document.querySelectorAll('.modal-root').forEach((m) => m.close?.()) }, k))) : null,
     c.note ? h('p', { class: 'clip-note-full' }, unitHints(c.note)) : null,
-    s.ref || s.cite || zh || doi || driveHref ? h('div', { class: 'clip-source' },
+    s.ref || s.cite || zh || doi || driveHref || styleHref ? h('div', { class: 'clip-source' },
       h('span', { class: 'm-art-kicker' }, '出处'),
       s.ref?.title ? h('p', null, h('b', null, s.ref.title)) : null,
       h('p', { class: 'muted' }, [s.ref?.authors || s.cite, s.ref?.journal, s.ref?.year, s.fig, s.page ? `第 ${s.page} 页` : ''].filter(Boolean).join(' · ')),
@@ -765,9 +918,25 @@ export async function openClip(id) {
         zh ? h('a', { class: 'btn small primary', href: zh }, icon('book', 16), s.page && /open-pdf/.test(zh) ? `在 Zotero 打开第 ${s.page} 页` : '在 Zotero 打开') : null,
         doi ? h('a', { class: 'btn small', href: `https://doi.org/${doi}`, target: '_blank', rel: 'noopener' }, 'DOI') : null,
         driveHref ? h('a', { class: 'btn small ghost', href: driveHref, target: '_blank', rel: 'noopener' }, 'Google Drive 原图') : null,
+        styleHref ? h('a', { class: 'btn small ghost', href: styleHref, target: '_blank', rel: 'noopener' }, '00_Style_Inbox 副本') : null,
+        (!DEMO && c.kind === 'img' && c.driveId && !c.styleDriveId && matchesStyleSyncCat(c.cats)) ? h('button', { class: 'btn small', type: 'button', onclick: async (e) => {
+          const cfg = gdriveConfig();
+          if (!cfg) { connectGoogleDrive(() => route({ quiet: true })); return; }
+          e.currentTarget.disabled = true;
+          try {
+            const copyId = await driveCopyToFolder(c.driveId, cfg.styleFolderId, c.file || `${c.id}.png`);
+            const next = structuredClone(c);
+            next.styleDriveId = copyId;
+            next.styleSyncedAt = nowISO();
+            await saveClip(next, `Sync clip ${next.id} to 00_Style_Inbox`);
+            toast(`${next.id} 已同步到 00_Style_Inbox。`);
+            document.querySelectorAll('.modal-root').forEach((m) => m.close?.());
+            route({ quiet: true });
+          } catch (err) { toast(err.message || '同步到 00_Style_Inbox 失败。'); } finally { e.currentTarget.disabled = false; }
+        } }, icon('sync', 16), '同步到 00_Style_Inbox') : null,
         s.task ? h('a', { class: 'btn small ghost', href: `#/clips?paper=${s.task}`, onclick: () => document.querySelectorAll('.modal-root').forEach((m) => m.close?.()) }, '这篇的所有素材') : null))
       : h('p', { class: 'muted small' }, '没有记出处。'),
-    h('p', { class: 'muted small' }, `${c.id}${c.pinned ? ' · 已置顶' : ''}${c.file ? ` · ${c.file}` : ''}`));
+    h('p', { class: 'muted small' }, `${c.id}${c.pinned ? ' · 已置顶' : ''}${c.styleDriveId ? ' · 已同步 00_Style_Inbox' : ''}${c.file ? ` · ${c.file}` : ''}`));
   const hasNote = !!(c.note && String(c.note).trim());
   const dlg = modal({ title: c.title || c.id, wide: true, body, buttons: [
     { label: '删除', danger: true, run: async () => { if (await deleteClip(c)) { dlg.close(); route({ quiet: true }); } return false; } },
@@ -862,10 +1031,15 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
   }
   const title = h('input', { id: 'cl-title', value: x.title || '', placeholder: x.kind === 'img' ? '一句话说明，例如：垂直 OECT 截面结构' : '例如：Template 框线粗细' });
   // categories: chips of existing ones (click to toggle) + a free box for new ones
+  const sc = styleSyncConfig();
   const picked = new Set(x.cats || []);
-  const known = [...new Set([...all.flatMap((y) => y.cats || []), ...picked])].sort((a, b) => a.localeCompare(b, 'zh'));
+  const extraStyleCats = (!DEMO && x.kind === 'img' && sc.styleCats.length) ? [sc.styleCats[0]] : [];
+  const known = [...new Set([...all.flatMap((y) => y.cats || []), ...extraStyleCats, ...picked])].sort((a, b) => a.localeCompare(b, 'zh'));
   const chips = h('div', { class: 'clip-chips' });
-  const newCat = h('input', { id: 'cl-cat', placeholder: known.length ? '新分类，回车添加（可多个，逗号分隔）' : '分类，例如 v-OECTs结构、大鼠皮肤修复图、画图/template（逗号分隔）' });
+  const newCat = h('input', { id: 'cl-cat', placeholder: known.length ? '新分类，回车添加（可多个，逗号分隔）' : '分类，例如 v-OECTs结构、大鼠皮肤修复图、00_Style_Inbox（逗号分隔）' });
+  const styleCatHint = (!DEMO && x.kind === 'img' && sc.styleCats.length)
+    ? h('p', { class: 'muted small clip-hint' }, `勾选「${sc.styleCats[0]}」分类保存时，会自动复制一份到 Google Drive 风格投递箱（00_Style_Inbox），主图仍留在 03_LabNotebook_Clips。`)
+    : null;
   const drawChips = () => chips.replaceChildren(...[...new Set([...known, ...picked])].map((k) => h('button', { type: 'button', class: `chip${picked.has(k) ? ' on' : ''}`, 'aria-pressed': String(picked.has(k)), onclick: () => { if (picked.has(k)) picked.delete(k); else picked.add(k); drawChips(); } }, k)));
   const addCats = () => { for (const k of newCat.value.split(/[,，、;；]/).map((s) => s.trim()).filter(Boolean)) { picked.add(k); if (!known.includes(k)) known.push(k); } newCat.value = ''; drawChips(); };
   newCat.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEvent(e)) { e.preventDefault(); addCats(); } });
@@ -945,7 +1119,7 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
     x.kind === 'img' ? preview : null,
     lbl('cl-title', '标题'), title,
     h('label', { class: 'check', for: 'cl-pin' }, pin, '置顶显示（固定排在素材库最前面）'),
-    h('span', { class: 'label' }, '分类（可多选；点一下选中/取消）'), chips, newCat,
+    h('span', { class: 'label' }, '分类（可多选；点一下选中/取消）'), chips, newCat, styleCatHint,
     lbl('cl-note', x.kind === 'img' ? '备注' : '内容'), note, hint,
     h('details', { class: 'clip-src-box', open: x.kind === 'img' },
       h('summary', null, '出处（溯源回文献）'),
@@ -1010,10 +1184,34 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
         x.file = name; urlCache.delete(clipKey(x));
         try { const bmp = await createImageBitmap(pic); x.w = bmp.width; x.h = bmp.height; } catch { /* size is optional */ }
       }
+      let styleSyncedNow = false;
+      let styleSyncErr = '';
+      if (!DEMO && x.kind === 'img') {
+        const cfg = gdriveConfig();
+        const wantsStyle = !!(cfg && matchesStyleSyncCat(x.cats, cfg) && cfg.styleFolderId && cfg.styleFolderId !== cfg.folderId);
+        if (wantsStyle && !x.driveId && x.file && gdriveToken()) {
+          const found = await driveFindByName(x.file);
+          if (found) x.driveId = found;
+        }
+        if (wantsStyle && x.driveId && (pic || !x.styleDriveId)) {
+          try {
+            x.styleDriveId = await driveCopyToFolder(x.driveId, cfg.styleFolderId, x.file || `${x.id}.png`);
+            x.styleSyncedAt = nowISO();
+            styleSyncedNow = true;
+          } catch (e) {
+            if (pic) { delete x.styleDriveId; delete x.styleSyncedAt; }
+            styleSyncErr = e.message || '同步失败';
+          }
+        }
+      }
       try {
         await saveClip(x, `${isNew ? 'Add' : 'Update'} clip ${x.id}`);
         if (src.ref || src.zotero || src.cite) try { localStorage.setItem(LAST_SRC, JSON.stringify({ at: Date.now(), src })); } catch { /* private window */ }
-        toast(`${x.id} 已存好${x.kind === 'img' ? (DEMO ? '（图片已存好）' : '（图片已同步到 Google Drive）') : ''}。`);
+        toast(styleSyncedNow
+          ? `${x.id} 已存好（已同步到 Google Drive 及 00_Style_Inbox）。`
+          : styleSyncErr
+            ? `${x.id} 已存入主库，但同步到 00_Style_Inbox 失败：${styleSyncErr}（可在分类页点「立即同步」重试）。`
+            : `${x.id} 已存好${x.kind === 'img' ? (DEMO ? '（图片已存好）' : '（图片已同步到 Google Drive）') : ''}。`);
         route({ quiet: true });
       } catch (e) { toast(saveError(e)); return false; }
     },

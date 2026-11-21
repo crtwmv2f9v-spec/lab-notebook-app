@@ -327,6 +327,98 @@ try {
     if (bad.length) throw new Error(`failed checks: ${bad.join(', ')} (${JSON.stringify(r)})`);
     return 'sort (tz), pin/unpin, dark contrast, raw+fallback copy, surrogate truncation, search order & cross-view open';
   });
+  await check('clips-gdrive-style-inbox', async () => {
+    await go('#/clips', "document.querySelectorAll('.clip-tile').length >= 2");
+    const r = await evaluate(`
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const m = await import('./js/clips.js');
+      const core = await import('./js/core.js');
+      const prevCfg = localStorage.getItem('labnote-gdrive');
+      const prevTok = sessionStorage.getItem('labnote-gdrive-tok');
+      const origFetch = window.fetch;
+      let tmpId = '';
+      try {
+        m.clearGdriveConfig();
+        const defSc = m.styleSyncConfig();
+        const defOk = defSc.styleFolderId === '1xjQ31u4WK3cFTfE-MQrCRLVmgNAEn6Fx'
+          && defSc.styleCats.length === 1 && defSc.styleCats[0] === '00_Style_Inbox'
+          && m.gdriveConfig() === null;
+
+        const parsed = m.parseStyleCats('00_Style_Inbox, flat style image library，00_style_inbox; ');
+        const parseOk = parsed.length === 2 && parsed[0] === '00_Style_Inbox' && parsed[1] === 'flat style image library';
+
+        // Legacy v73 config without styleCats upgrades seamlessly to default 00_Style_Inbox
+        localStorage.setItem('labnote-gdrive', JSON.stringify({ clientId: 'legacy.apps.googleusercontent.com', folderId: m.DEFAULT_GDRIVE_FOLDER }));
+        const leg = m.gdriveConfig();
+        const legacyOk = leg?.clientId === 'legacy.apps.googleusercontent.com'
+          && leg?.styleFolderId === '1xjQ31u4WK3cFTfE-MQrCRLVmgNAEn6Fx'
+          && leg?.styleCats?.[0] === '00_Style_Inbox';
+
+        // Explicit opt-out via empty styleCats
+        m.saveGdriveConfig({ clientId: 'test.apps.googleusercontent.com', styleCats: '' });
+        const optOutOk = m.gdriveConfig()?.styleCats?.length === 0 && !m.matchesStyleSyncCat(['00_Style_Inbox']);
+
+        // Modal renders all 4 inputs and saves cleanly via 仅保存配置
+        m.connectGoogleDrive();
+        await wait(80);
+        const modalHasAll = !!document.getElementById('gd-cid') && !!document.getElementById('gd-fid')
+          && !!document.getElementById('gd-style-cat') && !!document.getElementById('gd-style-fid')
+          && [...document.querySelectorAll('.modal button')].some((b) => b.textContent === '复制网址');
+        document.getElementById('gd-cid').value = 'cid-123.apps.googleusercontent.com';
+        document.getElementById('gd-style-cat').value = '00_Style_Inbox, flat style image library';
+        document.getElementById('gd-style-fid').value = 'https://drive.google.com/drive/folders/1xjQ31u4WK3cFTfE-MQrCRLVmgNAEn6Fx?usp=sharing';
+        [...document.querySelectorAll('.modal-foot button')].find((b) => b.textContent === '仅保存配置')?.click();
+        await wait(80);
+        const savedCfg = m.gdriveConfig();
+        const modalSaveOk = savedCfg?.clientId === 'cid-123.apps.googleusercontent.com'
+          && savedCfg?.styleFolderId === '1xjQ31u4WK3cFTfE-MQrCRLVmgNAEn6Fx'
+          && m.matchesStyleSyncCat(['Flat Style Image Library'])
+          && !m.matchesStyleSyncCat(['其他分类']);
+
+        // Mocked Drive v3 server-side copy + batch syncStyleInboxClips idempotency & guard
+        sessionStorage.setItem('labnote-gdrive-tok', JSON.stringify({ token: 'tok-test', exp: Date.now() + 3600e3 }));
+        const calls = [];
+        window.fetch = async (url, opts) => {
+          if (String(url).startsWith('https://www.googleapis.com/drive/v3/files/')) {
+            calls.push({ url: String(url), method: opts?.method, body: opts?.body ? JSON.parse(opts.body) : null, auth: opts?.headers?.get?.('Authorization') });
+            return new Response(JSON.stringify({ id: 'copy_style_999', name: 'F-9999_style.png' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          }
+          return origFetch(url, opts);
+        };
+        tmpId = 'F-9999';
+        await core.lib.commit('Add temp style clip', async () => ({
+          changes: [{ path: m.clipPath(tmpId), data: JSON.stringify({ id: tmpId, kind: 'img', title: 'Flat ref', cats: ['Flat Style Image Library'], file: 'F-9999_style.png', driveId: 'src_drive_111', src: {}, created: '2026-11-20T00:00:00Z' }) + '\\n' }],
+        }));
+        const res1 = await m.syncStyleInboxClips();
+        const res2 = await m.syncStyleInboxClips();
+        const afterSync = (await m.loadClips()).find((x) => x.id === tmpId);
+        const syncOk = res1.synced === 1 && res1.failed === 0 && res2.synced === 0
+          && calls.length === 1
+          && calls[0].url.includes('/files/src_drive_111/copy')
+          && calls[0].method === 'POST'
+          && calls[0].auth === 'Bearer tok-test'
+          && calls[0].body?.parents?.[0] === '1xjQ31u4WK3cFTfE-MQrCRLVmgNAEn6Fx'
+          && calls[0].body?.name === 'F-9999_style.png'
+          && afterSync?.styleDriveId === 'copy_style_999' && !!afterSync?.styleSyncedAt;
+
+        // Same-folder guard prevents self-copy
+        m.saveGdriveConfig({ clientId: 'cid-123.apps.googleusercontent.com', folderId: m.DEFAULT_STYLE_INBOX_FOLDER, styleFolderId: m.DEFAULT_STYLE_INBOX_FOLDER, styleCats: '00_Style_Inbox' });
+        const resSame = await m.syncStyleInboxClips([{ id: 'F-9998', kind: 'img', cats: ['00_Style_Inbox'], driveId: 'src_222', file: 'a.png' }]);
+        const sameGuardOk = resSame.synced === 0 && calls.length === 1;
+
+        return { defOk, parseOk, legacyOk, optOutOk, modalHasAll, modalSaveOk, syncOk, sameGuardOk };
+      } finally {
+        window.fetch = origFetch;
+        document.querySelectorAll('.modal-root').forEach((el) => el.close?.());
+        if (tmpId) await core.lib.commit('Cleanup temp style clip', async () => ({ changes: [{ path: m.clipPath(tmpId), delete: true }] })).catch(() => {});
+        if (prevCfg == null) localStorage.removeItem('labnote-gdrive'); else localStorage.setItem('labnote-gdrive', prevCfg);
+        if (prevTok == null) sessionStorage.removeItem('labnote-gdrive-tok'); else sessionStorage.setItem('labnote-gdrive-tok', prevTok);
+      }
+    `);
+    const bad = Object.entries(r).filter(([, v]) => !v).map(([k]) => k);
+    if (bad.length) throw new Error(`failed checks: ${bad.join(', ')} (${JSON.stringify(r)})`);
+    return 'gdrive config/legacy/opt-out, 4-field modal, copy-to-00_Style_Inbox & idempotency';
+  });
   await check('weekboard', async () => {
     await go('#/', "document.querySelectorAll('.wb .wb-col').length === 8 && document.querySelector('.wb-col.is-today .wb-card')");
     const r = await evaluate(`const p = await import('./js/planner.js');

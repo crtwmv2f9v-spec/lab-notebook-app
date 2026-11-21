@@ -7,6 +7,11 @@ import {
   topbar, useFontCss, view,
 } from './core.js';
 import { route } from './app.js';
+import {
+  DEFAULT_GDRIVE_FOLDER, DEFAULT_STYLE_INBOX_CAT, DEFAULT_STYLE_INBOX_FOLDER,
+  authorizeDrive, clearGdriveConfig, gdriveConfig, gdriveSetupSteps, hasGdriveToken,
+  saveGdriveConfig, styleSyncConfig,
+} from './clips.js';
 
 // ---------- setup ----------
 export function tokenUrl(owner = S.owner) {
@@ -195,6 +200,52 @@ export function viewSettings() {
               } finally { e.target.disabled = false; }
             } }, '保存连接'),
             h('a', { class: 'btn', href: tokenUrl(), target: '_blank', rel: 'noopener' }, '创建新令牌')))),
+      DEMO ? null : (() => {
+        const gd = gdriveConfig();
+        const sc = styleSyncConfig();
+        const gdOk = !!(gd && hasGdriveToken());
+        const gdState = gdOk ? 'ok' : gd ? 'ask' : 'none';
+        const gdStatusText = gdOk ? '已连接并授权（本次访问可直接读写）' : gd ? '已保存 Client ID（点下方按钮授权一次）' : '尚未配置 OAuth Client ID';
+        const gdCid = h('input', { id: 's-gd-cid', value: gd?.clientId || '', autocomplete: 'off', spellcheck: 'false', placeholder: '粘贴 xxxxx.apps.googleusercontent.com' });
+        const gdFid = h('input', { id: 's-gd-fid', value: gd?.folderId || DEFAULT_GDRIVE_FOLDER, autocomplete: 'off', spellcheck: 'false', placeholder: '粘贴 Google Drive 文件夹 ID 或链接' });
+        const gdStyleCat = h('input', { id: 's-gd-style-cat', value: sc.styleCats.join(', '), autocomplete: 'off', spellcheck: 'false', placeholder: `例如：${DEFAULT_STYLE_INBOX_CAT}, flat style image library（留空关闭）` });
+        const gdStyleFid = h('input', { id: 's-gd-style-fid', value: sc.styleFolderId || DEFAULT_STYLE_INBOX_FOLDER, autocomplete: 'off', spellcheck: 'false', placeholder: '粘贴 00_Style_Inbox 文件夹 ID 或链接' });
+        const gdBadge = h('span', { class: `gd-status st-${gdState}` }, gdStatusText);
+        const origin = location.origin || 'https://crtwmv2f9v-spec.github.io';
+        return section('Google Drive 图床与风格投递箱',
+          gdBadge,
+          h('p', { class: 'muted' }, '素材库图片默认存进 ', h('code', null, 'Research_Figure_Library/03_LabNotebook_Clips'), '；归入指定分类（默认 ', h('code', null, DEFAULT_STYLE_INBOX_CAT), '）的图片会自动复制一份到 ', h('code', null, '00_Style_Inbox'), '。配置只存在本机浏览器，不进 GitHub。'),
+          h('details', { open: !gd },
+            h('summary', null, gd ? '查看 4 步获取 OAuth Client ID 说明' : '如何获取个人 OAuth Client ID（只需配置一次，约 2 分钟）'),
+            gdriveSetupSteps(origin)),
+          h('div', { class: 'form' },
+            h('label', { for: 's-gd-cid' }, 'Google OAuth Client ID'), gdCid,
+            h('label', { for: 's-gd-fid' }, '素材库主文件夹 ID（默认 03_LabNotebook_Clips）'), gdFid,
+            h('label', { for: 's-gd-style-cat' }, '自动同步到风格投递箱的分类名（逗号分隔，不区分大小写；留空关闭）'), gdStyleCat,
+            h('label', { for: 's-gd-style-fid' }, '风格投递箱文件夹 ID（默认 00_Style_Inbox）'), gdStyleFid,
+            h('div', { class: 'row-actions' },
+              h('button', { class: 'btn primary', type: 'button', onclick: async (e) => {
+                const cid = gdCid.value.trim();
+                if (!cid) { toast('先填写 Google OAuth Client ID。'); return; }
+                e.currentTarget.disabled = true;
+                try {
+                  saveGdriveConfig({ clientId: cid, folderId: gdFid.value, styleFolderId: gdStyleFid.value, styleCats: gdStyleCat.value });
+                  await authorizeDrive({ interactive: true, clientId: cid });
+                  toast('Google Drive 已连接并授权。');
+                  route({ quiet: true });
+                } catch (err) { toast(err.message || 'Google Drive 授权失败。'); } finally { e.currentTarget.disabled = false; }
+              } }, gd ? '保存并授权 Google Drive' : '连接并授权 Google Drive'),
+              h('button', { class: 'btn', type: 'button', onclick: () => {
+                const saved = saveGdriveConfig({ clientId: gdCid.value, folderId: gdFid.value, styleFolderId: gdStyleFid.value, styleCats: gdStyleCat.value });
+                toast(saved ? 'Google Drive 配置已保存。' : '已保存文件夹与分类设置；填写 Client ID 后即可授权。');
+                route({ quiet: true });
+              } }, '仅保存配置'),
+              gd ? h('button', { class: 'btn danger', type: 'button', onclick: () => {
+                clearGdriveConfig();
+                toast('已断开 Google Drive。');
+                route({ quiet: true });
+              } }, '断开 Google Drive') : null)));
+      })(),
       isLib ? section('维护',
         h('p', { class: 'muted' }, '直接在 GitHub 或电脑上改过页面文件后，重建一下搜索索引。清除缓存只删本机的副本。'),
         h('div', { class: 'row-actions' },
