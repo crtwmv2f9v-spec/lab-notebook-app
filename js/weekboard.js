@@ -3,7 +3,7 @@
 import { todayISO, zoned } from './model.js';
 import { addDays } from './lab.js';
 import { h, icon, isComposing, isImeEvent, onCompositionEndOnce, replaceAround } from './util.js';
-import { closeMenu, downloadText, menu, toast } from './core.js';
+import { closeMenu, downloadText, flushPendingQuietRoute, menu, toast } from './core.js';
 import { icsFor } from './lab.js';
 import { LOOSE_COLOR, pinTopicsIn, topicsOf } from './finds.js';
 import { WEEKDAYS, allFollowups, changePlanner, changeTasks, clearTickPop, editPaper, editProject, isGoal, loadPlanner, moveTask, newTask, reminderRow, ring, taskRow, weekStart } from './planner.js';
@@ -136,8 +136,8 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
     if (!openDock) return;
     const { li, dock, more, offPtr, offKey, offScroll, offResize, offHash } = openDock;
     openDock = null;
-    closeMenu(dock);
     li.classList.remove('actions-open');
+    closeMenu(dock);
     dock.classList.remove('flip-up');
     dock.style.left = '';
     dock.style.right = '';
@@ -149,10 +149,51 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
     window.removeEventListener('scroll', offScroll, true);
     window.removeEventListener('resize', offResize);
     window.removeEventListener('hashchange', offHash);
-    if (flush && deferredDraw && el.isConnected) {
-      deferredDraw = false;
-      draw();
+    if (flush) {
+      if (deferredDraw && el.isConnected) {
+        deferredDraw = false;
+        draw();
+      }
+      flushPendingQuietRoute();
     }
+  };
+  const flushAfterPointer = (ev) => {
+    if (!el.isConnected) return;
+    const finish = () => {
+      if (deferredDraw && el.isConnected) {
+        deferredDraw = false;
+        draw();
+      }
+      flushPendingQuietRoute();
+    };
+    if (!ev?.isTrusted) { setTimeout(finish, 0); return; }
+    let settled = false;
+    let fallback = null;
+    const cleanup = () => {
+      clearTimeout(fallback);
+      window.removeEventListener('pointerup', onEnd, true);
+      window.removeEventListener('pointercancel', onEnd, true);
+    };
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      // Yield one macrotask so the browser's click event fires on the still-connected target first.
+      setTimeout(finish, 0);
+    };
+    const onEnd = () => settle();
+    window.addEventListener('pointerup', onEnd, { capture: true, once: true });
+    window.addEventListener('pointercancel', onEnd, { capture: true, once: true });
+    fallback = setTimeout(() => {
+      if (settled) return;
+      if (el.classList.contains('is-dragging')) {
+        settled = true;
+        cleanup();
+        el.addEventListener('dragend', () => setTimeout(finish, 0), { once: true });
+      } else {
+        settle();
+      }
+    }, 600);
   };
   const toggleDock = (li, dock, more) => {
     if (!li.isConnected) return;
@@ -169,7 +210,8 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
       const vh = window.innerHeight;
       const left = Math.max(8, Math.min(lr.right - dw, vw - dw - 8));
       const flipUp = lr.bottom + 6 + dh > vh - 8 && lr.top - 6 - dh >= 8;
-      const top = Math.max(8, flipUp ? lr.top - dh - 6 : lr.bottom + 6);
+      const rawTop = flipUp ? lr.top - dh - 6 : lr.bottom + 6;
+      const top = Math.max(8, Math.min(rawTop, vh - dh - 8));
       const originX = Math.max(12, Math.min(dw - 12, lr.right - 12 - left));
       dock.classList.toggle('flip-up', flipUp);
       dock.style.transformOrigin = `${Math.round(originX)}px ${flipUp ? '100%' : '0%'}`;
@@ -180,7 +222,8 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
     const offPtr = (ev) => {
       if (!el.isConnected || !li.isConnected) { closeDock({ flush: false }); return; }
       if (dock.contains(ev.target) || more.contains(ev.target) || ev.target?.closest?.('.menu')) return;
-      closeDock();
+      closeDock({ flush: false });
+      flushAfterPointer(ev);
     };
     const offKey = (ev) => {
       if (!el.isConnected || !li.isConnected) { closeDock({ flush: false }); return; }

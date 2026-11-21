@@ -160,7 +160,7 @@ export function changePlanner(mutate, message, redraw) {
     taped(tape, Boolean(mine), () => mutate(doc));
     return { changes: [{ path: TASKS_PATH, data: `${JSON.stringify(doc, null, 1)}\n` }], after: () => { if (mine) { mine.dirty -= 1; if (!mine.dirty) mine.doc = doc; } else { planLocal = { sha: l.tree.get(TASKS_PATH) || null, doc, dirty: 0 }; } } };
   })).then(() => { if (mine && planLocal === mine && !mine.dirty) mine.sha = lib.tree.get(TASKS_PATH); if (!mine) { redraw?.(); refreshDueBar(); } })
-    .catch((e) => { toast(e instanceof NetworkError ? '离线中：没有同步，联网后请再操作一次。' : `没有保存：${e.message}`); if (mine) mine.dirty = 0; if (planLocal === mine) planLocal = null; redraw?.(); refreshDueBar(); });
+    .catch((e) => { toast(e instanceof NetworkError ? '离线中：没有同步，联网后请再操作一次。' : `没有保存：${e.message}`); if (mine) mine.dirty = 0; if (planLocal === mine) planLocal = null; clearTickPop(); redraw?.(); refreshDueBar(); });
   return planQueue;
 }
 export const changeTasks = (mutate, message, redraw) => changePlanner((d) => mutate(d.tasks), message, redraw);
@@ -210,7 +210,7 @@ export function markTickPop(key) {
   if (prev) clearTimeout(prev.timer);
   const entry = {
     clearing: false,
-    timer: setTimeout(() => { if (pendingTickPop.get(key) === entry) pendingTickPop.delete(key); }, 800),
+    timer: setTimeout(() => { if (pendingTickPop.get(key) === entry) pendingTickPop.delete(key); }, 2500),
   };
   pendingTickPop.set(key, entry);
 }
@@ -235,7 +235,11 @@ export function tickButton(attrs, { key, done = false } = {}) {
     });
   }
   const btn = h('button', { ...attrs, class: `${attrs.class || 'tick'}${entry ? ' just-ticked' : ''}` });
-  if (entry) btn.addEventListener('animationend', () => btn.classList.remove('just-ticked'), { once: true });
+  if (entry) {
+    const endPop = () => btn.classList.remove('just-ticked');
+    btn.addEventListener('animationend', endPop, { once: true });
+    setTimeout(endPop, 280);
+  }
   return btn;
 }
 if (typeof window !== 'undefined') window.addEventListener('hashchange', () => clearTickPop());
@@ -415,7 +419,7 @@ export function openPaperNotes(paperId, kind) {
       tickButton({
         class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(st === 'done'), 'aria-label': st === 'done' ? '标为未完成' : '标为已完成',
         onclick: () => {
-          if (st !== 'done') markTickPop(pnKey); else clearTickPop(pnKey);
+          if (st !== 'done' && (show === 'all' || show === 'done')) markTickPop(pnKey); else clearTickPop(pnKey);
           one(k, x.id, (y) => { delete y.drop; delete y.dropAt; if (y.done) { delete y.done; delete y.doneAt; } else { y.done = true; y.doneAt = nowISO(); } }, 'Paper notes: tick');
         },
       }, { key: pnKey, done: st === 'done' }),
@@ -467,7 +471,7 @@ export function openPaperNotes(paperId, kind) {
     if (focusId && !keepInAdd) document.getElementById(focusId)?.focus();
   };
   draw();
-  modal({ title: `修改意见 · ${paper().title}`, wide: true, body: root, buttons: [{ label: '关闭' }, { label: '添加', primary: true, run: add }] });
+  modal({ title: `修改意见 · ${paper().title}`, wide: true, body: root, buttons: [{ label: '关闭' }, { label: '添加', primary: true, run: add }], onClose: () => clearTickPop() });
   setTimeout(() => { if (text.isConnected && !root.contains(document.activeElement)) text.focus(); }, 40);
 }
 export function editPaper(p) {

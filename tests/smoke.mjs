@@ -1356,6 +1356,85 @@ try {
       await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
       await sleep(150);
 
+      // Verify quiet-route preserves open dock + menu (flushes on close), real mouse click isn't swallowed by deferredDraw,
+      // short-viewport dock bottom clamp, and prefers-reduced-motion keeps #toast centered with zero animation.
+      const quietDockRes = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const colSel = ${JSON.stringify(dayColSel)};
+        const c2 = [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes('二次卡片圆角验证'));
+        c2.querySelector('.tick').click();
+        await wait(30);
+        const p2 = [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes('PROBE P3HT'));
+        p2.querySelector('.wb-more').click(); await wait(20);
+        p2.querySelector('.wb-refile').click();
+        await wait(300);
+        const dockMenuSurvivedQuiet = p2.isConnected && p2.classList.contains('actions-open') && !!document.querySelector('.menu') && !!p2.querySelector('.wb-refile')?.isConnected;
+        document.querySelector('.menu')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await wait(240);
+        const quietFlushedAfterClose = !document.querySelector('.wb-card.actions-open') && !document.querySelector('.menu') && !p2.isConnected;
+        // Restore c2 back to undone.
+        [...document.querySelectorAll(colSel + ' .wb-card.done')].find((e) => e.textContent.includes('二次卡片圆角验证'))?.querySelector('.tick')?.click();
+        await wait(260);
+        return { dockMenuSurvivedQuiet, quietFlushedAfterClose };`);
+
+      const ptrTarget = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const hm = await import('./js/home.js');
+        const colSel = ${JSON.stringify(dayColSel)};
+        const p2 = [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes('PROBE P3HT'));
+        const u2 = [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes('配制电解液对照'));
+        p2.scrollIntoView({ block: 'center' }); await wait(80);
+        p2.querySelector('.wb-more').click(); await wait(50);
+        hm.redrawHome(); await wait(80);
+        const r = u2.querySelector('.tick').getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };`);
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: ptrTarget.x, y: ptrTarget.y, button: 'left', clickCount: 1 });
+      await sleep(55);
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: ptrTarget.x, y: ptrTarget.y, button: 'left', clickCount: 1 });
+      await sleep(320);
+      const ptrClickRes = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const colSel = ${JSON.stringify(dayColSel)};
+        const u2 = [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes('配制电解液对照'));
+        const realClickNotSwallowed = !!u2?.classList.contains('done') && !document.querySelector('.wb-card.actions-open');
+        if (u2?.classList.contains('done')) { u2.querySelector('.tick').click(); await wait(260); }
+        return { realClickNotSwallowed };`);
+
+      await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 140, deviceScaleFactor: 1, mobile: false });
+      await sleep(100);
+      const clampRes = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const colSel = ${JSON.stringify(dayColSel)};
+        const c2 = [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes('二次卡片圆角验证'));
+        c2.scrollIntoView({ block: 'center' }); await wait(80);
+        c2.querySelector('.wb-more').click(); await wait(80);
+        const dr = c2.querySelector('.wb-dock').getBoundingClientRect();
+        document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })); await wait(60);
+        return { dockBottomClamped: dr.top >= 7 && dr.bottom <= window.innerHeight - 7 };`);
+      await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await sleep(120);
+
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+      await sleep(80);
+      const reducedRes = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const c = await import('./js/core.js');
+        const colSel = ${JSON.stringify(dayColSel)};
+        c.toast('减弱动态效果居中测试'); await wait(60);
+        const tr = document.getElementById('toast').getBoundingClientRect();
+        const reducedToastCentered = Math.abs((tr.left + tr.right) / 2 - document.documentElement.clientWidth / 2) < 2;
+        document.getElementById('toast').classList.remove('show');
+        const c2 = [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes('二次卡片圆角验证'));
+        c2.querySelector('.wb-more').click();
+        const reducedDockNoAnim = getComputedStyle(c2.querySelector('.wb-dock')).animationName === 'none';
+        c2.querySelector('.wb-more').click();
+        c2.querySelector('.tick').click(); await wait(30);
+        const tDone = [...document.querySelectorAll(colSel + ' .wb-card.done')].find((e) => e.textContent.includes('二次卡片圆角验证'))?.querySelector('.tick');
+        const reducedTickNoAnim = !!tDone && getComputedStyle(tDone).animationName === 'none';
+        await wait(320);
+        const tAfter = [...document.querySelectorAll(colSel + ' .wb-card.done')].find((e) => e.textContent.includes('二次卡片圆角验证'))?.querySelector('.tick');
+        const reducedTickCleaned = !!tAfter && !tAfter.classList.contains('just-ticked');
+        tAfter?.click(); await wait(240);
+        return { reducedToastCentered, reducedDockNoAnim, reducedTickNoAnim, reducedTickCleaned };`);
+      await send('Emulation.setEmulatedMedia', { features: [] });
+      await sleep(80);
+
       // Verify apple-tick is gated strictly to user undone -> done clicks (never on fresh mount, week switch, or unrelated redraws).
       await go('#/plan', "document.querySelector('.wb-page .wb-card')");
       await go('#/', `[...document.querySelectorAll('${dayColSel} .wb-card.done')].some((e) => e.textContent.includes('已完成静默验证项'))`);
@@ -1373,14 +1452,16 @@ try {
         document.querySelector('.wb-nav [aria-label="上一周"]').click(); await wait(60);
         [...document.querySelectorAll('.wb-nav button')].find((b) => b.textContent === '本周').click(); await wait(60);
         const weekSwitchQuiet = !anyAnim();
-        // 3. Weekboard user click undone -> done animates ONLY that card, then stays quiet on subsequent redraw & uncheck.
+        // 3. Weekboard user click undone -> done animates ONLY that card, survives full 220ms animationend past quiet-route, then stays quiet on redraw & uncheck.
         const findCard = (txt) => [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes(txt));
         findCard('配制电解液对照').querySelector('.tick').click();
         const uDone = await poll(() => { const el = findCard('配制电解液对照'); return el?.classList.contains('done') ? el : null; });
         const uTick = uDone?.querySelector('.tick');
         const wbTickPopped = !!uTick && uTick.classList.contains('just-ticked') && getComputedStyle(uTick).animationName === 'apple-tick';
+        let wbAnimEnded = false;
+        uTick?.addEventListener('animationend', () => { wbAnimEnded = uTick.isConnected; });
         const otherDoneQuiet = [...document.querySelectorAll('li.task.done .tick')].filter((b) => b !== uTick).every((b) => !b.classList.contains('just-ticked') && getComputedStyle(b).animationName === 'none');
-        await wait(260);
+        await wait(340);
         hm.redrawHome(); await wait(40);
         const wbNoReplay = !anyAnim();
         findCard('配制电解液对照').querySelector('.tick').click();
@@ -1393,7 +1474,7 @@ try {
         const dDone = await poll(() => { const el = findCard('截止联动打勾验证'); return el?.classList.contains('done') ? el : null; });
         const dTick = dDone?.querySelector('.tick');
         const dlTickPopped = !!dTick && dTick.classList.contains('just-ticked') && getComputedStyle(dTick).animationName === 'apple-tick';
-        await wait(260);
+        await wait(340);
         // 5. Notes 待做实验 .tick (js/finds.js) pops on undone -> done, does not replay on redraw, then restores cleanly.
         const todoLi = [...document.querySelectorAll('.notes-card .nt-todos .task')].find((e) => !e.classList.contains('done'));
         const todoTxt = todoLi?.querySelector('.task-text')?.textContent || '';
@@ -1402,16 +1483,27 @@ try {
         const mDone = await poll(() => { const el = findTodo(); return el?.classList.contains('done') ? el : null; });
         const mTick = mDone?.querySelector('.tick');
         const findsTickPopped = !!mTick && mTick.classList.contains('just-ticked') && getComputedStyle(mTick).animationName === 'apple-tick';
-        await wait(260);
+        await wait(340);
         hm.redrawHome(); await wait(40);
         const findsNoReplay = !anyAnim();
         findTodo()?.querySelector('.tick').click();
         await wait(240);
-        // 6. Paper notes modal .tick (js/planner.js) pops on undone -> done and stays quiet on filter switch.
+        // 6. Paper notes modal .tick (js/planner.js) pops on undone -> done under 全部 and stays quiet under default 待完成 -> 已完成 filter switch.
         let paperTickOk = true;
         const firstPaperId = p.planLocal?.doc?.papers?.[0]?.id;
         if (firstPaperId) {
           p.openPaperNotes(firstPaperId, 'ms'); await wait(60);
+          // Default show === 'open': ticking removes item from open view and must not animate when switching to 已完成.
+          const openItem = document.querySelector('.pn-item:not(.done)');
+          let openFilterQuiet = true;
+          if (openItem) {
+            const openTxt = openItem.querySelector('.task-text')?.textContent || '';
+            openItem.querySelector('.tick').click(); await wait(30);
+            [...document.querySelectorAll('.pn-filter .chip')].find((b) => b.textContent.startsWith('已完成'))?.click(); await wait(40);
+            openFilterQuiet = !anyAnim();
+            [...document.querySelectorAll('.pn-item.done')].find((e) => e.querySelector('.task-text')?.textContent === openTxt)?.querySelector('.tick').click();
+            await wait(60);
+          }
           [...document.querySelectorAll('.pn-filter .chip')].find((b) => b.textContent.startsWith('全部'))?.click(); await wait(40);
           const pnOpen = document.querySelector('.pn-item:not(.done)');
           if (pnOpen) {
@@ -1424,7 +1516,7 @@ try {
             const filterQuiet = !anyAnim();
             [...document.querySelectorAll('.pn-item.done')].find((e) => e.querySelector('.task-text')?.textContent === pnTxt)?.querySelector('.tick').click();
             await wait(60);
-            paperTickOk = popped && filterQuiet;
+            paperTickOk = openFilterQuiet && popped && filterQuiet;
           }
           document.querySelector('.modal-root')?.close?.(); await wait(200);
         }
@@ -1437,7 +1529,7 @@ try {
           const remDone = await poll(() => { const el = findRem(); return el?.classList.contains('done') ? el : null; }, 400);
           const remTick = remDone?.querySelector('.tick');
           const remPopped = !!remTick && remTick.classList.contains('just-ticked') && getComputedStyle(remTick).animationName === 'apple-tick';
-          await wait(260);
+          await wait(340);
           hm.redrawHome(); await wait(40);
           const remNoReplay = !anyAnim();
           findRem()?.querySelector('.tick')?.click();
@@ -1445,16 +1537,35 @@ try {
           await wait(240);
           remTickOk = remPopped && remNoReplay;
         }
-        return { mountQuiet, redrawQuiet, weekSwitchQuiet, wbTickPopped, otherDoneQuiet, wbNoReplay, wbUncheckQuiet, dlTickPopped, findsTickPopped, findsNoReplay, paperTickOk, remTickOk };`);
+        // 8. 文献待读 (paperRow in js/home.js) pops on undone -> done and restores cleanly.
+        const findPaper = () => [...document.querySelectorAll('.rail-left .rail-tasks .task')].find((e) => !e.classList.contains('done'));
+        const rdLi = findPaper();
+        let readingTickOk = true;
+        if (rdLi) {
+          const rdTxt = rdLi.querySelector('.task-text')?.textContent || '';
+          rdLi.querySelector('.tick')?.click();
+          const rdDone = await poll(() => [...document.querySelectorAll('.rail-left .rail-tasks .task.done')].find((e) => e.querySelector('.task-text')?.textContent === rdTxt), 300);
+          const rdTick = rdDone?.querySelector('.tick');
+          readingTickOk = !!rdTick && rdTick.classList.contains('just-ticked') && getComputedStyle(rdTick).animationName === 'apple-tick';
+          await wait(340);
+          [...document.querySelectorAll('.rail-left .rail-tasks .task.done')].find((e) => e.querySelector('.task-text')?.textContent === rdTxt)?.querySelector('.tick')?.click();
+          await wait(240);
+        }
+        return { mountQuiet, redrawQuiet, weekSwitchQuiet, wbTickPopped, wbAnimEnded, otherDoneQuiet, wbNoReplay, wbUncheckQuiet, dlTickPopped, findsTickPopped, findsNoReplay, paperTickOk, remTickOk, readingTickOk };`);
 
       const bad = [
         ...Object.entries(dockRes).filter(([k, v]) => k !== 'dr' && !v),
         ...Object.entries(hscrollRes).filter(([, v]) => !v),
+        ...Object.entries(quietDockRes).filter(([, v]) => !v),
+        ...Object.entries(ptrClickRes).filter(([, v]) => !v),
+        ...Object.entries(clampRes).filter(([, v]) => !v),
+        ...Object.entries(reducedRes).filter(([, v]) => !v),
         ...Object.entries(tickRes).filter(([, v]) => !v),
       ].map(([k]) => k);
-      if (bad.length) throw new Error(`action-dock/tick checks failed: ${bad.join(', ')} (${JSON.stringify({ dockRes, hscrollRes, tickRes })})`);
-      return `0px hover shift across 10 surfaces; 2nd-card 8px corners; frosted dock ${dockRes.dr.w}x${dockRes.dr.h}px; apple-tick gated across wb/dl/finds/paper/reminder`;
+      if (bad.length) throw new Error(`action-dock/tick checks failed: ${bad.join(', ')} (${JSON.stringify({ dockRes, hscrollRes, quietDockRes, ptrClickRes, clampRes, reducedRes, tickRes })})`);
+      return `0px hover shift across 10 surfaces; 2nd-card 8px corners; frosted dock ${dockRes.dr.w}x${dockRes.dr.h}px; quiet-route/pointer/reduced-motion & apple-tick gated across wb/dl/finds/paper/reminder/reading`;
     } finally {
+      await send('Emulation.setEmulatedMedia', { features: [] }).catch(() => {});
       await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false }).catch(() => {});
       await evaluate(`document.querySelectorAll('.modal-root').forEach((el) => el.close?.()); delete document.documentElement.dataset.theme; const p = await import('./js/planner.js'); const hm = await import('./js/home.js'); await p.changeTasks((l) => { for (const id of ${JSON.stringify(addedIds)}) { const i = l.findIndex((x) => x.id === id); if (i >= 0) l.splice(i, 1); } }, 'test: cleanup hover probe', hm.redrawHome); return 1;`).catch(() => {});
       await sleep(250);

@@ -111,7 +111,8 @@ let pendingRouteTimer = null;
 const QUIET_VIEWS = ['home', 'volume', 'page', 'plan', 'think'];
 const INLINE_DRAFT_SEL = 'input.add-input, textarea.add-input, input.oq-line, input.cd-add-input, input.edit-input, input.wb-time-input, input.wb-time-add, input.paper-why-input';
 const hasDirtyInlineInput = () => [...document.querySelectorAll(INLINE_DRAFT_SEL)].some((el) => el.value && el.value.trim());
-const isUserEditing = () => !!document.querySelector('.modal-root') || isComposing() || isTypingElement() || hasDirtyInlineInput();
+const isUserEditing = () => !!document.querySelector('.modal-root, .wb-card.actions-open, .menu') || isComposing() || isTypingElement() || hasDirtyInlineInput();
+const isTickAnimating = () => !!document.querySelector('li.task.done .tick.just-ticked') && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 export function requestQuietRoute({ immediate = false, views = QUIET_VIEWS } = {}) {
   if (!views.includes(view.kind)) return;
@@ -122,12 +123,18 @@ export function requestQuietRoute({ immediate = false, views = QUIET_VIEWS } = {
     route({ quiet: true, background: true });
     return;
   }
-  rerenderTimer = setTimeout(() => {
+  const run = () => {
     if (!views.includes(view.kind)) return;
     if (isUserEditing()) { pendingQuietRoute = true; return; }
+    if (isTickAnimating()) { rerenderTimer = setTimeout(run, 140); return; }
     pendingQuietRoute = false;
     route({ quiet: true, background: true });
-  }, 120);
+  };
+  rerenderTimer = setTimeout(run, 120);
+}
+
+export function flushPendingQuietRoute() {
+  if (pendingQuietRoute) requestQuietRoute({ views: [...QUIET_VIEWS, 'clips'] });
 }
 
 if (typeof document !== 'undefined') {
@@ -187,7 +194,7 @@ export async function show(kind, render, { quiet = false, background = false } =
   const oldUrls = view.urls;
   const prevKind = view.kind;
   view = { kind, token, urls: [] };
-  if (!quiet) closeModals();
+  if (!quiet) { closeMenu(); closeModals(); }
   let el;
   try { el = await render(); } catch (e) { console.error(e); el = viewMissing(`显示出错：${e.message}`); }
   if (token !== view.token) return;
@@ -203,6 +210,7 @@ export async function show(kind, render, { quiet = false, background = false } =
     if (tb && lib && !['setup'].includes(kind)) tb.after(h('div', { id: 'due-bar', class: 'due-bar', hidden: true, role: 'status' }));
     const tk = tb && tokenBar();
     if (tk) tb.after(tk);
+    closeMenu(app);
     app.replaceChildren(el);
     refreshDueBar();
   }
@@ -333,11 +341,12 @@ export function modal({ title, body, buttons = [{ label: '关闭' }], wide = fal
   const root = h('div', { class: 'modal-root' });
   const panel = h('div', { class: `modal${wide ? ' wide' : ''}`, role: 'dialog', 'aria-modal': 'true', 'aria-label': title });
   const close = () => {
+    closeMenu(root);
     root.remove();
     document.removeEventListener('keydown', onKey, true);
     onClose?.();
     prevFocus?.focus?.();
-    if (pendingQuietRoute) requestQuietRoute({ views: [...QUIET_VIEWS, 'clips'] });
+    flushPendingQuietRoute();
   };
   root.close = close;
   const onKey = (e) => {
@@ -403,6 +412,7 @@ export function menu(anchor, items) {
     if (onScroll) window.removeEventListener('scroll', onScroll, true);
     if (onResize) window.removeEventListener('resize', onResize);
     window.removeEventListener('hashchange', close);
+    flushPendingQuietRoute();
   };
   const position = (checkVisible = false) => {
     if (!anchor?.isConnected) { close(); return; }

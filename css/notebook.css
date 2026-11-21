@@ -2958,17 +2958,23 @@ table.oc-ps thead th.oc-a { width: 38%; color: #8a6d1f; padding-left: 1mm; }
 .pj-seed-why { flex-basis: 100%; font-size: 12px; color: var(--card-ink-2); }
 .nt-filed a { color: inherit; }
 
-/* Unified tactile press & calm hover transitions across controls (v81) */
+/* Unified tactile press & calm hover transitions across controls (v82) */
 .btn, .chip-btn, .seg-btn, .nt-tab, .wb-add-btn, .pp-stat, .aimset, .cd-card, .tb-card, .op-row {
   transition: background-color var(--dur-hover) var(--ease-apple), border-color var(--dur-hover) var(--ease-apple), color var(--dur-hover) var(--ease-apple), box-shadow var(--dur-hover) var(--ease-apple), opacity var(--dur-hover) var(--ease-apple), transform var(--dur-press) var(--ease-press);
 }
-.btn:active:not(:disabled), .chip-btn:active, .seg-btn:active, .wb-add-btn:active, .pp-stat:active, .card-plus:active { transform: scale(0.97); }
+.btn:active:not(:disabled), .chip-btn:active, .seg-btn:active, .wb-add-btn:active, .pp-stat:active, .card-plus:not(.on):active { transform: scale(0.97); }
+.card-plus.on:active { transform: rotate(45deg) scale(0.97); }
 .aimset:active { transform: scale(0.992); }
 @media (prefers-reduced-motion: reduce) {
   .modal-root, .modal, .menu, .wb-dock, .wb-card.actions-open > .wb-dock, li.task.done .tick.just-ticked { animation: none !important; }
-  .btn, .chip-btn, .seg-btn, .nt-tab, .wb-add-btn, .pp-stat, .aimset, .cd-card, .tb-card, .op-row,
-  .wb .task, .wb-more, .wb-dock, .wb-dock *, .menu-item, .tick, .task-del, .date-chip, .nt-move, .find-attach,
-  .pp-card, .hyp-card, .m-card, .clip-tile, .find-fab, a.cover, #toast { transition: none !important; transform: none !important; }
+  .btn, .add-btn, .chip-btn, .seg-btn, .nt-tab, .wb-add-btn, .pp-stat, .aimset, .cd-card, .tb-card, .op-row,
+  .wb .task, .wb-more, .wb-must-more, .wb-dock, .wb-dock *, .menu-item, .tick, .task-del, .date-chip, .nt-move, .nt-todos .memo-pin, .find-attach,
+  .pp-card, .hyp-card, .m-card, .clip-tile, .find-fab, a.cover, .card-plus { transition: none !important; }
+  .btn:active, .add-btn:active, .chip-btn:active, .seg-btn:active, .wb-add-btn:active, .pp-stat:active, .aimset:active,
+  .wb-more:active, .wb-must-more:active, .wb-dock *:active, .menu-item:active, .tick:active, .task-del:active, .date-chip:active, .nt-move:active, .nt-todos .memo-pin:active, .find-attach:active,
+  .pp-card:active, .hyp-card:active, .m-card:active, .clip-tile:active, .find-fab:active, a.cover:active, .card-plus:not(.on):active { transform: none !important; }
+  .card-plus.on:active { transform: rotate(45deg) !important; }
+  #toast { transition: none !important; transform: translate(-50%, 0) !important; }
 }
 
 /* Touch devices (iOS Safari): >=16px prevents viewport auto-zoom jumps on input focus */
