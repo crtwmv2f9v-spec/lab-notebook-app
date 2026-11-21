@@ -401,12 +401,38 @@ try {
           && calls[0].body?.name === 'F-9999_style.png'
           && afterSync?.styleDriveId === 'copy_style_999' && !!afterSync?.styleSyncedAt;
 
-        // Same-folder guard prevents self-copy
+        // Client ID validation rejects empty, GOCSPX secret, and non-Google domains
+        const valOk = !!m.validateGdriveClientId('')
+          && /Client Secret/.test(m.validateGdriveClientId('GOCSPX-secret123'))
+          && !!m.validateGdriveClientId('not-a-valid-client-id')
+          && m.validateGdriveClientId('12345-abc.apps.googleusercontent.com') === '';
+
+        // Same-folder guard prevents self-copy and reports canSyncStyleFolder = false
         m.saveGdriveConfig({ clientId: 'cid-123.apps.googleusercontent.com', folderId: m.DEFAULT_STYLE_INBOX_FOLDER, styleFolderId: m.DEFAULT_STYLE_INBOX_FOLDER, styleCats: '00_Style_Inbox' });
         const resSame = await m.syncStyleInboxClips([{ id: 'F-9998', kind: 'img', cats: ['00_Style_Inbox'], driveId: 'src_222', file: 'a.png' }]);
-        const sameGuardOk = resSame.synced === 0 && calls.length === 1;
+        const sameGuardOk = resSame.synced === 0 && calls.length === 1 && !m.canSyncStyleFolder();
 
-        return { defOk, parseOk, legacyOk, optOutOk, modalHasAll, modalSaveOk, syncOk, sameGuardOk };
+        // driveTrashIfInFolder trashes unreviewed draft in 00_Style_Inbox, NEVER touches moved/archived files
+        const trashIds = [];
+        window.fetch = async (url, opts) => {
+          const u = String(url);
+          if (u.includes('/files/draft_in_inbox?fields=parents')) {
+            return new Response(JSON.stringify({ parents: [m.DEFAULT_STYLE_INBOX_FOLDER], trashed: false }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          }
+          if (u.includes('/files/moved_to_archive?fields=parents')) {
+            return new Response(JSON.stringify({ parents: ['1i4pG3Ir6zpE_lGoFqF5IUFFGgG0QF1dQ'], trashed: false }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          }
+          if (opts?.method === 'PATCH' && u.includes('/files/')) {
+            trashIds.push(u.split('/files/')[1]);
+            return new Response(JSON.stringify({ id: 'ok' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          }
+          return origFetch(url, opts);
+        };
+        const trashedDraft = await m.driveTrashIfInFolder('draft_in_inbox', m.DEFAULT_STYLE_INBOX_FOLDER);
+        const trashedArchived = await m.driveTrashIfInFolder('moved_to_archive', m.DEFAULT_STYLE_INBOX_FOLDER);
+        const trashGuardOk = trashedDraft === true && trashedArchived === false && trashIds.length === 1 && trashIds[0] === 'draft_in_inbox';
+
+        return { defOk, parseOk, legacyOk, optOutOk, modalHasAll, modalSaveOk, syncOk, valOk, sameGuardOk, trashGuardOk };
       } finally {
         window.fetch = origFetch;
         document.querySelectorAll('.modal-root').forEach((el) => el.close?.());
@@ -417,7 +443,7 @@ try {
     `);
     const bad = Object.entries(r).filter(([, v]) => !v).map(([k]) => k);
     if (bad.length) throw new Error(`failed checks: ${bad.join(', ')} (${JSON.stringify(r)})`);
-    return 'gdrive config/legacy/opt-out, 4-field modal, copy-to-00_Style_Inbox & idempotency';
+    return 'gdrive config/validation/legacy/opt-out, 4-field modal, copy-to-00_Style_Inbox, trash-guard & idempotency';
   });
   await check('weekboard', async () => {
     await go('#/', "document.querySelectorAll('.wb .wb-col').length === 8 && document.querySelector('.wb-col.is-today .wb-card')");

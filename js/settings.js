@@ -10,7 +10,7 @@ import { route } from './app.js';
 import {
   DEFAULT_GDRIVE_FOLDER, DEFAULT_STYLE_INBOX_CAT, DEFAULT_STYLE_INBOX_FOLDER,
   authorizeDrive, clearGdriveConfig, gdriveConfig, gdriveSetupSteps, hasGdriveToken,
-  saveGdriveConfig, styleSyncConfig,
+  preloadGis, saveGdriveConfig, styleSyncConfig, validateGdriveClientId,
 } from './clips.js';
 
 // ---------- setup ----------
@@ -201,6 +201,7 @@ export function viewSettings() {
             } }, '保存连接'),
             h('a', { class: 'btn', href: tokenUrl(), target: '_blank', rel: 'noopener' }, '创建新令牌')))),
       DEMO ? null : (() => {
+        preloadGis();
         const gd = gdriveConfig();
         const sc = styleSyncConfig();
         const gdOk = !!(gd && hasGdriveToken());
@@ -225,18 +226,25 @@ export function viewSettings() {
             h('label', { for: 's-gd-style-fid' }, '风格投递箱文件夹 ID（默认 00_Style_Inbox）'), gdStyleFid,
             h('div', { class: 'row-actions' },
               h('button', { class: 'btn primary', type: 'button', onclick: async (e) => {
+                const btn = e.currentTarget;
                 const cid = gdCid.value.trim();
-                if (!cid) { toast('先填写 Google OAuth Client ID。'); return; }
-                e.currentTarget.disabled = true;
+                const errMsg = validateGdriveClientId(cid);
+                if (errMsg) { toast(errMsg); return; }
+                btn.disabled = true;
                 try {
                   saveGdriveConfig({ clientId: cid, folderId: gdFid.value, styleFolderId: gdStyleFid.value, styleCats: gdStyleCat.value });
                   await authorizeDrive({ interactive: true, clientId: cid });
                   toast('Google Drive 已连接并授权。');
                   route({ quiet: true });
-                } catch (err) { toast(err.message || 'Google Drive 授权失败。'); } finally { e.currentTarget.disabled = false; }
+                } catch (err) { toast(err.message || 'Google Drive 授权失败。'); } finally { btn.disabled = false; }
               } }, gd ? '保存并授权 Google Drive' : '连接并授权 Google Drive'),
               h('button', { class: 'btn', type: 'button', onclick: () => {
-                const saved = saveGdriveConfig({ clientId: gdCid.value, folderId: gdFid.value, styleFolderId: gdStyleFid.value, styleCats: gdStyleCat.value });
+                const cid = gdCid.value.trim();
+                if (cid) {
+                  const errMsg = validateGdriveClientId(cid);
+                  if (errMsg) { toast(errMsg); return; }
+                }
+                const saved = saveGdriveConfig({ clientId: cid, folderId: gdFid.value, styleFolderId: gdStyleFid.value, styleCats: gdStyleCat.value });
                 toast(saved ? 'Google Drive 配置已保存。' : '已保存文件夹与分类设置；填写 Client ID 后即可授权。');
                 route({ quiet: true });
               } }, '仅保存配置'),
