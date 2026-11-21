@@ -1170,6 +1170,296 @@ try {
     if (bad.length) throw new Error(`failed checks: ${bad.join(', ')} (${JSON.stringify(r)})`);
     return 'IME Enter/Esc/Tab, detached-IME heal, persistent inputs, stacked modals, and async quiet-route race all verified';
   });
+  await check('hover-stability-and-action-dock', async () => {
+    await go('#/', "document.querySelector('.wb-col.is-today .wb-card') && document.querySelector('.notes-card .nt-todos .task') && document.querySelector('.pp-main .pp-card') && document.querySelector('.shelf a.cover')");
+    // Add timed cards (including a 2nd+ sibling in the same group), an untimed card, an already-done card, and a today deadline.
+    const { addedIds, probeDay } = await evaluate(`const p = await import('./js/planner.js'); const m = await import('./js/model.js'); const hm = await import('./js/home.js');
+      const t = m.todayISO();
+      const timed = { ...p.newTask('PROBE P3HT 和 p(g2T-TT)', p.weekStart(t), t, '科研'), time: '10:00' };
+      const timed2 = { ...p.newTask('二次卡片圆角验证', p.weekStart(t), t, '科研'), time: '14:00' };
+      const untimed = p.newTask('配制电解液对照', p.weekStart(t), t, '生活');
+      const doneSeed = { ...p.newTask('已完成静默验证项', p.weekStart(t), t, '生活'), done: true, doneAt: m.nowISO() };
+      const dueSeed = p.newTask('截止联动打勾验证', p.weekStart(t), t, '截止');
+      await p.changeTasks((l) => { l.push(timed, timed2, untimed, doneSeed, dueSeed); }, 'test: hover probe', hm.redrawHome);
+      return { addedIds: [timed.id, timed2.id, untimed.id, doneSeed.id, dueSeed.id], probeDay: t };`);
+    const dayColSel = `.wb-col[data-day="${probeDay}"]`;
+    try {
+      await waitFor(`[...document.querySelectorAll('${dayColSel} .wb-card')].some((e) => e.textContent.includes('PROBE P3HT')) && [...document.querySelectorAll('${dayColSel} .wb-card')].some((e) => e.textContent.includes('二次卡片圆角验证')) && [...document.querySelectorAll('${dayColSel} .wb-card')].some((e) => e.textContent.includes('配制电解液对照'))`);
+      await sleep(220);
+      const sameRect = (a, b) => Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.w - b.w) < 0.5 && Math.abs(a.h - b.h) < 0.5;
+      const hoverCheck = async (label, finderJs, childSel) => {
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 });
+        await sleep(160);
+        const before = await evaluate(`const el = (${finderJs}); if (!el) throw new Error('missing: ' + ${JSON.stringify(label)});
+          el.scrollIntoView({ block: 'center' });
+          await new Promise((r) => setTimeout(r, 120));
+          const r = el.getBoundingClientRect();
+          const ch = ${JSON.stringify(childSel)} ? el.querySelector(${JSON.stringify(childSel)}) : el;
+          if (!ch) throw new Error('missing child: ' + ${JSON.stringify(label)});
+          const cr = ch.getBoundingClientRect();
+          const next = el.nextElementSibling?.getBoundingClientRect() || null;
+          return { cx: r.left + Math.min(r.width * 0.45, 50), cy: r.top + Math.min(r.height * 0.5, 24), br: getComputedStyle(el).borderRadius, hasPrev: !!el.previousElementSibling, el: { x: r.x, y: r.y, w: r.width, h: r.height }, ch: { x: cr.x, y: cr.y, w: cr.width, h: cr.height }, next: next ? { x: next.x, y: next.y, w: next.width, h: next.height } : null };`);
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: before.cx, y: before.cy });
+        await sleep(280);
+        const after = await evaluate(`const el = (${finderJs});
+          const r = el.getBoundingClientRect();
+          const ch = ${JSON.stringify(childSel)} ? el.querySelector(${JSON.stringify(childSel)}) : el;
+          const cr = ch.getBoundingClientRect();
+          const next = el.nextElementSibling?.getBoundingClientRect() || null;
+          const cs = getComputedStyle(el);
+          const tf = cs.transform;
+          const more = el.querySelector('.wb-more');
+          return { hovered: el.matches(':hover'), open: el.classList.contains('actions-open'), tf, br: cs.borderRadius, bt: cs.borderTopColor, moreOp: more ? Number(getComputedStyle(more).opacity) : null, el: { x: r.x, y: r.y, w: r.width, h: r.height }, ch: { x: cr.x, y: cr.y, w: cr.width, h: cr.height }, next: next ? { x: next.x, y: next.y, w: next.width, h: next.height } : null };`);
+        const ok = after.hovered && !after.open && sameRect(before.el, after.el) && sameRect(before.ch, after.ch) && (!before.next || sameRect(before.next, after.next));
+        if (!ok) throw new Error(`${label} shifted on hover: ${JSON.stringify({ before, after })}`);
+        return { ...after, restBr: before.br, hasPrev: before.hasPrev };
+      };
+      const hProbe = await hoverCheck('wb-timed', `[...document.querySelectorAll('${dayColSel} .wb-card')].find((e) => e.textContent.includes('PROBE P3HT'))`, '.task-text');
+      if (!(hProbe.moreOp > 0.9)) throw new Error(`wb-more did not reveal on hover: ${hProbe.moreOp}`);
+      // 2nd+ card inside a multi-task .wb-group must keep 0px at rest and round to 8px on hover & when actions-open.
+      const hSecond = await hoverCheck('wb-group-2nd', `[...document.querySelectorAll('${dayColSel} .wb-card')].find((e) => e.textContent.includes('二次卡片圆角验证'))`, '.task-text');
+      if (!hSecond.hasPrev || hSecond.restBr !== '0px' || hSecond.br !== '8px' || hSecond.bt !== 'rgba(0, 0, 0, 0)') {
+        throw new Error(`2nd card in .wb-group hover corner/border mismatch: ${JSON.stringify(hSecond)}`);
+      }
+      await hoverCheck('wb-untimed', `[...document.querySelectorAll('${dayColSel} .wb-card')].find((e) => e.textContent.includes('配制电解液对照'))`, '.task-text');
+      await hoverCheck('wb-plan', "document.querySelector('.wb-plan .wb-card')", '.task-text');
+      const hNag = await hoverCheck('wb-nag', "document.querySelector('.wb-nag .wb-nagcard')", '.task-text');
+      if (hNag.br !== '9px') throw new Error(`wb-nagcard border-radius regressed on hover: ${hNag.br}`);
+      const hMust = await hoverCheck('wb-must', "document.querySelector('.wb-must .wb-mustcard')", '.task-text');
+      if (hMust.br !== '10px') throw new Error(`wb-mustcard border-radius regressed on hover: ${hMust.br}`);
+      await hoverCheck('notes-todo', "document.querySelector('.notes-card .nt-todos .task')", '.task-text');
+      if (await evaluate("return !!document.querySelector('.notes-card .find');")) {
+        await hoverCheck('notes-find', "document.querySelector('.notes-card .find')", '.find-text');
+      }
+      const hPaper = await hoverCheck('pp-card', "document.querySelector('.pp-main .pp-card')", null);
+      if (hPaper.tf !== 'none') throw new Error(`pp-card transformed on hover: ${hPaper.tf}`);
+      const hCover = await hoverCheck('book-cover', "document.querySelector('.shelf a.cover')", null);
+      if (hCover.tf !== 'none') throw new Error(`book cover transformed on hover: ${hCover.tf}`);
+
+      // Action dock open, 2nd card open radius, position below card, zero text shift, zero .wb-more/text overlap, zero idle blur layers,
+      // refile toggle, layered Esc, bottom flip-up, scroll-sync & off-screen menu cleanup, bg-redraw deferral, dark contrast.
+      const dockRes = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const hm = await import('./js/home.js');
+        const p = await import('./js/planner.js');
+        const colSel = ${JSON.stringify(dayColSel)};
+        const second = [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes('二次卡片圆角验证'));
+        second.scrollIntoView({ block: 'center' }); await wait(80);
+        second.querySelector('.wb-more').click(); await wait(80);
+        const secondOpenRadius = second.classList.contains('actions-open') && getComputedStyle(second).borderRadius === '8px';
+        document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })); await wait(80);
+        const probe = [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes('PROBE P3HT'));
+        const untimed = [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes('配制电解液对照'));
+        probe.scrollIntoView({ block: 'center' }); await wait(120);
+        // Zero idle backdrop-filter on closed docks & non-clickable hidden nt-move.
+        const hiddenBlur = [...document.querySelectorAll('.wb-dock')].filter((d) => getComputedStyle(d).visibility === 'hidden' && getComputedStyle(d).backdropFilter !== 'none').length;
+        const hiddenMove = document.querySelector('.nt-todos .task-meta .nt-move');
+        const hiddenMoveBlocked = !hiddenMove || getComputedStyle(hiddenMove).pointerEvents === 'none';
+        // Zero glyph overlap between .wb-more and line-1 text.
+        const mr = probe.querySelector('.wb-more').getBoundingClientRect();
+        const rng = document.createRange(); rng.selectNodeContents(probe.querySelector('.task-text'));
+        const moreOverlap = [...rng.getClientRects()].some((cr) => cr.right > mr.left + 1 && cr.left < mr.right - 1 && cr.bottom > mr.top + 1 && cr.top < mr.bottom - 1);
+        const tBefore = probe.querySelector('.task-text').getBoundingClientRect();
+        const cRect = probe.getBoundingClientRect();
+        probe.querySelector('.wb-more').click(); await wait(240);
+        const dock = probe.querySelector('.wb-dock');
+        const dr = dock.getBoundingClientRect();
+        const tOpen = probe.querySelector('.task-text').getBoundingClientRect();
+        const opened = probe.classList.contains('actions-open') && probe.querySelector('.wb-more').getAttribute('aria-expanded') === 'true';
+        const noOverlap = dr.top >= cRect.bottom - 1 && dr.left >= 7 && dr.right <= window.innerWidth - 7 && dr.width < 220;
+        const textLocked = Math.abs(tBefore.x - tOpen.x) < 0.5 && Math.abs(tBefore.y - tOpen.y) < 0.5 && Math.abs(tBefore.width - tOpen.width) < 0.5 && Math.abs(tBefore.height - tOpen.height) < 0.5;
+        // Background redraw defers while dock is open (does not destroy dock / date picker).
+        hm.redrawHome(); await wait(180);
+        const survivesBgRedraw = probe.isConnected && probe.classList.contains('actions-open');
+        // Refile button toggles menu open then closed on second click.
+        const refBtn = probe.querySelector('.wb-refile');
+        refBtn.click(); await wait(100);
+        const menuOpen = !!document.querySelector('.menu');
+        refBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        refBtn.click(); await wait(80);
+        const refileToggled = !document.querySelector('.menu') && probe.classList.contains('actions-open');
+        // Open refile menu again, verify layered Escape (1st Esc closes menu, 2nd Esc closes dock).
+        refBtn.click(); await wait(100);
+        const menuEl = document.querySelector('.menu');
+        menuEl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(80);
+        const esc1 = !document.querySelector('.menu') && probe.classList.contains('actions-open');
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(180);
+        const esc2 = !document.querySelector('.wb-card.actions-open');
+        // Re-query after deferred draw flushed cleanly on dock close.
+        const p2 = [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes('PROBE P3HT'));
+        const u2 = [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes('配制电解液对照'));
+        // Singleton: opening untimed closes probe; then clicking ＋时间 closes dock and focuses inline time input.
+        p2.querySelector('.wb-more').click(); await wait(80);
+        u2.querySelector('.wb-more').click(); await wait(80);
+        const singleton = !p2.classList.contains('actions-open') && u2.classList.contains('actions-open');
+        u2.querySelector('.wb-time.none').click(); await wait(80);
+        const timeInp = u2.querySelector('.task-main .wb-time-input');
+        const timeFocused = !u2.classList.contains('actions-open') && !!timeInp && document.activeElement === timeInp;
+        timeInp?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(80);
+        const timeCleared = !u2.querySelector('.wb-time-input');
+        // Off-screen scroll closes BOTH dock and its open menu (no orphaned menu).
+        p2.querySelector('.wb-more').click(); await wait(80);
+        p2.querySelector('.wb-refile').click(); await wait(80);
+        const menuBeforeScroll = !!document.querySelector('.menu');
+        window.scrollTo(0, 2200); await wait(160);
+        const noOrphanMenu = menuBeforeScroll && !p2.classList.contains('actions-open') && !document.querySelector('.menu');
+        // Bottom-edge flip-up: place card bottom 10px from viewport bottom, verify dock + menu flip up inside viewport.
+        p2.scrollIntoView({ block: 'center' }); await wait(80);
+        const pr = p2.getBoundingClientRect();
+        window.scrollTo(0, Math.max(0, window.scrollY + pr.bottom - (window.innerHeight - 10))); await wait(120);
+        p2.querySelector('.wb-more').click(); await wait(180);
+        const drUp = p2.querySelector('.wb-dock').getBoundingClientRect();
+        const dockFlipped = p2.querySelector('.wb-dock').classList.contains('flip-up') && drUp.top >= 7 && drUp.bottom <= window.innerHeight - 7;
+        p2.querySelector('.wb-refile').click(); await wait(120);
+        const mrUp = document.querySelector('.menu').getBoundingClientRect();
+        const menuFlipped = document.querySelector('.menu').classList.contains('flip-up') && mrUp.top >= 7 && mrUp.bottom <= window.innerHeight - 7;
+        document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })); await wait(80);
+        const outsideClosed = !p2.classList.contains('actions-open') && !document.querySelector('.menu');
+        p2.scrollIntoView({ block: 'center' }); await wait(80);
+        p2.querySelector('.wb-more').click(); await wait(80);
+        p2.dispatchEvent(new DragEvent('dragstart', { dataTransfer: new DataTransfer(), bubbles: true }));
+        p2.dispatchEvent(new DragEvent('dragend', { bubbles: true })); await wait(60);
+        const dragClosed = !p2.classList.contains('actions-open');
+        // Dark-mode kind & topic contrast (especially 必做 and 本周目标 topics); wait past .wb-col's 150ms bg transition.
+        document.documentElement.dataset.theme = 'dark'; await wait(260);
+        const cv = document.createElement('canvas'); cv.width = 1; cv.height = 1; const cx = cv.getContext('2d');
+        const toRgb = (s) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = '#000'; cx.fillRect(0, 0, 1, 1); cx.fillStyle = s; cx.fillRect(0, 0, 1, 1); return [...cx.getImageData(0, 0, 1, 1).data.slice(0, 3)]; };
+        const lum = ([r, g, b]) => { const f = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+        const cr = (c1, c2) => { const l1 = lum(c1); const l2 = lum(c2); return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05); };
+        const darkContrastOk = [...document.querySelectorAll('.wb-col .wb-glabel')].every((el) => cr(toRgb(getComputedStyle(el).color), toRgb(getComputedStyle(el.closest('.wb-col')).backgroundColor)) >= 4.5);
+        delete document.documentElement.dataset.theme;
+        // User action inside dock (delete temp card) closes dock and redraws immediately.
+        const t = ${JSON.stringify(probeDay)};
+        const tmp = p.newTask('临时删除项', p.weekStart(t), t, '生活');
+        await p.changeTasks((l) => { l.push(tmp); }, 'test: tmp del', hm.redrawHome); await wait(200);
+        const tmpEl = [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes('临时删除项'));
+        tmpEl.querySelector('.wb-more').click(); await wait(80);
+        tmpEl.querySelector('.wb-dock .task-del').click(); await wait(220);
+        const delImmediate = ![...document.querySelectorAll(colSel + ' .wb-card')].some((e) => e.textContent.includes('临时删除项'));
+        return { secondOpenRadius, hiddenBlurZero: hiddenBlur === 0, hiddenMoveBlocked, noMoreOverlap: !moreOverlap, opened, noOverlap, textLocked, survivesBgRedraw, menuOpen, refileToggled, esc1, esc2, singleton, timeFocused, timeCleared, noOrphanMenu, dockFlipped, menuFlipped, outsideClosed, dragClosed, darkContrastOk, delImmediate, dr: { x: Math.round(dr.x), y: Math.round(dr.y), w: Math.round(dr.width), h: Math.round(dr.height) } };`);
+      // Horizontal scroll menu sync + touch target check at 900px narrow viewport.
+      await send('Emulation.setDeviceMetricsOverride', { width: 900, height: 800, deviceScaleFactor: 1, mobile: false });
+      await sleep(200);
+      const hscrollRes = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const grid = document.querySelector('.wb-grid');
+        const p2 = [...document.querySelectorAll(${JSON.stringify(dayColSel)} + ' .wb-card')].find((e) => e.textContent.includes('PROBE P3HT'));
+        p2.scrollIntoView({ block: 'center', inline: 'center' }); await wait(120);
+        const mr = p2.querySelector('.wb-more').getBoundingClientRect();
+        p2.querySelector('.wb-more').click(); await wait(120);
+        p2.querySelector('.wb-refile').click(); await wait(120);
+        const d1 = p2.querySelector('.wb-dock').getBoundingClientRect();
+        const m1 = document.querySelector('.menu').getBoundingClientRect();
+        grid.scrollLeft = grid.scrollLeft > 100 ? grid.scrollLeft - 100 : grid.scrollLeft + 100; await wait(120);
+        const d2 = p2.querySelector('.wb-dock').getBoundingClientRect();
+        const m2 = document.querySelector('.menu')?.getBoundingClientRect();
+        document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })); await wait(60);
+        return { touchTargetOk: mr.width >= 24 && mr.height >= 24, hscrollSynced: !!m2 && Math.abs((d2.x - d1.x) - (m2.x - m1.x)) <= 1 && Math.abs(d2.x - d1.x) > 10 };`);
+      await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await sleep(150);
+
+      // Verify apple-tick is gated strictly to user undone -> done clicks (never on fresh mount, week switch, or unrelated redraws).
+      await go('#/plan', "document.querySelector('.wb-page .wb-card')");
+      await go('#/', `[...document.querySelectorAll('${dayColSel} .wb-card.done')].some((e) => e.textContent.includes('已完成静默验证项'))`);
+      const tickRes = await evaluate(`const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const poll = async (fn, ms = 110) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { const v = fn(); if (v) return v; await wait(5); } return fn(); };
+        const hm = await import('./js/home.js');
+        const p = await import('./js/planner.js');
+        const colSel = ${JSON.stringify(dayColSel)};
+        const anyAnim = () => [...document.querySelectorAll('li.task.done .tick')].some((b) => b.classList.contains('just-ticked') || getComputedStyle(b).animationName === 'apple-tick');
+        // 1. Fresh mount: already-completed tasks must not animate.
+        const mountQuiet = document.querySelectorAll('li.task.done .tick').length >= 1 && !anyAnim();
+        // 2. Unrelated redraw & week switch: already-completed tasks must not animate.
+        hm.redrawHome(); await wait(40);
+        const redrawQuiet = !anyAnim();
+        document.querySelector('.wb-nav [aria-label="上一周"]').click(); await wait(60);
+        [...document.querySelectorAll('.wb-nav button')].find((b) => b.textContent === '本周').click(); await wait(60);
+        const weekSwitchQuiet = !anyAnim();
+        // 3. Weekboard user click undone -> done animates ONLY that card, then stays quiet on subsequent redraw & uncheck.
+        const findCard = (txt) => [...document.querySelectorAll(colSel + ' .wb-card')].find((e) => e.textContent.includes(txt));
+        findCard('配制电解液对照').querySelector('.tick').click();
+        const uDone = await poll(() => { const el = findCard('配制电解液对照'); return el?.classList.contains('done') ? el : null; });
+        const uTick = uDone?.querySelector('.tick');
+        const wbTickPopped = !!uTick && uTick.classList.contains('just-ticked') && getComputedStyle(uTick).animationName === 'apple-tick';
+        const otherDoneQuiet = [...document.querySelectorAll('li.task.done .tick')].filter((b) => b !== uTick).every((b) => !b.classList.contains('just-ticked') && getComputedStyle(b).animationName === 'none');
+        await wait(260);
+        hm.redrawHome(); await wait(40);
+        const wbNoReplay = !anyAnim();
+        findCard('配制电解液对照').querySelector('.tick').click();
+        await poll(() => { const el = findCard('配制电解液对照'); return el && !el.classList.contains('done') ? el : null; });
+        const wbUncheckQuiet = !anyAnim();
+        await wait(240);
+        // 4. Deadline strip .tick (js/home.js) triggers apple-tick on its newly-done weekboard card.
+        const dlBtn = [...document.querySelectorAll('.dl-cards .dl-card')].find((e) => e.textContent.includes('截止联动打勾验证'))?.querySelector('.tick');
+        dlBtn?.click();
+        const dDone = await poll(() => { const el = findCard('截止联动打勾验证'); return el?.classList.contains('done') ? el : null; });
+        const dTick = dDone?.querySelector('.tick');
+        const dlTickPopped = !!dTick && dTick.classList.contains('just-ticked') && getComputedStyle(dTick).animationName === 'apple-tick';
+        await wait(260);
+        // 5. Notes 待做实验 .tick (js/finds.js) pops on undone -> done, does not replay on redraw, then restores cleanly.
+        const todoLi = [...document.querySelectorAll('.notes-card .nt-todos .task')].find((e) => !e.classList.contains('done'));
+        const todoTxt = todoLi?.querySelector('.task-text')?.textContent || '';
+        const findTodo = () => [...document.querySelectorAll('.notes-card .nt-todos .task')].find((e) => e.querySelector('.task-text')?.textContent === todoTxt);
+        todoLi?.querySelector('.tick').click();
+        const mDone = await poll(() => { const el = findTodo(); return el?.classList.contains('done') ? el : null; });
+        const mTick = mDone?.querySelector('.tick');
+        const findsTickPopped = !!mTick && mTick.classList.contains('just-ticked') && getComputedStyle(mTick).animationName === 'apple-tick';
+        await wait(260);
+        hm.redrawHome(); await wait(40);
+        const findsNoReplay = !anyAnim();
+        findTodo()?.querySelector('.tick').click();
+        await wait(240);
+        // 6. Paper notes modal .tick (js/planner.js) pops on undone -> done and stays quiet on filter switch.
+        let paperTickOk = true;
+        const firstPaperId = p.planLocal?.doc?.papers?.[0]?.id;
+        if (firstPaperId) {
+          p.openPaperNotes(firstPaperId, 'ms'); await wait(60);
+          [...document.querySelectorAll('.pn-filter .chip')].find((b) => b.textContent.startsWith('全部'))?.click(); await wait(40);
+          const pnOpen = document.querySelector('.pn-item:not(.done)');
+          if (pnOpen) {
+            const pnTxt = pnOpen.querySelector('.task-text')?.textContent || '';
+            pnOpen.querySelector('.tick').click();
+            const pnDone = [...document.querySelectorAll('.pn-item.done')].find((e) => e.querySelector('.task-text')?.textContent === pnTxt);
+            const pnTick = pnDone?.querySelector('.tick');
+            const popped = !!pnTick && pnTick.classList.contains('just-ticked') && getComputedStyle(pnTick).animationName === 'apple-tick';
+            [...document.querySelectorAll('.pn-filter .chip')].find((b) => b.textContent.startsWith('已完成'))?.click(); await wait(40);
+            const filterQuiet = !anyAnim();
+            [...document.querySelectorAll('.pn-item.done')].find((e) => e.querySelector('.task-text')?.textContent === pnTxt)?.querySelector('.tick').click();
+            await wait(60);
+            paperTickOk = popped && filterQuiet;
+          }
+          document.querySelector('.modal-root')?.close?.(); await wait(200);
+        }
+        // 7. Follow-up reminder .tick (reminderRow in js/planner.js) pops on undone -> done, stays quiet on redraw, then restores.
+        const findRem = () => [...document.querySelectorAll('.wb-col .task.reminder')].find((e) => e.textContent.includes('稳定性复测（第 3 天）'));
+        const remBefore = findRem();
+        let remTickOk = false;
+        if (remBefore && !remBefore.classList.contains('done')) {
+          remBefore.querySelector('.tick')?.click();
+          const remDone = await poll(() => { const el = findRem(); return el?.classList.contains('done') ? el : null; }, 400);
+          const remTick = remDone?.querySelector('.tick');
+          const remPopped = !!remTick && remTick.classList.contains('just-ticked') && getComputedStyle(remTick).animationName === 'apple-tick';
+          await wait(260);
+          hm.redrawHome(); await wait(40);
+          const remNoReplay = !anyAnim();
+          findRem()?.querySelector('.tick')?.click();
+          await poll(() => { const el = findRem(); return el && !el.classList.contains('done') ? el : null; }, 400);
+          await wait(240);
+          remTickOk = remPopped && remNoReplay;
+        }
+        return { mountQuiet, redrawQuiet, weekSwitchQuiet, wbTickPopped, otherDoneQuiet, wbNoReplay, wbUncheckQuiet, dlTickPopped, findsTickPopped, findsNoReplay, paperTickOk, remTickOk };`);
+
+      const bad = [
+        ...Object.entries(dockRes).filter(([k, v]) => k !== 'dr' && !v),
+        ...Object.entries(hscrollRes).filter(([, v]) => !v),
+        ...Object.entries(tickRes).filter(([, v]) => !v),
+      ].map(([k]) => k);
+      if (bad.length) throw new Error(`action-dock/tick checks failed: ${bad.join(', ')} (${JSON.stringify({ dockRes, hscrollRes, tickRes })})`);
+      return `0px hover shift across 10 surfaces; 2nd-card 8px corners; frosted dock ${dockRes.dr.w}x${dockRes.dr.h}px; apple-tick gated across wb/dl/finds/paper/reminder`;
+    } finally {
+      await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false }).catch(() => {});
+      await evaluate(`document.querySelectorAll('.modal-root').forEach((el) => el.close?.()); delete document.documentElement.dataset.theme; const p = await import('./js/planner.js'); const hm = await import('./js/home.js'); await p.changeTasks((l) => { for (const id of ${JSON.stringify(addedIds)}) { const i = l.findIndex((x) => x.id === id); if (i >= 0) l.splice(i, 1); } }, 'test: cleanup hover probe', hm.redrawHome); return 1;`).catch(() => {});
+      await sleep(250);
+    }
+  });
   await check('word-export', async () => {
     await evaluate("document.querySelector('.modal-root')?.close?.(); return 1;");
     await go('#/v/oect/methods', "document.querySelectorAll('.m-card').length >= 2");

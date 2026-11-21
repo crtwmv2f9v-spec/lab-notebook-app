@@ -3,10 +3,10 @@
 import { todayISO, zoned } from './model.js';
 import { addDays } from './lab.js';
 import { h, icon, isComposing, isImeEvent, onCompositionEndOnce, replaceAround } from './util.js';
-import { downloadText, menu, toast } from './core.js';
+import { closeMenu, downloadText, menu, toast } from './core.js';
 import { icsFor } from './lab.js';
 import { LOOSE_COLOR, pinTopicsIn, topicsOf } from './finds.js';
-import { WEEKDAYS, allFollowups, changePlanner, changeTasks, editPaper, editProject, isGoal, loadPlanner, moveTask, newTask, reminderRow, ring, taskRow, weekStart } from './planner.js';
+import { WEEKDAYS, allFollowups, changePlanner, changeTasks, clearTickPop, editPaper, editProject, isGoal, loadPlanner, moveTask, newTask, reminderRow, ring, taskRow, weekStart } from './planner.js';
 
 const FLOAT = ['杂事', '生活']; // side-list items that may wait without a day
 // 催办: no deadline, but it must not be forgotten and the sooner the better. Kept as undated tasks of this kind,
@@ -18,8 +18,16 @@ const NAG_SHOW = 8;
 export const MUST = '必做';
 let nagAll = false;
 const waited = (x, today) => Math.max(0, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${zoned(x.created || `${today}T00:00:00+08:00`).day}T00:00:00Z`)) / 864e5));
-// Every item on a day sits under its kind, in this order, each with its own colour.
-const KINDS = [['截止', '#e5484d'], ['必做', '#1d3461'], ['科研', '#0a84ff'], ['待办', '#5e5ce6'], ['杂事', '#c77c02'], ['生活', '#30a46c'], ['提醒', '#8e8e93']];
+// Every item on a day sits under its kind, in this order, each with its own theme-calibrated colour.
+const KINDS = [
+  ['截止', 'var(--k-due)'],
+  ['必做', 'var(--k-must)'],
+  ['科研', 'var(--k-sci)'],
+  ['待办', 'var(--k-todo)'],
+  ['杂事', 'var(--k-chore)'],
+  ['生活', 'var(--k-life)'],
+  ['提醒', 'var(--k-rem)'],
+];
 // Items filed as 仪器 before the kind was renamed are 科研.
 const ADD_KINDS = ['待办', '科研', '截止', '杂事', '生活'];
 const kindOf = (x) => (x.cat === '仪器' ? '科研' : KINDS.some(([k]) => k === x.cat) ? x.cat : '待办');
@@ -120,7 +128,85 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
   });
 
   const gridEl = h('div', { class: 'wb-grid' });
-  const footEl = h('p', { class: 'wb-foot muted small' }, '拖动卡片换到别的日子；点文字修改；拖到「本周目标」即取消日期；拖进「催办」就变成不设截止日的催办事项；拖进「必做实验」就列为必须做的实验，拖到某一项上即排在它前面。手机上点卡片右侧的日期改天。');
+  const footEl = h('p', { class: 'wb-foot muted small' }, '拖动卡片换到别的日子；点文字修改；点卡片右上角 ··· 改时间、类别、日期或删除；拖到「本周目标」即取消日期；拖进「催办」就变成不设截止日的催办事项；拖进「必做实验」就列为必须做的实验，拖到某一项上即排在它前面。');
+
+  // Floating card action dock: opened only on explicit click (never on hover) so card text never shifts or wraps.
+  let openDock = null;
+  const closeDock = ({ flush = true } = {}) => {
+    if (!openDock) return;
+    const { li, dock, more, offPtr, offKey, offScroll, offResize, offHash } = openDock;
+    openDock = null;
+    closeMenu(dock);
+    li.classList.remove('actions-open');
+    dock.classList.remove('flip-up');
+    dock.style.left = '';
+    dock.style.right = '';
+    dock.style.top = '';
+    dock.style.transformOrigin = '';
+    more.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', offPtr, true);
+    document.removeEventListener('keydown', offKey, true);
+    window.removeEventListener('scroll', offScroll, true);
+    window.removeEventListener('resize', offResize);
+    window.removeEventListener('hashchange', offHash);
+    if (flush && deferredDraw && el.isConnected) {
+      deferredDraw = false;
+      draw();
+    }
+  };
+  const toggleDock = (li, dock, more) => {
+    if (!li.isConnected) return;
+    if (openDock?.li === li) { closeDock(); return; }
+    closeDock({ flush: false });
+    li.classList.add('actions-open');
+    more.setAttribute('aria-expanded', 'true');
+    const positionDock = () => {
+      dock.style.right = 'auto';
+      const lr = li.getBoundingClientRect();
+      const dw = dock.offsetWidth || 140;
+      const dh = dock.offsetHeight || 34;
+      const vw = document.documentElement.clientWidth || window.innerWidth;
+      const vh = window.innerHeight;
+      const left = Math.max(8, Math.min(lr.right - dw, vw - dw - 8));
+      const flipUp = lr.bottom + 6 + dh > vh - 8 && lr.top - 6 - dh >= 8;
+      const top = Math.max(8, flipUp ? lr.top - dh - 6 : lr.bottom + 6);
+      const originX = Math.max(12, Math.min(dw - 12, lr.right - 12 - left));
+      dock.classList.toggle('flip-up', flipUp);
+      dock.style.transformOrigin = `${Math.round(originX)}px ${flipUp ? '100%' : '0%'}`;
+      dock.style.left = `${Math.round(left)}px`;
+      dock.style.top = `${Math.round(top)}px`;
+    };
+    positionDock();
+    const offPtr = (ev) => {
+      if (!el.isConnected || !li.isConnected) { closeDock({ flush: false }); return; }
+      if (dock.contains(ev.target) || more.contains(ev.target) || ev.target?.closest?.('.menu')) return;
+      closeDock();
+    };
+    const offKey = (ev) => {
+      if (!el.isConnected || !li.isConnected) { closeDock({ flush: false }); return; }
+      if (ev.key !== 'Escape' || isImeEvent(ev)) return;
+      if (document.querySelector('.menu, .modal-root')) return;
+      closeDock();
+      if (more.isConnected) more.focus({ preventScroll: true });
+    };
+    const offScroll = () => {
+      if (!el.isConnected || !li.isConnected) { closeDock({ flush: false }); return; }
+      const lr = li.getBoundingClientRect();
+      if (lr.bottom < 0 || lr.top > window.innerHeight || lr.right < 0 || lr.left > window.innerWidth) { closeDock(); return; }
+      positionDock();
+    };
+    const offResize = () => {
+      if (!el.isConnected || !li.isConnected) { closeDock({ flush: false }); return; }
+      positionDock();
+    };
+    const offHash = () => closeDock({ flush: false });
+    document.addEventListener('pointerdown', offPtr, true);
+    document.addEventListener('keydown', offKey, true);
+    window.addEventListener('scroll', offScroll, { passive: true, capture: true });
+    window.addEventListener('resize', offResize, { passive: true });
+    window.addEventListener('hashchange', offHash);
+    openDock = { li, dock, more, offPtr, offKey, offScroll, offResize, offHash };
+  };
 
   // ＋ 添加: a link that turns into a one-line box; Enter adds and keeps the box mounted and focused for the next one.
   const makeAdder = (day) => {
@@ -218,7 +304,12 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
       else active.addEventListener('blur', () => setTimeout(() => { if (deferredDraw) { deferredDraw = false; draw(); } }, 30), { once: true });
       return;
     }
+    if (openDock && openDock.li.isConnected && renderedWk === wk) {
+      deferredDraw = true;
+      return;
+    }
     deferredDraw = false;
+    closeDock({ flush: false });
     const { tasks, projects = [], papers = [] } = doc;
     latestTasks = tasks;
     const days = WEEKDAYS.map((w, k) => addDays(wk, k));
@@ -245,36 +336,79 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
       const b = h('button', { class: 'wb-refile', type: 'button', title: goal ? '改到别的课题' : '改类别' }, goal ? '课题' : kindOf(x));
       b.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (goal) menu(b, [...topics, { id: '', name: '未分类' }].filter((o) => o.id !== (topicOf(x)?.id || '')).map((o) => ({ icon: 'go', label: o.name, run: () => changePlanner((d) => { if (o.id) pinTopicsIn(d); const y = d.tasks.find((z) => z.id === x.id); if (!y) return; if (o.id) y.topic = o.id; else delete y.topic; }, 'Planner: goal topic', again) })));
-        else menu(b, ADD_KINDS.filter((k) => k !== kindOf(x)).map((k) => ({ icon: 'go', label: `改为「${k}」`, run: () => changeTasks((l) => { const y = l.find((z) => z.id === x.id); if (!y) return; if (k === '待办') delete y.cat; else y.cat = k; }, 'Planner: kind', again) })));
+        if (goal) menu(b, [...topics, { id: '', name: '未分类' }].filter((o) => o.id !== (topicOf(x)?.id || '')).map((o) => ({ icon: 'go', label: o.name, run: () => { closeDock({ flush: false }); changePlanner((d) => { if (o.id) pinTopicsIn(d); const y = d.tasks.find((z) => z.id === x.id); if (!y) return; if (o.id) y.topic = o.id; else delete y.topic; }, 'Planner: goal topic', again); } })));
+        else menu(b, ADD_KINDS.filter((k) => k !== kindOf(x)).map((k) => ({ icon: 'go', label: `改为「${k}」`, run: () => { closeDock({ flush: false }); changeTasks((l) => { const y = l.find((z) => z.id === x.id); if (!y) return; if (k === '待办') delete y.cat; else y.cat = k; }, 'Planner: kind', again); } })));
       });
       return b;
     };
     const card = (x, opt = {}) => {
-      const li = taskRow(x, { redraw: again, showCat: false, extra: h('span', { class: 'wb-extra' }, opt.toToday ? h('button', { class: 'btn small ghost wb-totoday', type: 'button', onclick: () => moveTask(x.id, t, again) }, '移到今天') : null, refile(x)) });
+      const li = taskRow(x, { redraw: again, showCat: false });
       li.classList.add('wb-card');
+      li.addEventListener('click', (e) => { if (e.target.closest('.tick')) closeDock({ flush: false }); }, true);
+      const main = li.querySelector('.task-main');
+      let untimedChip = null;
       if (x.date) {
-        const chip = h('button', { class: `wb-time${x.time ? '' : ' none'}`, type: 'button', title: x.time ? '改时间（清空则不定时）' : '加时间（24 小时制，如 14:00 或 14-17）' }, x.time ? timeLabel(x) : '＋时间');
-        chip.addEventListener('click', () => {
+        const startTimeEdit = (replaceEl) => {
+          closeDock({ flush: false });
+          if (main?.querySelector('.wb-time-input')) return;
           const input = h('input', { class: 'wb-time-input', value: timeLabel(x), placeholder: '14:00', inputmode: 'numeric', 'aria-label': '时间（24 小时制）' });
           let done = false;
           const finish = (save) => {
             if (done) return; done = true;
             const v = parseTime(input.value);
-            if (save && !v) { toast('时间写成 24 小时制：14:00、9:30，或 14-17 表示一段。'); input.replaceWith(chip); return; }
-            input.replaceWith(chip);
+            if (save && !v) {
+              toast('时间写成 24 小时制：14:00、9:30，或 14-17 表示一段。');
+              if (replaceEl) input.replaceWith(replaceEl); else input.remove();
+              return;
+            }
+            if (replaceEl) input.replaceWith(replaceEl); else input.remove();
             if (save && (v.time !== (x.time || '') || v.end !== (x.end || ''))) changeTasks((l) => { const y = l.find((z) => z.id === x.id); if (!y) return; if (v.time) y.time = v.time; else delete y.time; if (v.end) y.end = v.end; else delete y.end; }, 'Planner: time', again);
           };
           input.addEventListener('keydown', (e) => { if (isImeEvent(e)) return; if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
           input.addEventListener('blur', () => finish(true));
-          chip.replaceWith(input); input.focus(); input.select();
-        });
-        li.querySelector('.task-main')?.prepend(chip);
-        if (x.time) li.classList.add('timed');
+          if (replaceEl) replaceEl.replaceWith(input);
+          else main?.prepend(input);
+          input.focus(); input.select();
+        };
+        if (x.time) {
+          const chip = h('button', { class: 'wb-time', type: 'button', title: '改时间（清空则不定时）' }, timeLabel(x));
+          chip.addEventListener('click', (e) => { e.stopPropagation(); startTimeEdit(chip); });
+          main?.prepend(chip);
+          li.classList.add('timed');
+        } else {
+          untimedChip = h('button', { class: 'wb-time none', type: 'button', title: '加时间（24 小时制，如 14:00 或 14-17）' }, '＋时间');
+          untimedChip.addEventListener('click', (e) => { e.stopPropagation(); startTimeEdit(null); });
+        }
+      }
+      if (opt.toToday) {
+        main?.append(h('span', { class: 'wb-carried-act' }, h('button', { class: 'btn small ghost wb-totoday', type: 'button', onclick: () => moveTask(x.id, t, again) }, '移到今天')));
+      }
+      if (!opt.noDock) {
+        const dateChipEl = li.querySelector('.date-chip');
+        const delEl = li.querySelector('.task-del');
+        const refEl = refile(x);
+        const dock = h('div', { class: 'wb-dock', role: 'toolbar', 'aria-label': '卡片操作' }, untimedChip, refEl, dateChipEl, delEl);
+        dock.draggable = true;
+        dock.addEventListener('dragstart', (e) => { e.preventDefault(); e.stopPropagation(); });
+        dock.addEventListener('click', (e) => { if (e.target.closest('.task-del')) closeDock({ flush: false }); }, true);
+        dateChipEl?.addEventListener('change', () => closeDock({ flush: false }), true);
+        const dockLabels = [
+          untimedChip ? '时间' : null,
+          refEl ? (x.date ? '类别' : '课题') : null,
+          dateChipEl ? '日期' : null,
+          delEl ? '删除' : null,
+        ].filter(Boolean).join(' · ');
+        const more = h('button', { class: 'wb-more', type: 'button', 'aria-label': '更多操作', 'aria-expanded': 'false', title: dockLabels || '更多操作' }, icon('more', 14));
+        more.draggable = true;
+        more.addEventListener('dragstart', (e) => { e.preventDefault(); e.stopPropagation(); });
+        more.addEventListener('click', (e) => { e.stopPropagation(); toggleDock(li, dock, more); });
+        li.append(more, dock);
+      } else if (untimedChip) {
+        li._untimedChip = untimedChip;
       }
       if (x.date && !x.done && x.date < t) li.classList.add('late');
       li.draggable = true;
-      li.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/x-task', x.id); e.dataTransfer.effectAllowed = 'move'; li.classList.add('dragging'); el.classList.add('is-dragging'); });
+      li.addEventListener('dragstart', (e) => { closeDock({ flush: false }); e.dataTransfer.setData('text/x-task', x.id); e.dataTransfer.effectAllowed = 'move'; li.classList.add('dragging'); el.classList.add('is-dragging'); });
       li.addEventListener('dragend', () => { li.classList.remove('dragging'); el.classList.remove('is-dragging'); });
       return li;
     };
@@ -314,7 +448,7 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
         return mine.length ? h('div', { class: 'wb-group wb-topic', style: { '--k': tp.color } }, h('div', { class: 'wb-glabel' }, tp.name, h('span', null, `${mine.filter((x) => x.done).length}/${mine.length}`)), h('ul', { class: 'tasks' }, mine.map((x) => card(x)))) : null;
       }),
     ], [
-      float.length ? h('div', { class: 'wb-group', style: { '--k': '#c77c02' } }, h('div', { class: 'wb-glabel' }, '未排期 · 杂事 / 生活'), h('ul', { class: 'tasks' }, float.map((x) => card(x)))) : null,
+      float.length ? h('div', { class: 'wb-group', style: { '--k': 'var(--k-chore)' } }, h('div', { class: 'wb-glabel' }, '未排期 · 杂事 / 生活'), h('ul', { class: 'tasks' }, float.map((x) => card(x)))) : null,
       h('p', { class: 'wb-hint' }, '拖到某一天即可排期'),
     ]);
 
@@ -334,7 +468,7 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
       h('span', { class: 'wb-nag-s' }, '没有截止日 · 越早办完越好'),
       h('span', { class: 'wb-nag-n' }, nagOpen.length ? `${nagOpen.length} 项待办${oldest ? ` · 最久 ${oldest} 天` : ''}` : '都办完了'));
     replaceAround(nagAdd, nagInput, [], [
-      nags.length > NAG_SHOW ? h('button', { class: 'btn small ghost', type: 'button', onclick: () => { nagAll = !nagAll; draw(); } }, nagAll ? '收起' : `还有 ${nags.length - NAG_SHOW} 项`) : null,
+      nags.length > NAG_SHOW ? h('button', { class: 'btn small ghost', type: 'button', onclick: () => { clearTickPop(); nagAll = !nagAll; draw(); } }, nagAll ? '收起' : `还有 ${nags.length - NAG_SHOW} 项`) : null,
     ]);
     replaceAround(nagBody, nagAdd, [nags.length ? h('ul', { class: 'tasks wb-nag-list' }, nagShown.map(nagCard)) : null], []);
 
@@ -352,15 +486,20 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
     }, 'Planner: must-do order', again);
     const mustCard = (x, i) => {
       const n = waited(x, t);
-      const li = card(x);
+      const li = card(x, { noDock: true });
       li.classList.add('wb-mustcard');
       if (!x.done) li.dataset.age = String(Math.min(6, Math.floor(n / 3))); // one shade deeper every 3 days, darkest from 18 days
       if (!x.done && i === 0) li.classList.add('first');
       li.prepend(h('span', { class: 'wb-rank', 'aria-label': `第 ${i + 1} 位` }, x.done ? '✓' : String(i + 1).padStart(2, '0')));
       const tp = topicOf(x);
+      const dateChipEl = li.querySelector('.date-chip');
+      const untimed = li._untimedChip || null;
+      delete li._untimedChip;
       li.querySelector('.task-main')?.append(h('span', { class: 'wb-must-meta' },
         tp ? h('span', { class: 'wb-must-topic', style: { '--k': tp.color } }, tp.name) : null,
-        h('span', { class: `wb-age${n >= 9 ? ' long' : ''}`, title: `${zoned(x.created).day} 列入必做` }, x.done ? '已完成' : n ? `挂了 ${n} 天` : '今天列入')));
+        h('span', { class: `wb-age${n >= 9 ? ' long' : ''}`, title: `${zoned(x.created).day} 列入必做` }, x.done ? '已完成' : n ? `挂了 ${n} 天` : '今天列入'),
+        dateChipEl,
+        untimed));
       const more = h('button', { class: 'wb-must-more', type: 'button', 'aria-label': '更多操作', title: '更多' }, icon('more', 16));
       more.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -423,7 +562,7 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
           h('span', { class: 'wb-num' }, String(+day.slice(8, 10))),
           h('div', { class: 'wb-hd' }, h('span', { class: 'wb-w' }, isToday ? `今天 · 周${WEEKDAYS[k]}` : `周${WEEKDAYS[k]}`), h('span', { class: 'wb-d' }, n ? `${dn}/${n} 完成` : rem.length || dl.length ? `${rem.length + dl.length} 项提醒` : '空')),
           isToday && n ? ring(dn, n, 34) : null),
-        carried.length ? h('div', { class: 'wb-group wb-carried', style: { '--k': '#d70015' } }, h('div', { class: 'wb-glabel' }, '之前没做完', h('span', null, String(carried.length))), h('ul', { class: 'tasks' }, carried.map((x) => card(x, { toToday: true })))) : null,
+        carried.length ? h('div', { class: 'wb-group wb-carried', style: { '--k': 'var(--k-late)' } }, h('div', { class: 'wb-glabel' }, '之前没做完', h('span', null, String(carried.length))), h('ul', { class: 'tasks' }, carried.map((x) => card(x, { toToday: true })))) : null,
         groups,
         !n && !rem.length && !dl.length && !carried.length ? h('p', { class: 'wb-empty' }, day < t ? '—' : '没有安排') : null,
       ], []);
@@ -460,6 +599,8 @@ export function weekBoard({ week = null, redraw = null, hooks = null, standalone
     }
   }
   const go = (w) => {
+    clearTickPop();
+    closeDock({ flush: false });
     if (standalone) { location.hash = `#/plan/${w}`; return; }
     wk = w; shownWeek = w; scrolled = false; draw().catch((e) => toast(e.message));
   };

@@ -10,7 +10,7 @@ import { autoFileFinds, createFindsCard, topicsOf } from './finds.js';
 import { weekBoard } from './weekboard.js';
 import {
   PAPER_STAGE, WEEKDAYS, addBox, allFollowups, changeTasks, editPaper, editProject, exportIcs,
-  editable, isGoal, loadPlanner, moveTask, newTask, reminderRow, ring, taskRow,
+  editable, isGoal, loadPlanner, markTickPop, moveTask, newTask, reminderRow, ring, taskRow,
   toggleTask, weekStart, projectTopic, topicChip, changePlanner, freshId, noteBar, paperNoteStats, PAPER_NOTES, openPaperNotes, paperNoteCount,
 } from './planner.js';
 import { openNewExperiment } from './pages.js';
@@ -591,7 +591,7 @@ export function homeRails() {
       return h('li', { class: `dl-card ${urgency(x.date)}` },
         h('div', { class: 'dl-num' }, h('b', null, d < 0 ? `+${-d}` : String(inHours ? dlHours(x.date) : d)), h('span', null, d < 0 ? '天 · 已逾期' : inHours ? '小时' : '天')),
         h('div', { class: 'dl-body' }, h('b', { class: x.open ? 'linkish' : null, onclick: x.open || null }, x.text), h('span', null, `${x.date}${x.tag ? ` · ${x.tag}` : ''}`)),
-        x.task ? h('button', { class: 'tick small', type: 'button', role: 'checkbox', 'aria-checked': 'false', 'aria-label': '完成', title: '完成', onclick: () => toggleTask(x.task.id, redrawHome) }) : null);
+        x.task ? h('button', { class: 'tick small', type: 'button', role: 'checkbox', 'aria-checked': 'false', 'aria-label': '完成', title: '完成', onclick: () => { markTickPop(`task:${x.task.id}`); toggleTask(x.task.id, redrawHome); } }) : null);
     };
     const near = dl.filter((x) => dlDays(x.date) <= 7).length;
     dlSub.textContent = `${dl.length ? `${dl.length} 项${near ? ` · ${near} 项在 7 天内` : ''}` : '没有临近的截止日'} · ${dlBasis()}`;

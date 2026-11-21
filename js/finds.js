@@ -7,7 +7,7 @@ import { addDays, putSection, sectionOf } from './lab.js';
 import { updatePage } from './pages.js';
 import { h, icon, isImeEvent, replaceAround } from './util.js';
 import { lib, menu, modal, requestQuietRoute, toast, view } from './core.js';
-import { freshId, PIN_SVG, TASKS_PATH, WEEKDAYS, changePlanner, editable, loadPlanner, newTask, planDoc, queuePlanner, weekStart } from './planner.js';
+import { freshId, PIN_SVG, TASKS_PATH, WEEKDAYS, changePlanner, clearTickPop, editable, loadPlanner, markTickPop, newTask, planDoc, queuePlanner, tickButton, weekStart } from './planner.js';
 import { redrawHome } from './home.js';
 import { route } from './app.js';
 import { aimsBlock, createCandidatesBlock } from './roadmap.js';
@@ -268,7 +268,7 @@ export function createFindsCard(draw) {
     const t = todayISO();
     const count = (id) => finds.filter((f) => known(f.topic) === id && !f.filed).length + memos.filter((m) => known(m.topic) === id && !m.done && m.kind !== 'idea').length;
     const loose = finds.some((f) => !known(f.topic)) || memos.some((m) => !known(m.topic));
-    const tab = (id, label, n) => h('button', { type: 'button', class: `nt-tab${cur === id ? ' on' : ''}${tcolor.has(id) ? ' tinted' : ''}`, style: tcolor.has(id) ? { '--k': tcolor.get(id) } : null, role: 'tab', 'aria-selected': String(cur === id), onclick: () => { shownTopic = id; if (id !== ALL) setLastTopic(id); draw(); } }, h('span', null, label), n ? h('b', null, String(n)) : null);
+    const tab = (id, label, n) => h('button', { type: 'button', class: `nt-tab${cur === id ? ' on' : ''}${tcolor.has(id) ? ' tinted' : ''}`, style: tcolor.has(id) ? { '--k': tcolor.get(id) } : null, role: 'tab', 'aria-selected': String(cur === id), onclick: () => { clearTickPop(); shownTopic = id; if (id !== ALL) setLastTopic(id); draw(); } }, h('span', null, label), n ? h('b', null, String(n)) : null);
     addTo = cur === ALL ? NO_TOPIC : cur;
     // move an item to another topic
     const topicChip = (x, where) => {
@@ -327,11 +327,17 @@ export function createFindsCard(draw) {
       h('h3', { class: 'nt-h', style: { '--k': '#5e5ce6' } }, '待做实验', h('span', null, openN ? `${openN} 项待做` : '')),
     ], [
       myMemos.length ? h('ul', { class: 'tasks nt-todos' }, myMemos.map((m) => h('li', { class: `task${m.done ? ' done' : ''}${m.pinned ? ' pinned' : ''}` },
-        h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!m.done), 'aria-label': m.done ? '标为未做' : '标为已做', onclick: () => updM(m.id, (x) => { x.done = !x.done; if (x.done) x.doneAt = nowISO(); else delete x.doneAt; }, 'Notes: tick') }),
+        tickButton({
+          class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!m.done), 'aria-label': m.done ? '标为未做' : '标为已做',
+          onclick: () => {
+            const key = `memo:${m.id}`;
+            if (!m.done) markTickPop(key); else clearTickPop(key);
+            updM(m.id, (x) => { x.done = !x.done; if (x.done) x.doneAt = nowISO(); else delete x.doneAt; }, 'Notes: tick');
+          },
+        }, { key: `memo:${m.id}`, done: !!m.done }),
         h('span', { class: 'task-main' }, editable(m.text, (v) => updM(m.id, (x) => { x.text = v; x.updated = nowISO(); }, 'Notes: edit'), 'task-text'),
-          h('span', { class: 'task-meta' }, showChip ? topicChip(m, 'memos') : null, zoned(m.updated || m.created).day.slice(5))),
+          h('span', { class: 'task-meta' }, showChip ? topicChip(m, 'memos') : null, zoned(m.updated || m.created).day.slice(5), move(m))),
         m.done ? null : promote(m),
-        move(m),
         h('button', { class: 'memo-pin', type: 'button', 'aria-pressed': String(!!m.pinned), 'aria-label': m.pinned ? '取消置顶' : '置顶', title: m.pinned ? '取消置顶' : '置顶', html: PIN_SVG, onclick: () => updM(m.id, (x) => { x.pinned = !x.pinned; }, 'Notes: pin') }),
         h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Notes: remove', draw) }, icon('close', 14)))))
         : h('p', { class: 'nt-empty' }, '还没有。想到要补的对照、下一步想试的条件，记在这里，做完打勾。'),
@@ -342,8 +348,7 @@ export function createFindsCard(draw) {
       myIdeas.length ? h('ul', { class: 'tasks nt-todos nt-ideas' }, myIdeas.map((m) => h('li', { class: `task${m.pinned ? ' pinned' : ''}` },
         h('span', { class: 'nt-dot', 'aria-hidden': 'true' }),
         h('span', { class: 'task-main' }, editable(m.text, (v) => updM(m.id, (x) => { x.text = v; x.updated = nowISO(); }, 'Notes: edit'), 'task-text'),
-          h('span', { class: 'task-meta' }, showChip ? topicChip(m, 'memos') : null, zoned(m.updated || m.created).day.slice(5))),
-        move(m),
+          h('span', { class: 'task-meta' }, showChip ? topicChip(m, 'memos') : null, zoned(m.updated || m.created).day.slice(5), move(m))),
         h('button', { class: 'memo-pin', type: 'button', 'aria-pressed': String(!!m.pinned), 'aria-label': m.pinned ? '取消置顶' : '置顶', title: m.pinned ? '取消置顶' : '置顶', html: PIN_SVG, onclick: () => updM(m.id, (x) => { x.pinned = !x.pinned; }, 'Notes: pin') }),
         h('button', { class: 'task-del', type: 'button', 'aria-label': '删除', title: '删除', onclick: () => changePlanner((d) => { d.memos = d.memos.filter((x) => x.id !== m.id); }, 'Notes: remove', draw) }, icon('close', 14)))))
         : h('p', { class: 'nt-empty' }, '还没有。和实验无关或还不成形的念头，记在这里。'),

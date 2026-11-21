@@ -203,11 +203,52 @@ export function ring(done, total, size = 64) {
   svg.innerHTML = `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-bg"/><circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-fg" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - f)}" transform="rotate(-90 ${size / 2} ${size / 2})"/>`;
   return h('div', { class: 'ring-box', role: 'img', 'aria-label': `已完成 ${done} / ${total}` }, svg, h('span', { class: 'ring-num' }, total ? `${Math.round(f * 100)}%` : '—'));
 }
+// One-shot tick pop: animate only after a user clicks undone -> done, never on mount or unrelated redraws.
+const pendingTickPop = new Map();
+export function markTickPop(key) {
+  const prev = pendingTickPop.get(key);
+  if (prev) clearTimeout(prev.timer);
+  const entry = {
+    clearing: false,
+    timer: setTimeout(() => { if (pendingTickPop.get(key) === entry) pendingTickPop.delete(key); }, 800),
+  };
+  pendingTickPop.set(key, entry);
+}
+export function clearTickPop(key) {
+  if (key === undefined) {
+    for (const e of pendingTickPop.values()) clearTimeout(e.timer);
+    pendingTickPop.clear();
+    return;
+  }
+  const prev = pendingTickPop.get(key);
+  if (prev) { clearTimeout(prev.timer); pendingTickPop.delete(key); }
+}
+export function tickButton(attrs, { key, done = false } = {}) {
+  const entry = done && key ? pendingTickPop.get(key) : null;
+  if (entry && !entry.clearing) {
+    entry.clearing = true;
+    queueMicrotask(() => {
+      if (pendingTickPop.get(key) === entry) {
+        clearTimeout(entry.timer);
+        pendingTickPop.delete(key);
+      }
+    });
+  }
+  const btn = h('button', { ...attrs, class: `${attrs.class || 'tick'}${entry ? ' just-ticked' : ''}` });
+  if (entry) btn.addEventListener('animationend', () => btn.classList.remove('just-ticked'), { once: true });
+  return btn;
+}
+if (typeof window !== 'undefined') window.addEventListener('hashchange', () => clearTickPop());
+
 export function taskRow(t, { redraw, extra, meta, showCat = true } = {}) {
   if (!meta && t.src) meta = h('a', { href: `#/v/${t.src.vol}/${t.src.num}` }, `来自 ${t.src.xid || `p. ${t.src.num}`}`);
   if (!meta && t.cat && showCat) meta = h('span', { class: `cat-chip cat-${t.cat}` }, t.cat);
+  const key = `task:${t.id}`;
   return h('li', { class: `task${t.done ? ' done' : ''}` },
-    h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!t.done), 'aria-label': t.done ? '标为未完成' : '标为完成', onclick: () => toggleTask(t.id, redraw) }),
+    tickButton({
+      class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!t.done), 'aria-label': t.done ? '标为未完成' : '标为完成',
+      onclick: () => { if (!t.done) markTickPop(key); else clearTickPop(key); toggleTask(t.id, redraw); },
+    }, { key, done: !!t.done }),
     h('span', { class: 'task-main' }, editable(t.text, (v) => editTask(t.id, v, redraw)), meta ? h('span', { class: 'task-meta' }, meta) : null),
     extra || null,
     dateChip(t, redraw),
@@ -215,8 +256,18 @@ export function taskRow(t, { redraw, extra, meta, showCat = true } = {}) {
 }
 export function reminderRow(x, redraw) {
   const d = daysFrom(x.date);
+  const fuKey = x.page ? `fu:${x.page.vol}/${x.page.num}#${x.index}` : null;
   return h('li', { class: `task reminder${x.done ? ' done' : ''}${d < 0 && !x.done ? ' late' : ''}` },
-    x.page ? h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!x.done), 'aria-label': '完成', onclick: async () => { await toggleFollowup(x.page.vol, x.page.num, x.index); redraw(); } })
+    x.page ? tickButton({
+      class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(!!x.done), 'aria-label': '完成',
+      onclick: async () => {
+        const wasDone = !!x.done;
+        await toggleFollowup(x.page.vol, x.page.num, x.index);
+        const nowDone = parseFollowup(lib.page(x.page.vol, x.page.num)?.followups?.[x.index])?.done;
+        if (!wasDone && nowDone) markTickPop(fuKey); else clearTickPop(fuKey);
+        redraw();
+      },
+    }, { key: fuKey, done: !!x.done })
       : x.project ? h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': 'false', 'aria-label': '已回顾', title: '已回顾（记一句想法，自动排到下一次）', onclick: () => reviewProject(x.project) }) : h('span', { class: 'tick static' }),
     h(x.page || x.project ? 'a' : 'span', { class: 'task-text', href: x.page ? `#/v/${x.page.vol}/${x.page.num}` : x.project ? '#/projects' : null }, x.text,
       h('span', { class: 'task-meta' }, [d < 0 ? `逾期 ${-d} 天` : d === 0 ? '今天' : `${d} 天后`, x.xid || (x.reagent ? '试剂库' : '')].filter(Boolean).join(' · '))),
@@ -359,8 +410,15 @@ export function openPaperNotes(paperId, kind) {
     const trace = [`${x.by || '我'} ${fmtDate(x.at)} 提出`, st === 'done' ? `${fmtDate(x.doneAt)} 完成` : st === 'drop' ? `${fmtDate(x.dropAt)} 不采纳` : null].filter(Boolean).join(' → ');
     const reason = st === 'open' ? null : editable(st === 'done' ? (x.how || '') : (x.why || ''), (v) => one(k, x.id, (y) => { if (st === 'done') y.how = v; else y.why = v; }, 'Paper notes: resolution'), `pn-how${(st === 'done' ? x.how : x.why) ? '' : ' empty'}`);
     if (reason && !(st === 'done' ? x.how : x.why)) reason.textContent = st === 'done' ? '＋ 怎么改的（可不填）' : '＋ 为什么不采纳（可不填）';
+    const pnKey = `pn:${paperId}:${k}:${x.id}`;
     return h('li', { class: `task pn-item ${st}` },
-      h('button', { class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(st === 'done'), 'aria-label': st === 'done' ? '标为未完成' : '标为已完成', onclick: () => one(k, x.id, (y) => { delete y.drop; delete y.dropAt; if (y.done) { delete y.done; delete y.doneAt; } else { y.done = true; y.doneAt = nowISO(); } }, 'Paper notes: tick') }),
+      tickButton({
+        class: 'tick', type: 'button', role: 'checkbox', 'aria-checked': String(st === 'done'), 'aria-label': st === 'done' ? '标为未完成' : '标为已完成',
+        onclick: () => {
+          if (st !== 'done') markTickPop(pnKey); else clearTickPop(pnKey);
+          one(k, x.id, (y) => { delete y.drop; delete y.dropAt; if (y.done) { delete y.done; delete y.doneAt; } else { y.done = true; y.doneAt = nowISO(); } }, 'Paper notes: tick');
+        },
+      }, { key: pnKey, done: st === 'done' }),
       h('span', { class: 'task-main' },
         editable(x.text, (v) => one(k, x.id, (y) => { y.text = v; }, 'Paper notes: edit'), 'task-text'),
         h('span', { class: 'task-meta pn-trace' }, x.where ? h('span', { class: 'pn-where' }, x.where) : null, h('span', { class: `pn-by${x.by === '导师' ? ' boss' : ''}` }, x.by || '我'), trace),
@@ -398,11 +456,11 @@ export function openPaperNotes(paperId, kind) {
           h('div', null, h('b', { class: 'x' }, String(all.drop)), h('span', null, '不采纳')),
           h('div', null, h('b', null, String(all.all)), h('span', null, '全部意见'))),
         h('div', { class: 'pn-who' }, byWho.map(([o, l]) => { const s = { all: l.length, done: l.filter((x) => noteState(x) === 'done').length, open: l.filter((x) => noteState(x) === 'open').length, drop: l.filter((x) => noteState(x) === 'drop').length }; return h('div', { class: 'pn-who-row' }, h('span', null, o), noteBar(s), h('em', null, `${s.done + s.drop}/${s.all}`)); }))),
-      h('div', { class: 'pn-tabs', role: 'tablist' }, Object.entries(PAPER_NOTES).map(([k, [name]]) => { const s = paperNoteStats(p, [k]); return h('button', { type: 'button', role: 'tab', class: `pn-tab${tab === k ? ' on' : ''}`, 'aria-selected': String(tab === k), onclick: () => { tab = k; draw(); } }, name, h('b', null, String(s.all)), s.open ? h('i', null, `${s.open} 待完成`) : null); }),
+      h('div', { class: 'pn-tabs', role: 'tablist' }, Object.entries(PAPER_NOTES).map(([k, [name]]) => { const s = paperNoteStats(p, [k]); return h('button', { type: 'button', role: 'tab', class: `pn-tab${tab === k ? ' on' : ''}`, 'aria-selected': String(tab === k), onclick: () => { clearTickPop(); tab = k; draw(); } }, name, h('b', null, String(s.all)), s.open ? h('i', null, `${s.open} 待完成`) : null); }),
         h('button', { class: 'btn small ghost pn-copy', type: 'button', title: '复制成一张表（Markdown），可贴给导师或存档', onclick: () => { navigator.clipboard?.writeText(markdown()).then(() => toast('已复制全部意见与处理情况。'), () => toast('复制失败。')); } }, '复制全部')),
-      tab === 'ms' ? h('div', { class: 'clip-chips pn-secs', role: 'radiogroup', 'aria-label': '稿件的哪一部分' }, MS_SECTIONS.map((o) => { const n = items.filter((x) => x.sec === o && noteState(x) === 'open').length; return h('button', { type: 'button', class: `chip${sec === o ? ' on' : ''}`, 'aria-pressed': String(sec === o), onclick: () => { sec = o; draw(); document.getElementById('pn-text')?.focus(); } }, o, n ? h('b', null, String(n)) : null); })) : null,
+      tab === 'ms' ? h('div', { class: 'clip-chips pn-secs', role: 'radiogroup', 'aria-label': '稿件的哪一部分' }, MS_SECTIONS.map((o) => { const n = items.filter((x) => x.sec === o && noteState(x) === 'open').length; return h('button', { type: 'button', class: `chip${sec === o ? ' on' : ''}`, 'aria-pressed': String(sec === o), onclick: () => { clearTickPop(); sec = o; draw(); document.getElementById('pn-text')?.focus(); } }, o, n ? h('b', null, String(n)) : null); })) : null,
     ], [
-      h('div', { class: 'pn-filter' }, [['open', `待完成 ${st.open}`], ['done', `已完成 ${st.done}`], ['drop', `不采纳 ${st.drop}`], ['all', `全部 ${st.all}`]].map(([k, l]) => h('button', { type: 'button', class: `chip${show === k ? ' on' : ''}`, 'aria-pressed': String(show === k), onclick: () => { show = k; draw(); } }, l)), noteBar(st, 'wide')),
+      h('div', { class: 'pn-filter' }, [['open', `待完成 ${st.open}`], ['done', `已完成 ${st.done}`], ['drop', `不采纳 ${st.drop}`], ['all', `全部 ${st.all}`]].map(([k, l]) => h('button', { type: 'button', class: `chip${show === k ? ' on' : ''}`, 'aria-pressed': String(show === k), onclick: () => { clearTickPop(); show = k; draw(); } }, l)), noteBar(st, 'wide')),
       shown.length ? h('div', { class: 'pn-groups' }, groups.map((g) => { const l = shown.filter((x) => gOf(x) === g); return l.length ? h('section', { class: 'pn-group' }, h('h4', null, g || '未分章节', h('span', null, String(l.length))), h('ul', { class: 'tasks pn-list' }, l.map((x) => item(tab, x)))) : null; }))
         : h('p', { class: 'muted pn-none' }, items.length ? { open: '没有待完成的意见。', done: '还没有已完成的。', drop: '没有不采纳的。', all: '' }[show] : '还没有。把打印稿上的批注一条一条敲进来，改完一条勾一条。'),
     ]);

@@ -342,6 +342,7 @@ export function modal({ title, body, buttons = [{ label: '关闭' }], wide = fal
   root.close = close;
   const onKey = (e) => {
     if (e.key !== 'Escape' || isImeEvent(e)) return;
+    if (document.querySelector('.menu')) return;
     const modals = document.querySelectorAll('.modal-root');
     if (modals[modals.length - 1] !== root) return;
     e.stopPropagation();
@@ -369,20 +370,89 @@ export function modal({ title, body, buttons = [{ label: '关闭' }], wide = fal
   return root;
 }
 
+let activeMenu = null;
+export function closeMenu(within = null) {
+  if (!activeMenu) return;
+  if (within && !within.contains(activeMenu.anchor)) return;
+  activeMenu.close();
+}
+
 export function menu(anchor, items) {
-  document.querySelectorAll('.menu').forEach((m) => m.remove());
+  const prev = activeMenu;
+  if (prev && prev.anchor === anchor && prev.m.isConnected) {
+    prev.close();
+    return;
+  }
+  prev?.close();
+  document.querySelectorAll('.menu').forEach((el) => el.remove());
+  if (!anchor?.isConnected) return;
   const m = h('div', { class: 'menu', role: 'menu' }, items.filter(Boolean).map((it) => h('button', {
     class: `menu-item${it.cls ? ` ${it.cls}` : ''}`, role: 'menuitem', type: 'button',
-    onclick: () => { m.remove(); it.run(); },
+    onclick: () => { close(); it.run(); },
   }, icon(it.icon, 18), it.label)));
   document.body.append(m);
-  const r = anchor.getBoundingClientRect();
-  m.style.top = `${r.bottom + window.scrollY + 6}px`;
-  m.style.right = `${Math.max(8, document.documentElement.clientWidth - r.right)}px`;
-  const off = (e) => { if (!m.contains(e.target)) { m.remove(); document.removeEventListener('mousedown', off, true); } };
-  setTimeout(() => document.addEventListener('mousedown', off, true), 0);
-  m.querySelector('button')?.focus();
-  m.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !isImeEvent(e)) { m.remove(); anchor.focus(); } });
+  let closed = false;
+  let offPtr; let onKey; let onScroll; let onResize;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    if (activeMenu?.m === m) activeMenu = null;
+    m.remove();
+    if (offPtr) document.removeEventListener('pointerdown', offPtr, true);
+    if (onKey) document.removeEventListener('keydown', onKey, true);
+    if (onScroll) window.removeEventListener('scroll', onScroll, true);
+    if (onResize) window.removeEventListener('resize', onResize);
+    window.removeEventListener('hashchange', close);
+  };
+  const position = (checkVisible = false) => {
+    if (!anchor?.isConnected) { close(); return; }
+    const r = anchor.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const vh = window.innerHeight;
+    if (checkVisible && (r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw)) { close(); return; }
+    m.style.maxHeight = '';
+    const mw = m.offsetWidth || 160;
+    const mh = m.offsetHeight || 120;
+    const spaceBelow = vh - r.bottom - 14;
+    const spaceAbove = r.top - 14;
+    const flipUp = mh > spaceBelow && spaceAbove > spaceBelow;
+    const availH = Math.max(120, flipUp ? spaceAbove : spaceBelow);
+    m.style.maxHeight = `${Math.floor(availH)}px`;
+    const mhClamped = Math.min(mh, availH);
+    const top = flipUp ? Math.max(8, r.top - mhClamped - 6) : Math.max(8, Math.min(vh - mhClamped - 8, r.bottom + 6));
+    const alignRight = r.left + mw > vw - 8 && r.right - mw >= 8;
+    const rawLeft = alignRight ? r.right - mw : r.left;
+    const left = Math.max(8, Math.min(rawLeft, vw - mw - 8));
+    m.classList.toggle('flip-up', flipUp);
+    m.style.transformOrigin = `${flipUp ? 'bottom' : 'top'} ${alignRight ? 'right' : 'left'}`;
+    m.style.left = `${Math.round(left)}px`;
+    m.style.right = 'auto';
+    m.style.top = `${Math.round(top)}px`;
+  };
+  offPtr = (e) => {
+    if (m.contains(e.target) || anchor.contains(e.target)) return;
+    close();
+  };
+  onKey = (e) => {
+    if (e.key !== 'Escape' || isImeEvent(e)) return;
+    e.stopPropagation();
+    close();
+    if (anchor?.isConnected) anchor.focus({ preventScroll: true });
+  };
+  onScroll = (e) => {
+    if (e.target === m || m.contains(e.target)) return;
+    position(true);
+  };
+  onResize = () => position(false);
+  position(false);
+  if (closed) return;
+  document.addEventListener('pointerdown', offPtr, true);
+  document.addEventListener('keydown', onKey, true);
+  window.addEventListener('scroll', onScroll, { passive: true, capture: true });
+  window.addEventListener('resize', onResize, { passive: true });
+  window.addEventListener('hashchange', close);
+  activeMenu = { m, anchor, close };
+  m.querySelector('button')?.focus({ preventScroll: true });
 }
 
 export function field(label, value, cls = '') {
