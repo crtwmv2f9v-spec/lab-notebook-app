@@ -56,7 +56,7 @@ export const DEFAULT_STYLE_INBOX_CAT = '00_Style_Inbox';
 
 // Standard hierarchical taxonomy shared with `rchain figure` (characterization + plotting + project tags)
 export const STANDARD_CLIP_TAXONOMY = [
-  { group: '学习投递', cats: ['00_Style_Inbox', '表征学习'] },
+  { group: '云端学习投递（自动同步 00_Style_Inbox）', cats: ['00_Style_Inbox'] },
   {
     group: '表征领域',
     cats: [
@@ -67,9 +67,9 @@ export const STANDARD_CLIP_TAXONOMY = [
     ],
   },
   {
-    group: '绘图与课题',
+    group: '绘图、学习与课题',
     cats: [
-      '画图/示意图', '画图/数据图范式', '画图/配色参考', '画图/模板参数', '画图/提示词',
+      '表征学习', '画图/示意图', '画图/数据图范式', '画图/配色参考', '画图/模板参数', '画图/提示词',
       '课题/BHJ', '课题/OECT', '课题/2PP',
     ],
   },
@@ -77,32 +77,43 @@ export const STANDARD_CLIP_TAXONOMY = [
 
 const TAXONOMY_RULES = [
   ['表征/电化学-EIS', ['nyquist', 'bode', 'impedance', 'eis', 'randles', '电化学阻抗', '阻抗谱', '奈奎斯特']],
-  ['表征/电化学-CV', ['cyclic voltammetry', 'voltammogram', 'cv', 'scan rate', 'vs ag/agcl', '循环伏安', '扫速', '电位窗口']],
-  ['表征/器件-OECT', ['oect', 'transconductance', 'transfer curve', 'output characteristic', 'ids', 'vgs', '跨导', '转移特性', '输出特性', '沟道']],
-  ['表征/光电脉冲', ['photovoltage', 'photocurrent', 'photocapacitive', 'light pulse', 'pulse width', '光电压', '光电流', '光脉冲', '瞬态光响应']],
+  ['表征/电化学-CV', ['cyclic voltammetry', 'voltammogram', 'voltammograms', 'cv', 'scan rate', 'vs ag/agcl', '循环伏安', '扫速', '电位窗口']],
+  ['表征/器件-OECT', ['oect', 'oects', 'transconductance', 'transfer curve', 'output characteristic', 'ids', 'vgs', '跨导', '转移特性', '输出特性', '沟道']],
+  ['表征/光电脉冲', ['photovoltage', 'photocurrent', 'photocapacitive', 'light pulse', 'pulse width', 'i-t', '光电压', '光电流', '光脉冲', '瞬态光响应']],
   ['表征/光谱-UVVis', ['uv-vis', 'uv–vis', 'absorbance', 'transmittance', 'tauc', '紫外', '吸收光谱', '荧光光谱']],
   ['表征/光谱-振动与能谱', ['xps', 'ftir', 'raman', 'xrd', 'giwaxs', 'binding energy', 'wavenumber', '拉曼', '红外', '光电子能谱', '衍射']],
   ['表征/显微-AFM与KPFM', ['afm', 'kpfm', 'atomic force', 'surface potential', 'kelvin probe', '原子力', '表面电势', '粗糙度']],
   ['表征/显微-电镜与形貌', ['sem', 'tem', 'hrtem', 'eds', 'edx', 'micrograph', '扫描电镜', '透射电镜', '截面', '能谱']],
   ['表征/力学与流变', ['stress', 'strain', 'tensile', 'rheology', 'viscosity', 'storage modulus', '拉伸', '弯折', '流变', '杨氏模量']],
-  ['表征/生物-组织与免疫染色', ['wound', 'skin', 'h&e', 'immunofluorescen', 'immunohistochem', 'ihc', 'α-sma', 'dapi', 'pgp9.5', 'il-6', 'ki67', '皮肤修复', '创面', '免疫组化', '免疫荧光', '组织切片']],
-  ['表征/热图与空间映射', ['heatmap', 'heat map', 'thermal image', 'spatial mapping', '热图', '红外热像', '温度分布']],
+  ['表征/生物-组织与免疫染色', ['wound', 'wounds', 'skin', 'h&e', 'immunofluorescence', 'immunofluorescent', 'immunohistochemistry', 'immunohistochemical', 'ihc', 'α-sma', 'a-sma', 'dapi', 'pgp9.5', 'il-6', 'ki67', '皮肤修复', '创面', '免疫组化', '免疫荧光', '组织切片']],
+  ['表征/热图与空间映射', ['heatmap', 'heatmaps', 'heat map', 'thermal image', 'spatial mapping', '热图', '红外热像', '温度分布']],
   ['表征/统计对比', ['bar chart', 'bar plot', 'box plot', 'anova', 't-test', '柱状图', '散点图', '统计对比', '显著性']],
-  ['画图/示意图', ['schematic', 'illustration', 'mechanism', 'exploded', 'diagram', '示意图', '机制图', '结构图', '爆炸图', '流程图', '截面结构']],
+  ['画图/示意图', ['schematic', 'schematics', 'illustration', 'mechanism', 'exploded', 'diagram', '示意图', '机制图', '结构图', '爆炸图', '流程图', '截面结构']],
   ['画图/配色参考', ['palette', 'color scheme', '配色', '色板', '色卡']],
   ['画图/模板参数', ['template', '框线', '字号', '单栏', '双栏', '89mm', '183mm', '89 mm', '183 mm']],
 ];
 
 const PROJECT_RULES = [
-  ['课题/BHJ', ['bhj', 'pbdb-t', 'itic', 'wound', 'skin regeneration', '大鼠皮肤', '皮肤修复', '创面', '635 nm', 'α-sma', 'il-6', 'krt10']],
-  ['课题/OECT', ['oect', 'saliva', '唾液', 'pedot:pss', 'transconductance', 'keithley', 'diw', 'gops', '跨导', '沟道']],
+  ['课题/BHJ', ['bhj', 'pbdb-t', 'itic', 'wound', 'wounds', 'skin regeneration', '大鼠皮肤', '皮肤修复', '创面', '635 nm', 'α-sma', 'il-6', 'krt10']],
+  ['课题/OECT', ['oect', 'oects', 'saliva', '唾液', 'pedot:pss', 'transconductance', 'keithley', 'diw', 'gops', '跨导', '沟道']],
   ['课题/2PP', ['2pp', 'two-photon', '双光子', 'nanoscribe', 'p(g2t-tt)', 'p3ht']],
 ];
 
+const isAsciiAlnum = (ch) => !!ch && ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'));
 function matchKeyword(haystack, kw) {
   const k = kw.toLowerCase();
-  if (/^[a-z0-9]{1,4}$/.test(k)) return new RegExp(`\\b${k}\\b`, 'i').test(haystack);
-  return haystack.includes(k);
+  if (!k) return false;
+  const checkL = isAsciiAlnum(k[0]);
+  const checkR = isAsciiAlnum(k[k.length - 1]);
+  if (!checkL && !checkR) return haystack.includes(k);
+  let pos = haystack.indexOf(k);
+  while (pos !== -1) {
+    const okL = !checkL || !isAsciiAlnum(haystack[pos - 1]);
+    const okR = !checkR || !isAsciiAlnum(haystack[pos + k.length]);
+    if (okL && okR) return true;
+    pos = haystack.indexOf(k, pos + 1);
+  }
+  return false;
 }
 
 export function suggestClipCats({ title = '', note = '', file = '', kind = 'img', src = {} } = {}) {
@@ -1045,15 +1056,21 @@ export async function openClip(id) {
     && matchesStyleSyncCat(c.cats) && canSyncStyleFolder();
   const learnCmd = c.kind === 'img' ? `rchain figure learn ${c.id} --write-card` : '';
   const spec = c.learnedSpec && typeof c.learnedSpec === 'object' ? c.learnedSpec : null;
+  const specPal = [spec?.palette, spec?.plotPalette].filter(Boolean).join(' / ');
   const specBox = spec ? h('div', { class: 'clip-spec' },
     h('span', { class: 'm-art-kicker' }, '已学表征 / 绘图规范'),
     h('p', null, h('b', null, spec.displayName || spec.domain || spec.specId), spec.specId ? h('code', null, ` ${spec.specId}`) : null),
     h('p', { class: 'muted small' }, [
       spec.engine ? `引擎：${spec.engine}` : '',
-      spec.palette ? `匹配色板：${spec.palette}` : '',
+      specPal ? `推荐色板：${specPal}` : '',
+      spec.widthMm ? `建议版宽：${spec.widthMm} mm` : '',
+      Number.isFinite(spec.sMed) ? `S_med：${spec.sMed}%` : '',
       spec.citekey ? `文献：[[${spec.citekey}]]` : '',
       spec.learnedAt ? `更新：${String(spec.learnedAt).slice(0, 10)}` : '',
-    ].filter(Boolean).join(' · '))) : null;
+    ].filter(Boolean).join(' · ')),
+    Array.isArray(spec.keyParams) && spec.keyParams.length
+      ? h('p', { class: 'muted small' }, `关键参数：${spec.keyParams.join(' · ')}`)
+      : null) : null;
   const body = h('div', { class: 'clip-detail' }, big,
     (c.cats || []).length ? h('p', { class: 'clip-tags' }, c.cats.map((k) => h('a', { href: `#/clips/${encodeURIComponent(k)}`, onclick: () => document.querySelectorAll('.modal-root').forEach((m) => m.close?.()) }, k))) : null,
     c.note ? h('p', { class: 'clip-note-full' }, unitHints(c.note)) : null,
