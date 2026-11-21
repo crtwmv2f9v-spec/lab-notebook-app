@@ -54,6 +54,87 @@ export const DEFAULT_GDRIVE_FOLDER = '1N6YjBVlGW--cyomVcQjNJnizfYs4C0DF'; // Res
 export const DEFAULT_STYLE_INBOX_FOLDER = '1xjQ31u4WK3cFTfE-MQrCRLVmgNAEn6Fx'; // Research_Figure_Library / 00_Style_Inbox
 export const DEFAULT_STYLE_INBOX_CAT = '00_Style_Inbox';
 
+// Standard hierarchical taxonomy shared with `rchain figure` (characterization + plotting + project tags)
+export const STANDARD_CLIP_TAXONOMY = [
+  { group: '学习投递', cats: ['00_Style_Inbox', '表征学习'] },
+  {
+    group: '表征领域',
+    cats: [
+      '表征/器件-OECT', '表征/电化学-EIS', '表征/电化学-CV', '表征/光电脉冲',
+      '表征/光谱-UVVis', '表征/光谱-振动与能谱', '表征/显微-AFM与KPFM',
+      '表征/显微-电镜与形貌', '表征/力学与流变', '表征/生物-组织与免疫染色',
+      '表征/热图与空间映射', '表征/统计对比',
+    ],
+  },
+  {
+    group: '绘图与课题',
+    cats: [
+      '画图/示意图', '画图/数据图范式', '画图/配色参考', '画图/模板参数', '画图/提示词',
+      '课题/BHJ', '课题/OECT', '课题/2PP',
+    ],
+  },
+];
+
+const TAXONOMY_RULES = [
+  ['表征/电化学-EIS', ['nyquist', 'bode', 'impedance', 'eis', 'randles', '电化学阻抗', '阻抗谱', '奈奎斯特']],
+  ['表征/电化学-CV', ['cyclic voltammetry', 'voltammogram', 'cv', 'scan rate', 'vs ag/agcl', '循环伏安', '扫速', '电位窗口']],
+  ['表征/器件-OECT', ['oect', 'transconductance', 'transfer curve', 'output characteristic', 'ids', 'vgs', '跨导', '转移特性', '输出特性', '沟道']],
+  ['表征/光电脉冲', ['photovoltage', 'photocurrent', 'photocapacitive', 'light pulse', 'pulse width', '光电压', '光电流', '光脉冲', '瞬态光响应']],
+  ['表征/光谱-UVVis', ['uv-vis', 'uv–vis', 'absorbance', 'transmittance', 'tauc', '紫外', '吸收光谱', '荧光光谱']],
+  ['表征/光谱-振动与能谱', ['xps', 'ftir', 'raman', 'xrd', 'giwaxs', 'binding energy', 'wavenumber', '拉曼', '红外', '光电子能谱', '衍射']],
+  ['表征/显微-AFM与KPFM', ['afm', 'kpfm', 'atomic force', 'surface potential', 'kelvin probe', '原子力', '表面电势', '粗糙度']],
+  ['表征/显微-电镜与形貌', ['sem', 'tem', 'hrtem', 'eds', 'edx', 'micrograph', '扫描电镜', '透射电镜', '截面', '能谱']],
+  ['表征/力学与流变', ['stress', 'strain', 'tensile', 'rheology', 'viscosity', 'storage modulus', '拉伸', '弯折', '流变', '杨氏模量']],
+  ['表征/生物-组织与免疫染色', ['wound', 'skin', 'h&e', 'immunofluorescen', 'immunohistochem', 'ihc', 'α-sma', 'dapi', 'pgp9.5', 'il-6', 'ki67', '皮肤修复', '创面', '免疫组化', '免疫荧光', '组织切片']],
+  ['表征/热图与空间映射', ['heatmap', 'heat map', 'thermal image', 'spatial mapping', '热图', '红外热像', '温度分布']],
+  ['表征/统计对比', ['bar chart', 'bar plot', 'box plot', 'anova', 't-test', '柱状图', '散点图', '统计对比', '显著性']],
+  ['画图/示意图', ['schematic', 'illustration', 'mechanism', 'exploded', 'diagram', '示意图', '机制图', '结构图', '爆炸图', '流程图', '截面结构']],
+  ['画图/配色参考', ['palette', 'color scheme', '配色', '色板', '色卡']],
+  ['画图/模板参数', ['template', '框线', '字号', '单栏', '双栏', '89mm', '183mm', '89 mm', '183 mm']],
+];
+
+const PROJECT_RULES = [
+  ['课题/BHJ', ['bhj', 'pbdb-t', 'itic', 'wound', 'skin regeneration', '大鼠皮肤', '皮肤修复', '创面', '635 nm', 'α-sma', 'il-6', 'krt10']],
+  ['课题/OECT', ['oect', 'saliva', '唾液', 'pedot:pss', 'transconductance', 'keithley', 'diw', 'gops', '跨导', '沟道']],
+  ['课题/2PP', ['2pp', 'two-photon', '双光子', 'nanoscribe', 'p(g2t-tt)', 'p3ht']],
+];
+
+function matchKeyword(haystack, kw) {
+  const k = kw.toLowerCase();
+  if (/^[a-z0-9]{1,4}$/.test(k)) return new RegExp(`\\b${k}\\b`, 'i').test(haystack);
+  return haystack.includes(k);
+}
+
+export function suggestClipCats({ title = '', note = '', file = '', kind = 'img', src = {} } = {}) {
+  const ref = src?.ref || {};
+  const text = [title, note, file, src?.fig, src?.cite, src?.caption, ref?.title, ref?.journal].filter(Boolean).join(' ').toLowerCase();
+  const titleLow = String(title || '').toLowerCase();
+  let bestCat = '';
+  let bestScore = 0;
+  for (const [cat, kws] of TAXONOMY_RULES) {
+    let score = 0;
+    for (const kw of kws) if (matchKeyword(text, kw)) score += 1;
+    if (kind === 'note' && cat === '画图/模板参数') score += 2;
+    if (score > bestScore) { bestScore = score; bestCat = cat; }
+  }
+  const out = [];
+  let isGenericNote = kind === 'note' && bestCat === '画图/模板参数';
+  if (kind === 'note' && /提示词|四段式|方案\s*a[–-]f/i.test(text)) {
+    out.push('画图/提示词');
+    isGenericNote = true;
+  } else if (bestCat) {
+    out.push(bestCat);
+  } else if (kind === 'note') {
+    out.push('画图/模板参数');
+    isGenericNote = true;
+  }
+  const projText = isGenericNote ? titleLow : text;
+  for (const [pcat, kws] of PROJECT_RULES) {
+    if (kws.some((kw) => matchKeyword(projText, kw))) out.push(pcat);
+  }
+  return [...new Set(out)];
+}
+
 export function parseDriveFolderId(raw) {
   const s = String(raw || '').trim();
   if (!s) return '';
@@ -962,11 +1043,23 @@ export async function openClip(id) {
   const styleHref = c.styleDriveId ? `https://drive.google.com/file/d/${encodeURIComponent(c.styleDriveId)}/view` : '';
   const canOfferStyleSync = !DEMO && c.kind === 'img' && (c.driveId || c.file) && !c.styleDriveId
     && matchesStyleSyncCat(c.cats) && canSyncStyleFolder();
+  const learnCmd = c.kind === 'img' ? `rchain figure learn ${c.id} --write-card` : '';
+  const spec = c.learnedSpec && typeof c.learnedSpec === 'object' ? c.learnedSpec : null;
+  const specBox = spec ? h('div', { class: 'clip-spec' },
+    h('span', { class: 'm-art-kicker' }, '已学表征 / 绘图规范'),
+    h('p', null, h('b', null, spec.displayName || spec.domain || spec.specId), spec.specId ? h('code', null, ` ${spec.specId}`) : null),
+    h('p', { class: 'muted small' }, [
+      spec.engine ? `引擎：${spec.engine}` : '',
+      spec.palette ? `匹配色板：${spec.palette}` : '',
+      spec.citekey ? `文献：[[${spec.citekey}]]` : '',
+      spec.learnedAt ? `更新：${String(spec.learnedAt).slice(0, 10)}` : '',
+    ].filter(Boolean).join(' · '))) : null;
   const body = h('div', { class: 'clip-detail' }, big,
     (c.cats || []).length ? h('p', { class: 'clip-tags' }, c.cats.map((k) => h('a', { href: `#/clips/${encodeURIComponent(k)}`, onclick: () => document.querySelectorAll('.modal-root').forEach((m) => m.close?.()) }, k))) : null,
     c.note ? h('p', { class: 'clip-note-full' }, unitHints(c.note)) : null,
-    s.ref || s.cite || zh || doi || driveHref || styleHref || canOfferStyleSync ? h('div', { class: 'clip-source' },
-      h('span', { class: 'm-art-kicker' }, '出处'),
+    specBox,
+    s.ref || s.cite || zh || doi || driveHref || styleHref || canOfferStyleSync || learnCmd ? h('div', { class: 'clip-source' },
+      h('span', { class: 'm-art-kicker' }, '出处与学习'),
       s.ref?.title ? h('p', null, h('b', null, s.ref.title)) : null,
       h('p', { class: 'muted' }, [s.ref?.authors || s.cite, s.ref?.journal, s.ref?.year, s.fig, s.page ? `第 ${s.page} 页` : ''].filter(Boolean).join(' · ')),
       s.caption ? h('p', { class: 'muted small' }, `“${s.caption}”`) : null,
@@ -996,6 +1089,9 @@ export async function openClip(id) {
             route({ quiet: true });
           } catch (err) { toast(err.message || '同步到 00_Style_Inbox 失败。'); } finally { btn.disabled = false; }
         } }, icon('sync', 16), '同步到 00_Style_Inbox') : null,
+        learnCmd ? h('button', { class: 'btn small ghost', type: 'button', title: '复制命令行以提取本图实验条件、配色与标准出图规范卡', onclick: async () => {
+          toast(await copyText(learnCmd) ? `已复制：${learnCmd}` : learnCmd);
+        } }, '复制学习命令') : null,
         s.task ? h('a', { class: 'btn small ghost', href: `#/clips?paper=${s.task}`, onclick: () => document.querySelectorAll('.modal-root').forEach((m) => m.close?.()) }, '这篇的所有素材') : null))
       : h('p', { class: 'muted small' }, '没有记出处。'),
     h('p', { class: 'muted small' }, `${c.id}${c.pinned ? ' · 已置顶' : ''}${c.styleDriveId ? ' · 已同步 00_Style_Inbox' : ''}${c.file ? ` · ${c.file}` : ''}`));
@@ -1104,11 +1200,31 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
   }
   const known = [...knownMap.values()].sort((a, b) => a.localeCompare(b, 'zh'));
   const chips = h('div', { class: 'clip-chips' });
-  const newCat = h('input', { id: 'cl-cat', placeholder: known.length ? '新分类，回车添加（可多个，逗号分隔）' : '分类，例如 v-OECTs结构、大鼠皮肤修复图、00_Style_Inbox（逗号分隔）' });
+  const taxBox = h('details', { class: 'clip-tax-box' });
+  const taxBody = h('div', { class: 'clip-tax-body' });
+  taxBox.append(h('summary', null, '标准分类速选（表征领域 / 绘图类型 / 学习投递）'), taxBody);
+  const newCat = h('input', { id: 'cl-cat', placeholder: known.length ? '新分类，回车添加（可多个，逗号分隔）' : '分类，例如 表征/电化学-EIS、大鼠皮肤修复图、00_Style_Inbox（逗号分隔）' });
   const styleCatHint = (!DEMO && x.kind === 'img' && canSyncStyleFolder())
     ? h('p', { class: 'muted small clip-hint' }, `勾选${sc.styleCats.map((k) => `「${k}」`).join(' / ')}分类保存时，会自动复制一份到 Google Drive 风格投递箱（00_Style_Inbox），主图仍留在 03_LabNotebook_Clips。`)
     : null;
-  const drawChips = () => chips.replaceChildren(...[...new Set([...known, ...picked])].map((k) => h('button', { type: 'button', class: `chip${picked.has(k) ? ' on' : ''}`, 'aria-pressed': String(picked.has(k)), onclick: () => { if (picked.has(k)) picked.delete(k); else picked.add(k); drawChips(); } }, k)));
+  const toggleCat = (k) => {
+    const canon = known.find((item) => item.toLowerCase() === k.toLowerCase()) || k;
+    if (picked.has(canon)) picked.delete(canon);
+    else {
+      picked.add(canon);
+      if (!known.includes(canon)) known.push(canon);
+    }
+    drawChips();
+  };
+  const drawChips = () => {
+    chips.replaceChildren(...[...new Set([...known, ...picked])].map((k) => h('button', { type: 'button', class: `chip${picked.has(k) ? ' on' : ''}`, 'aria-pressed': String(picked.has(k)), onclick: () => toggleCat(k) }, k)));
+    taxBody.replaceChildren(...STANDARD_CLIP_TAXONOMY.map((grp) => h('div', { class: 'clip-tax-group' },
+      h('span', { class: 'clip-tax-label' }, grp.group),
+      h('div', { class: 'clip-chips' }, grp.cats.map((k) => {
+        const active = [...picked].some((p) => p.toLowerCase() === k.toLowerCase());
+        return h('button', { type: 'button', class: `chip${active ? ' on' : ''}`, 'aria-pressed': String(active), onclick: () => toggleCat(k) }, k);
+      })))));
+  };
   const addCats = () => {
     for (const raw of newCat.value.split(/[,，、;；]/).map((s) => s.trim()).filter(Boolean)) {
       const canon = known.find((k) => k.toLowerCase() === raw.toLowerCase()) || raw;
@@ -1190,12 +1306,38 @@ export async function editClip(c, { image = null, text = '', html = '', noteText
   tsel.addEventListener('change', () => { const t = reading.find((y) => y.id === tsel.value); if (t?.ref?.doi) doi.value = t.ref.doi; });
   if (text || html) absorb(text, html);
   drawInfo();
+  const suggestBtn = h('button', {
+    class: 'btn small ghost',
+    type: 'button',
+    id: 'cl-suggest-cats',
+    onclick: () => {
+      const sug = suggestClipCats({
+        title: title.value,
+        note: note.value,
+        file: x.file || pic?.name || '',
+        kind: x.kind,
+        src: { ...s, fig: fig.value },
+      });
+      if (!sug.length) { toast('未匹配到明确领域关键词，可在下方标准分类中手动点选。'); return; }
+      let added = 0;
+      for (const k of sug) {
+        const canon = known.find((item) => item.toLowerCase() === k.toLowerCase()) || k;
+        if (!picked.has(canon)) {
+          picked.add(canon);
+          if (!known.includes(canon)) known.push(canon);
+          added++;
+        }
+      }
+      drawChips();
+      toast(added ? `已推荐并勾选 ${added} 个标准分类：${sug.join(' · ')}` : `推荐分类已全部勾选：${sug.join(' · ')}`);
+    },
+  }, '按标题/出处智能分类');
   const lbl = (f, t) => h('label', { for: f }, t);
   const form = h('div', { class: 'form clip-form' },
     x.kind === 'img' ? preview : null,
     lbl('cl-title', '标题'), title,
     h('label', { class: 'check', for: 'cl-pin' }, pin, '置顶显示（固定排在素材库最前面）'),
-    h('span', { class: 'label' }, '分类（可多选；点一下选中/取消）'), chips, newCat, styleCatHint,
+    h('div', { class: 'clip-cat-bar' }, h('span', { class: 'label' }, '分类（可多选；点一下选中/取消）'), suggestBtn), chips, newCat, taxBox, styleCatHint,
     lbl('cl-note', x.kind === 'img' ? '备注' : '内容'), note, hint,
     h('details', { class: 'clip-src-box', open: x.kind === 'img' },
       h('summary', null, '出处（溯源回文献）'),

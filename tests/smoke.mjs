@@ -445,6 +445,67 @@ try {
     if (bad.length) throw new Error(`failed checks: ${bad.join(', ')} (${JSON.stringify(r)})`);
     return 'gdrive config/validation/legacy/opt-out, 4-field modal, copy-to-00_Style_Inbox, trash-guard & idempotency';
   });
+  await check('clips-taxonomy-and-learning', async () => {
+    await go('#/clips', "document.querySelectorAll('.clip-tile').length >= 2");
+    const r = await evaluate(`
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const m = await import('./js/clips.js');
+      const core = await import('./js/core.js');
+      let tmpId = '';
+      try {
+        // 1. Smart taxonomy suggestion across domains + word-boundary safety
+        const eis = m.suggestClipCats({ title: 'Nyquist impedance spectrum in PBS', kind: 'img' });
+        const oect = m.suggestClipCats({ title: 'PEDOT:PSS OECT transfer curve Ids-Vgs', kind: 'img' });
+        const bio = m.suggestClipCats({ title: '大鼠皮肤修复图 H&E 免疫组化', kind: 'img' });
+        const bound = m.suggestClipCats({ title: 'Device assembly schematic in deionized water', kind: 'img' });
+        const promptNote = m.suggestClipCats({ title: '科研绘图提示词模板', note: '黄金基准 BHJ OECT 示例', kind: 'note' });
+        const rulesOk = eis.includes('表征/电化学-EIS')
+          && oect.includes('表征/器件-OECT') && oect.includes('课题/OECT')
+          && bio.includes('表征/生物-组织与免疫染色') && bio.includes('课题/BHJ')
+          && bound.includes('画图/示意图') && !bound.includes('表征/显微-电镜与形貌') && !bound.includes('表征/电化学-CV') && !bound.includes('表征/电化学-EIS')
+          && promptNote.includes('画图/提示词') && !promptNote.includes('课题/BHJ');
+
+        // 2. editClip modal smart-suggest button + standard taxonomy quick-picker
+        await m.editClip(null, { kind: 'img' });
+        await wait(80);
+        document.getElementById('cl-title').value = 'Cyclic voltammetry 50 mV/s vs Ag/AgCl';
+        document.getElementById('cl-suggest-cats')?.click();
+        await wait(60);
+        const suggestedActive = [...document.querySelectorAll('.clip-form > .clip-chips .chip.on')].map((b) => b.textContent);
+        const taxBox = document.querySelector('.clip-tax-box');
+        taxBox.open = true;
+        const inboxBtn = [...taxBox.querySelectorAll('.chip')].find((b) => b.textContent === '00_Style_Inbox');
+        inboxBtn?.click();
+        await wait(40);
+        const afterTaxClick = [...document.querySelectorAll('.clip-form > .clip-chips .chip.on')].map((b) => b.textContent);
+        const editModalOk = suggestedActive.includes('表征/电化学-CV') && afterTaxClick.includes('00_Style_Inbox');
+        document.querySelectorAll('.modal-root').forEach((el) => el.close?.());
+
+        // 3. openClip renders learnedSpec summary and 复制学习命令 button
+        tmpId = 'F-9997';
+        await core.lib.commit('Add temp learned clip', async () => ({
+          changes: [{ path: m.clipPath(tmpId), data: JSON.stringify({
+            id: tmpId, kind: 'img', title: 'EIS Nyquist ref', cats: ['表征/电化学-EIS'],
+            file: 'F-9997_eis.png', src: { fig: 'Fig. 3' }, created: '2026-11-21T00:00:00Z',
+            learnedSpec: { specId: 'SPEC-eis-F-9997', domain: 'eis', displayName: '电化学阻抗谱 EIS', engine: 'labplot', palette: 'science', citekey: 'Chen2025', learnedAt: '2026-11-21T01:00:00Z' },
+          }) + '\\n' }],
+        }));
+        await m.openClip(tmpId);
+        await wait(80);
+        const specText = document.querySelector('.clip-spec')?.textContent || '';
+        const hasLearnBtn = [...document.querySelectorAll('.clip-src-act button')].some((b) => b.textContent.includes('复制学习命令'));
+        const detailOk = specText.includes('SPEC-eis-F-9997') && specText.includes('Chen2025') && hasLearnBtn;
+        document.querySelectorAll('.modal-root').forEach((el) => el.close?.());
+        return { rulesOk, editModalOk, detailOk };
+      } finally {
+        document.querySelectorAll('.modal-root').forEach((el) => el.close?.());
+        if (tmpId) await core.lib.commit('Cleanup temp learned clip', async () => ({ changes: [{ path: m.clipPath(tmpId), delete: true }] })).catch(() => {});
+      }
+    `);
+    const bad = Object.entries(r).filter(([, v]) => !v).map(([k]) => k);
+    if (bad.length) throw new Error(`failed checks: ${bad.join(', ')} (${JSON.stringify(r)})`);
+    return 'suggestClipCats word-boundary rules, editClip quick taxonomy picker, and openClip learnedSpec + learn command';
+  });
   await check('weekboard', async () => {
     await go('#/', "document.querySelectorAll('.wb .wb-col').length === 8 && document.querySelector('.wb-col.is-today .wb-card')");
     const r = await evaluate(`const p = await import('./js/planner.js');
